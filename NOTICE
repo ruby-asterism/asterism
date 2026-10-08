@@ -6,13 +6,13 @@ This repository also contains material made from ROS 2 message and service
 definitions, which are licensed under the Apache License, Version 2.0
 (data/msgs/LICENSE-Apache-2.0.txt):
 
-- tools/ros2_jazzy/: the .msg / .srv definitions as distributed with ROS 2
-  Jazzy (/opt/ros/jazzy/share/<package>/), unchanged, and type_hashes.txt,
-  the type hashes from the type description JSON files of the same
-  packages.
+- tools/ros2_jazzy/: the .msg / .srv definitions and the package.xml of
+  their packages as distributed with ROS 2 Jazzy
+  (/opt/ros/jazzy/share/<package>/), unchanged, and type_hashes.txt, the
+  type hashes from the type description JSON files of the same packages.
 - data/msgs/: Ruby files generated from those definitions by
-  tools/asterism_msggen.rb (each file names the definition it was made
-  from).
+  tools/asterism_msggen.rb (each file names, at its top, the definition and
+  the package it was made from and the package's license).
 - test/msgs/golden_cdr.tsv and test/msgs/test_type_hashes.txt: values
   computed by ROS 2's tools (rclpy, rosidl) in a ROS 2 Jazzy image.
 

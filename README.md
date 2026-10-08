@@ -71,9 +71,18 @@ ruby examples/ros2_talker.rb --router tcp/192.168.10.2:7447 [--service NAME]
 ## License
 
 MIT (LICENSE) for Asterism's code. The ROS 2 definitions in
-`tools/ros2_jazzy/`, the types generated from them in `data/msgs/` and the
-fixtures computed by ROS 2's tools in `test/msgs/` are under the Apache
-License 2.0 (NOTICE, `data/msgs/LICENSE-Apache-2.0.txt`).
+`tools/ros2_jazzy/` (with the package.xml of their packages), the types
+generated from them in `data/msgs/` and the fixtures computed by ROS 2's
+tools in `test/msgs/` are under the Apache License 2.0 (NOTICE,
+`data/msgs/NOTICE`, `data/msgs/LICENSE-Apache-2.0.txt`). Each generated
+type names its package and license at its top. The gem `asterism` is
+therefore `MIT` and `Apache-2.0`, each for its own files.
+
+Not in this repository: the gems Asterism depends on are not bundled.
+`msgpack` (CRuby) and `asterism-zenoh` (the CRuby Zenoh binding, which in
+turn fetches zenoh-c at build time; see its README) are installed by
+RubyGems, and on mruby / PicoRuby the Zenoh binding is the separate mrbgem
+`picoruby-asterism-zenoh`. Their licenses are their own.
 
 ---
 

@@ -7,3 +7,11 @@ example_interfaces). The definitions are licensed under the Apache
 License, Version 2.0 (LICENSE-Apache-2.0.txt), and so are these files.
 Copyright in the definitions belongs to their authors (Open Source
 Robotics Foundation, Inc. and the ROS 2 contributors).
+
+The definitions come from https://github.com/ros2/common_interfaces
+(std_msgs, geometry_msgs, sensor_msgs), https://github.com/ros2/rcl_interfaces
+(builtin_interfaces, service_msgs) and https://github.com/ros2/example_interfaces,
+as distributed with ROS 2 Jazzy. Each file states its package and license at
+its top. The asterism repository (https://github.com/ruby-asterism/asterism)
+keeps the definitions themselves (tools/ros2_jazzy) and the generator; its
+own code is under the MIT License.

@@ -20,6 +20,17 @@ class TestLayout < Minitest::Test
     assert File.file?(File.join(ROOT, "data/msgs/LICENSE-Apache-2.0.txt"))
   end
 
+  # Every bundled type states its package and license at its top (taken from
+  # the package.xml kept in tools/ros2_jazzy).
+  def test_bundled_types_state_their_license
+    Dir.glob(File.join(ROOT, "data/msgs/**/*.rb")).each do |f|
+      pkg = f.delete_prefix(File.join(ROOT, "data/msgs/")).split("/").first
+      head = File.foreach(f).first(4).join
+      assert_includes head, "of the package #{pkg}.", f
+      assert_includes head, "# License: Apache License 2.0, as the definition (package.xml of #{pkg}).", f
+    end
+  end
+
   def test_mrbgem_definition
     rake = File.read(File.join(ROOT, "mrbgem.rake"))
     assert_includes rake, "MRuby::Gem::Specification.new('picoruby-asterism')"

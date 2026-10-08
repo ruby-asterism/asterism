@@ -19,7 +19,8 @@
 #    into a temporary directory.
 # 2. Checks every type hash asterism_msggen.rb computes against the type
 #    description JSON of the image; any mismatch stops here.
-# 3. Copies the definitions used into tools/ros2_jazzy/ and writes the
+# 3. Copies the definitions used, with the package.xml of their packages
+#    (origin and license), into tools/ros2_jazzy/ and writes the
 #    JSON's hashes to tools/ros2_jazzy/type_hashes.txt (the tests read these,
 #    so they run without docker).
 # 4. Regenerates data/msgs/ from tools/bundled_types.txt.
@@ -135,7 +136,7 @@ end
 names = File.readlines(LIST).map(&:strip).reject { |l| l.empty? || l.start_with?("#") }
 
 Dir.mktmpdir("asterism_ros2_types") do |tmp|
-  dirs = PACKAGES.flat_map { |p| %W[#{p}/msg #{p}/srv] }.join(" ")
+  dirs = PACKAGES.flat_map { |p| %W[#{p}/msg #{p}/srv #{p}/package.xml] }.join(" ")
   sh!("docker run --rm #{IMAGE} bash -c 'cd /opt/ros/jazzy/share && tar cf - #{dirs} 2>/dev/null; true' " \
       "| tar xf - -C #{tmp}")
   reg = AsterismMsgGen::Registry.new([tmp])
@@ -162,6 +163,13 @@ Dir.mktmpdir("asterism_ros2_types") do |tmp|
     dst = File.join(VENDOR, rel)
     FileUtils.mkdir_p(File.dirname(dst))
     FileUtils.cp(src, dst)
+  end
+  # Each package's package.xml goes with its definitions: it records where
+  # they come from and their license, which the generated files state.
+  reg.sources.map { |src| src.delete_prefix("#{tmp}/").split("/").first }.uniq.each do |pkg|
+    xml = File.join(tmp, pkg, "package.xml")
+    abort "no package.xml for #{pkg} in the image" unless File.file?(xml)
+    FileUtils.cp(xml, File.join(VENDOR, pkg, "package.xml"))
   end
   File.open(File.join(VENDOR, "type_hashes.txt"), "w") do |f|
     f.puts "# RIHS01 type hashes from the type description JSON of ROS 2 Jazzy"
