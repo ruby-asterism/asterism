@@ -8,6 +8,13 @@ Gem::Specification.new do |s|
                   "a ROS 2 node speaking rmw_zenoh's wire format, CDR and generated message types. " \
                   "Pure Ruby; the same files are the mrbgem for mruby / PicoRuby."
   s.authors = ["Katsuhiko Kageyama"]
+  s.homepage = "https://github.com/ruby-asterism/asterism"
+  s.metadata = {
+    "homepage_uri" => s.homepage,
+    "source_code_uri" => "https://github.com/ruby-asterism/asterism",
+    "bug_tracker_uri" => "https://github.com/ruby-asterism/asterism/issues",
+    "rubygems_mfa_required" => "true"
+  }
   # Both licenses apply, each to its own files: MIT for Asterism's code,
   # Apache-2.0 for the bundled ROS 2 message types (data/msgs, made from
   # ROS 2's definitions; NOTICE and data/msgs/LICENSE-Apache-2.0.txt ship

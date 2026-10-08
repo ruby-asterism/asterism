@@ -8,6 +8,8 @@
 #                      types and the layout (CRuby only: no Zenoh, no docker)
 #   rake test:objects  the object layer and Asterism::ROS between CRuby
 #                      sessions; needs asterism-zenoh (below)
+#   rake gem           build pkg/asterism-<version>.gem (publishing is a
+#                      separate, manual step)
 #   rake types:check   compare the type hashes with a ROS 2 Jazzy image
 #   rake types:refresh regenerate tools/ros2_jazzy and data/msgs from it
 #                      (both need docker and ASTERISM_ROS2_IMAGE)
@@ -69,6 +71,15 @@ namespace :types do
   desc "Regenerate tools/ros2_jazzy and data/msgs from a ROS 2 Jazzy image (ASTERISM_ROS2_IMAGE)"
   task :refresh do
     sh RbConfig.ruby, File.join(ROOT, "tools/ros2_types.rb"), "--image", ros2_image!
+  end
+end
+
+desc "Build the gem file into pkg/ (only builds; publishing is a separate, manual step)"
+task :gem do
+  require_relative "lib/asterism/version"
+  mkdir_p File.join(ROOT, "pkg")
+  Dir.chdir(ROOT) do
+    sh "gem", "build", "asterism.gemspec", "--output", "pkg/asterism-#{Asterism::VERSION}.gem"
   end
 end
 

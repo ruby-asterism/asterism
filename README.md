@@ -23,14 +23,33 @@ each Ruby:
 - mruby / PicoRuby: [picoruby-asterism-zenoh](https://github.com/ruby-asterism/picoruby-asterism-zenoh)
   (over zenoh-pico)
 
-Neither gem is published yet.
+Neither gem is on rubygems.org yet (version 0.1.0 builds from these
+repositories with `rake gem`).
 
 ## Using it
 
-CRuby (needs CRuby 3.2+, the msgpack gem and asterism-zenoh):
+CRuby (needs CRuby 3.2+ and a C compiler):
 
 ```
-ruby -I lib -I ../asterism-zenoh/lib your_script.rb    # require "asterism"
+gem install asterism          # also installs asterism-zenoh (the same version) and msgpack
+ruby -e 'require "asterism"'
+```
+
+`asterism-zenoh` compiles its C extension when it is installed and
+downloads the prebuilt zenoh-c for the machine (x86_64 / aarch64 Linux,
+glibc or musl; x86_64 / arm64 macOS), checked against a pinned sha256; see
+its README for machines without network access. Until the gems are
+published, build them from the two repositories and install the files:
+
+```
+(cd ../asterism-zenoh && rake gem) && rake gem
+gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.1.0.gem pkg/asterism-0.1.0.gem
+```
+
+From the working trees, without installing:
+
+```
+ruby -I lib -I ../asterism-zenoh/lib your_script.rb    # after `rake compile` in ../asterism-zenoh
 ```
 
 `Asterism::ROS::TYPE_PATH` is `data/msgs` there; add your own directories.
