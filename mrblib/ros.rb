@@ -3,7 +3,7 @@
 # R3). The message and service types are generated from .msg / .srv files
 # (tools/asterism_msggen.rb) and loaded when the application asks for them.
 #
-#   s = Asterism::Zenoh::Session.open("tcp/192.168.10.2:7447")
+#   s = Asterism::Zenoh::Session.open("tcp/192.0.2.2:7447")
 #   node = Asterism::ROS::Node.new(s, "fmruby_talker")
 #   str = Asterism::ROS.require_type("std_msgs/msg/String")
 #   pub = node.publisher("/chatter", str)

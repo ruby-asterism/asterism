@@ -62,10 +62,10 @@ installed gem.
 ```
 # objects: join the app "demo" of Family mruby's asterism_demo, call a board,
 # and answer its calls (its keys s / a call screen.say / apu.play here)
-ruby examples/node.rb --router tcp/192.168.10.2:7447 [--peer fmruby-04a774]
+ruby examples/node.rb --router tcp/192.0.2.2:7447 [--peer fmruby-aaaaaa]
 
 # ROS 2: geometry_msgs/Twist on /cmd_vel, then AddTwoInts calls
-ruby examples/ros2_talker.rb --router tcp/192.168.10.2:7447 [--service NAME]
+ruby examples/ros2_talker.rb --router tcp/192.0.2.2:7447 [--service NAME]
 ```
 
 ## License
@@ -96,19 +96,19 @@ and the short pauses while waiting; otherwise `Time` and `sleep`. Besides
 
 ```ruby
 # on the machine that has the object
-Asterism.connect("tcp/192.168.10.2:7447", node: "fmruby-90bce8", app: "demo")
+Asterism.connect("tcp/192.0.2.2:7447", node: "fmruby-bbbbbb", app: "demo")
 Asterism.expose("apu", apu, methods: [:play, :stop])
 loop { Asterism.poll; ... }               # in the update loop
 
 # on another machine
-Asterism.connect("tcp/192.168.10.2:7447", node: "linux", app: "demo")
-apu = Asterism["fmruby-90bce8/demo/apu"]  # <node>/<app>/<object>
+Asterism.connect("tcp/192.0.2.2:7447", node: "linux", app: "demo")
+apu = Asterism["fmruby-bbbbbb/demo/apu"]  # <node>/<app>/<object>
 apu.play("t120 o4 cdefg")                 # runs there, returns its value
 apu.respond_to?(:play)                    # => true (from the exposed list)
 f = apu.async.play("cde")                 # does not wait
 f.done?; f.value
 Asterism.each("*/*/apu") { |a| a.stop }   # every apu alive now
-Asterism.nodes                            # => ["linux", "fmruby-90bce8"]
+Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 ```
 
 ## API
@@ -214,7 +214,7 @@ Topics and services. The message and service types are generated from
 the application asks for them.
 
 ```ruby
-s = Asterism::Zenoh::Session.open("tcp/192.168.10.2:7447")
+s = Asterism::Zenoh::Session.open("tcp/192.0.2.2:7447")
 node = Asterism::ROS::Node.new(s, "fmruby_talker")       # namespace: "/", domain: 0
 str = Asterism::ROS.require_type("std_msgs/msg/String")
 pub = node.publisher("/chatter", str)

@@ -1,8 +1,8 @@
 # CRuby as a ROS 2 node (rmw_zenoh): publishes geometry_msgs/Twist on
 # /cmd_vel and calls an example_interfaces/AddTwoInts service.
 #
-#   ruby examples/ros2_talker.rb --router tcp/192.168.10.2:7447
-#        [--count 5] [--service /fmruby_service_fmruby_04a774/add_two_ints]
+#   ruby examples/ros2_talker.rb --router tcp/192.0.2.2:7447
+#        [--count 5] [--service /fmruby_service_fmruby_aaaaaa/add_two_ints]
 #
 # ROS 2 sees the node as /cruby_talker: `ros2 topic echo /cmd_vel`, and a
 # board running fmruby-core's ros2_types shows the Twist in its window. The

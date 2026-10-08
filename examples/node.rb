@@ -1,8 +1,8 @@
 # A CRuby Asterism node: exposes objects that boards (and other Ruby
 # processes) can call, and calls the objects of a board.
 #
-#   ruby examples/node.rb --router tcp/192.168.10.2:7447 [--node cruby]
-#        [--peer fmruby-04a774] [--calls 20] [--serve 30]
+#   ruby examples/node.rb --router tcp/192.0.2.2:7447 [--node cruby]
+#        [--peer fmruby-aaaaaa] [--calls 20] [--serve 30]
 #
 # It joins the app "demo", the app of fmruby-core's asterism_demo, so a
 # board running asterism_demo takes this node as its peer: it calls

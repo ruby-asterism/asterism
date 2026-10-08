@@ -1,6 +1,6 @@
 # Asterism: Ruby objects on other machines, called like local ones.
 #
-#   Asterism.connect("tcp/192.168.10.2:7447", node: "fmruby-90bce8", app: "demo")
+#   Asterism.connect("tcp/192.0.2.2:7447", node: "fmruby-bbbbbb", app: "demo")
 #   Asterism.expose("apu", apu, methods: [:play, :stop])
 #   p = Asterism["linux/demo/apu"]     # <node>/<app>/<object>
 #   p.play("cde")                      # waits for the answer (2 s by default)
