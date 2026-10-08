@@ -23,7 +23,15 @@ each Ruby:
 - mruby / PicoRuby: [picoruby-asterism-zenoh](https://github.com/ruby-asterism/picoruby-asterism-zenoh)
   (over zenoh-pico)
 
-Neither gem is on rubygems.org yet (version 0.2.0 builds from these
+Which zenoh-c features the CRuby binding exposes (configuration and TLS,
+scouting, publishers, queriers, the advanced publisher / subscriber,
+events, key expressions, timestamps) and which zenoh-pico could offer is
+in asterism-zenoh's
+[feature coverage](https://github.com/ruby-asterism/asterism-zenoh/blob/main/docs/feature_coverage.md).
+The ones added in 0.3.0 are CRuby only: the shared layer (`mrblib/`) does
+not use them.
+
+Neither gem is on rubygems.org yet (version 0.3.0 builds from these
 repositories with `rake gem`).
 
 ## Using it
@@ -31,7 +39,7 @@ repositories with `rake gem`).
 CRuby (needs CRuby 3.2+ and a C compiler):
 
 ```
-gem install asterism          # also installs asterism-zenoh (~> 0.2.0) and msgpack
+gem install asterism          # also installs asterism-zenoh (~> 0.3.0) and msgpack
 ruby -e 'require "asterism"'
 ```
 
@@ -44,7 +52,7 @@ build but not yet tested. To install from the repositories instead:
 
 ```
 (cd ../asterism-zenoh && rake gem) && rake gem
-gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.2.0.gem pkg/asterism-0.2.0.gem
+gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.3.0.gem pkg/asterism-0.3.0.gem
 ```
 
 From the working trees, without installing:
@@ -115,17 +123,41 @@ Asterism::Zenoh.open("tcp/192.0.2.2:7447") do |s|   # closed when the block ends
   s.liveliness_watch("asterism/**") { |key, alive| puts "#{key} #{alive}" }
   s.run                                               # receive on this thread until Ctrl-C
 end
+
+# asterism-zenoh 0.3.0 (CRuby only)
+Asterism::Zenoh.open("tls/192.0.2.2:7447",
+                     config: { "transport/link/tls/root_ca_certificate" => "ca.pem" }) do |s|
+  pub = s.publisher("home/pc/temp", encoding: "text/plain", priority: :data_high)
+  pub.on_matching { |listening| puts "listened to: #{listening}" }
+  pub.put(21.5)
+  s.delete("home/pc/old")
+  s.subscribe("home/**") { |sm| p [sm.kind, sm.encoding, sm.timestamp&.to_time] }
+  q = s.querier("home/**/status", timeout: 1.0)
+  q.get(errors: true).each { |r| puts r.error? ? "error: #{r.payload}" : r.payload }
+  latched = s.advanced_publisher("home/pc/mode", cache: 1, sample_miss_detection: true)
+  latched.put("eco")                                 # late subscribers with history: get it
+  s.advanced_subscriber("home/**/mode", history: true) { |sm| puts sm.payload }
+  s.on_transport { |ev| puts "#{ev.zid} #{ev.kind}" }
+  s.run
+end
 ```
 
 | Call | Notes |
 |---|---|
-| `Asterism::Zenoh.open(locator = nil, mode:, listen:, interval: 0.002)` | `Session.open` wrapped in a `Connection`. With a block: yields it, closes it after (also on an exception), returns the block's value |
+| `Asterism::Zenoh.open(locator = nil, mode:, listen:, scouting:, timestamping:, config:, config_file:, interval: 0.002)` | `Session.open` wrapped in a `Connection`. With a block: yields it, closes it after (also on an exception), returns the block's value |
 | `Connection.new(session)` | wraps a session opened with the polled API |
-| `s.put(key, payload, attachment: nil)` | a payload that is not a String is sent as `to_s` |
+| `s.put(key, payload, attachment: nil, **opts)` | a payload that is not a String is sent as `to_s`. opts: `encoding:`, `priority:`, `congestion_control:`, `express:`, `reliability:`, `timestamp:`, `allowed_destination:` (asterism-zenoh's `Session#put`) |
+| `s.delete(key, **opts)` | subscribers get a `Sample` of kind `:delete` |
+| `s.publisher(key, **opts)` | a `Publisher`: `put(payload, attachment:, encoding:, timestamp:)`, `delete`, `matching?`, `on_matching { \|listening\| }` (on the receiving thread), `close` |
+| `s.advanced_publisher(key, cache:, sample_miss_detection:, publisher_detection:, **opts)` | the same `Publisher`, keeping the last samples for late subscribers (ROS 2's transient local) |
+| `s.advanced_subscriber(key, depth: 16, history:, recovery:, **opts) { \|sample\| }` | a `Subscription` that also gets the publishers' history; `on_publisher { \|key, alive\| }`, `on_miss { \|miss\| }` |
+| `s.querier(key, timeout: 2.0, **opts)` | a `Querier`: `get(params:, payload:, attachment:, encoding:, errors: false)` like `s.get`, `matching?`, `on_matching`, `close` |
+| `s.on_transport(history: false) { \|ev\| }` / `s.on_link { \|ev\| }` | a `TransportEvent` / `LinkEvent` (`added?` / `removed?`, `zid`, ...) on the receiving thread; returns an `Events` (`close`) |
+| `s.peer_zids`, `router_zids`, `transports`, `links`, `new_timestamp`, `declare_keyexpr(key)` | as in asterism-zenoh |
 | `s.subscribe(key, depth: 16) { \|sample\| }` | the block gets each `Sample` on the receiving thread. Returns a `Subscription` (`close` ends it) |
 | `s.subscribe(key, depth: 16)` | a `Subscription` to take from: `each(timeout: nil)` waits for samples (an Enumerator without a block; Enumerable), `each_pending` gives what is there now as Samples, `pending` / `received` / `dropped` / `closed?` / `close` |
 | `s.queryable(key, depth: 16, complete: false) { \|q\| }` | each query on the receiving thread, finished when the block returns. `q.reply(payload)` answers on the queryable's key (when it has no wildcard), `q.reply(key, payload, attachment:)` as before. Without a block, `each(timeout:)` yields the queries |
-| `s.get(key, timeout: 2.0, params:, payload:, attachment:, target:, consolidation:)` | an Enumerator of `Reply`; each iteration sends the get again. With a block: yields each, returns their number |
+| `s.get(key, timeout: 2.0, params:, payload:, attachment:, target:, consolidation:, errors: false, **opts)` | an Enumerator of `Reply`; each iteration sends the get again. With a block: yields each, returns their number. `errors: true` also yields the error replies (`reply.error?`); opts: `encoding:`, `priority:`, `congestion_control:`, `express:`, `accept_replies:` |
 | `s.liveliness(key)` | a token (`close`) |
 | `s.liveliness_watch(key) { \|key, alive\| }` | on the receiving thread; the tokens alive now come first. Without a block, `each` yields `Liveliness` (`key`, `alive?`) |
 | `s.liveliness_get(key, timeout: 2.0)` | the keys alive now (an Array) |
@@ -134,8 +166,9 @@ end
 | `s.on_error { \|error, where\| }` | what the blocks raise (`StandardError`); without a handler it is printed with `warn`. Receiving goes on |
 | `s.session`, `zid`, `peers`, `poll`, `closed?`, `close` | |
 
-`Sample`, `Reply` (`key`, `payload`, `attachment`; `text` is the payload as
-UTF-8) and `Liveliness` are `Data` values, so they work with pattern
+`Sample`, `Reply` (`key`, `payload`, `attachment`, and since 0.3.0 `kind`,
+`encoding`, `timestamp` and the rest; `text` is the payload as UTF-8; both
+are asterism-zenoh's) and `Liveliness` are `Data` values, so they work with pattern
 matching: `case sample in {key: %r{/temp\z}, payload:}`. Times are seconds
 here (the polled API counts milliseconds).
 
