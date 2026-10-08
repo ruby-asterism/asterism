@@ -15,6 +15,12 @@ module TestHelper
     port
   end
 
+  # The load path entry asterism-zenoh comes from (nil when it is an
+  # installed gem).
+  def self.zenoh_lib
+    $LOAD_PATH.find { |p| File.exist?(File.join(p, "asterism/zenoh.rb")) }
+  end
+
   def self.router
     r = ENV["ASTERISM_TEST_ROUTER"]
     r.nil? || r.empty? ? nil : r

@@ -51,8 +51,9 @@ class TestAsterismObjects < Minitest::Test
       loc = "tcp/127.0.0.1:#{TestHelper.free_port}"
       mode = "peer"
     end
-    lib = [File.expand_path("../asterism-zenoh/lib", __dir__), File.expand_path("../asterism/lib", __dir__)]
-    child = IO.popen([RbConfig.ruby, "-I", lib[0], "-I", lib[1], "-e", CHILD, loc, mode], "r+")
+    # The child loads the same asterism and asterism-zenoh as this process.
+    lib = [File.expand_path("../lib", __dir__), TestHelper.zenoh_lib].compact
+    child = IO.popen([RbConfig.ruby, *lib.flat_map { |l| ["-I", l] }, "-e", CHILD, loc, mode], "r+")
     assert_equal "ready", child.gets&.strip
     if router
       Asterism.connect(loc, node: "parent", app: "t")

@@ -1,0 +1,27 @@
+Asterism
+Copyright (c) 2026 Katsuhiko Kageyama
+Asterism's own code is under the MIT License (LICENSE).
+
+This repository also contains material made from ROS 2 message and service
+definitions, which are licensed under the Apache License, Version 2.0
+(data/msgs/LICENSE-Apache-2.0.txt):
+
+- tools/ros2_jazzy/: the .msg / .srv definitions as distributed with ROS 2
+  Jazzy (/opt/ros/jazzy/share/<package>/), unchanged, and type_hashes.txt,
+  the type hashes from the type description JSON files of the same
+  packages.
+- data/msgs/: Ruby files generated from those definitions by
+  tools/asterism_msggen.rb (each file names the definition it was made
+  from).
+- test/msgs/golden_cdr.tsv and test/msgs/test_type_hashes.txt: values
+  computed by ROS 2's tools (rclpy, rosidl) in a ROS 2 Jazzy image.
+
+The ROS 2 packages these come from, all "Apache License 2.0" in their
+package.xml:
+
+- std_msgs, geometry_msgs, sensor_msgs (ros2/common_interfaces)
+- builtin_interfaces, service_msgs (ros2/rcl_interfaces)
+- example_interfaces (ros2/example_interfaces)
+
+Copyright in the definitions belongs to their authors (Open Source Robotics
+Foundation, Inc. and the ROS 2 contributors); see those repositories.

@@ -10,7 +10,10 @@
 # This node then calls the board's info.status and screen.say (the text
 # shows in the board's window), times --calls more status calls, and keeps
 # answering for --serve seconds.
-$LOAD_PATH.unshift(File.expand_path("../asterism-zenoh/lib", __dir__), File.expand_path("../asterism/lib", __dir__))
+# This repository's lib, and asterism-zenoh's next to it (ASTERISM_ZENOH_DIR
+# overrides; an installed asterism-zenoh gem works too).
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__),
+                   File.join(ENV["ASTERISM_ZENOH_DIR"] || File.expand_path("../../asterism-zenoh", __dir__), "lib"))
 require "asterism"
 require "optparse"
 

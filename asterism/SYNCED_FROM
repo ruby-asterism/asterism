@@ -1,4 +1,0 @@
-fmruby-core e901fb28bb3458d973ea96a3e58e326cab23b865
-lib/add/picoruby-asterism/mrblib -> asterism/lib/asterism/shared
-flash/usr/share/asterism/msgs -> asterism/data/msgs
-lib/add/picoruby-asterism/tools/asterism_msggen.rb -> asterism/tools/asterism_msggen.rb
