@@ -16,3 +16,8 @@ require_relative "asterism/version"
   require_relative "../mrblib/#{f}"
 end
 require_relative "asterism/cruby"
+# The Ruby-like API on top (blocks, a receiving thread, Enumerators,
+# pattern matching): CRuby only, see README "The Ruby-like API".
+%w[runner zenoh objects ros].each do |f|
+  require_relative "asterism/cruby/#{f}"
+end

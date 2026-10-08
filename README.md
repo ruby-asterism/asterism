@@ -9,11 +9,11 @@ repository holds the pure Ruby layers, written once for every Ruby:
 |---|---|
 | `mrblib/` | The layers: remote objects (`Asterism`), `Asterism::CDR`, `Asterism::ROS`. The source of truth for both forms below |
 | `mrbgem.rake` | The mrbgem `picoruby-asterism` (mruby / PicoRuby): compiles `mrblib/` |
-| `asterism.gemspec`, `lib/` | The CRuby gem `asterism`: `lib/asterism.rb` loads `mrblib/` as it is, `lib/asterism/cruby.rb` adds what CRuby needs |
+| `asterism.gemspec`, `lib/` | The CRuby gem `asterism`: `lib/asterism.rb` loads `mrblib/` as it is, `lib/asterism/cruby.rb` adds what CRuby needs, `lib/asterism/cruby/` the Ruby-like API (CRuby only) |
 | `data/msgs/` | ROS 2 message types generated from ROS 2 Jazzy's definitions (Apache-2.0, see NOTICE) |
 | `tools/` | The type generator `asterism_msggen.rb`, the Jazzy definitions it reads, `ros2_types.rb` (refreshes them from a ROS 2 image) |
-| `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions) |
-| `examples/` | CRuby: `node.rb` (objects with a board), `ros2_talker.rb` (Twist and AddTwoInts with ROS 2) |
+| `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_api_*.rb` (the Ruby-like API) |
+| `examples/` | CRuby: `node.rb` (objects with a board), `node_polled.rb` (the same with the polled API of the boards), `ros2_talker.rb` (topics, a timer, services with ROS 2), `zenoh.rb` (plain Zenoh) |
 
 The Zenoh binding underneath is a separate gem with the same Ruby API on
 each Ruby:
@@ -23,7 +23,7 @@ each Ruby:
 - mruby / PicoRuby: [picoruby-asterism-zenoh](https://github.com/ruby-asterism/picoruby-asterism-zenoh)
   (over zenoh-pico)
 
-Neither gem is on rubygems.org yet (version 0.1.0 builds from these
+Neither gem is on rubygems.org yet (version 0.2.0 builds from these
 repositories with `rake gem`).
 
 ## Using it
@@ -31,7 +31,7 @@ repositories with `rake gem`).
 CRuby (needs CRuby 3.2+ and a C compiler):
 
 ```
-gem install asterism          # also installs asterism-zenoh (~> 0.1.0) and msgpack
+gem install asterism          # also installs asterism-zenoh (~> 0.2.0) and msgpack
 ruby -e 'require "asterism"'
 ```
 
@@ -44,7 +44,7 @@ build but not yet tested. To install from the repositories instead:
 
 ```
 (cd ../asterism-zenoh && rake gem) && rake gem
-gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.1.0.gem pkg/asterism-0.1.0.gem
+gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.2.0.gem pkg/asterism-0.2.0.gem
 ```
 
 From the working trees, without installing:
@@ -67,13 +67,14 @@ these repositories.
 ## Tests
 
 ```
-rake                  # both suites
+rake                  # every suite
 rake test:msgs        # generator, type hashes, CDR, bundled types (CRuby only; no Zenoh, no docker)
 rake test:objects     # objects and Asterism::ROS between CRuby sessions over a local peer link
-ASTERISM_TEST_ROUTER=tcp/127.0.0.1:7447 rake test:objects   # the same through a zenohd router
+rake test:api         # the Ruby-like API (blocks, receiving threads, Enumerators)
+ASTERISM_TEST_ROUTER=tcp/127.0.0.1:7447 rake test:objects test:api   # the same through a zenohd router
 ```
 
-`test:objects` needs asterism-zenoh: built next to this repository
+`test:objects` and `test:api` need asterism-zenoh: built next to this repository
 (`../asterism-zenoh`, its `rake compile`), or `ASTERISM_ZENOH_DIR`, or the
 installed gem.
 
@@ -83,10 +84,146 @@ installed gem.
 # objects: join the app "demo" of Family mruby's asterism_demo, call a board,
 # and answer its calls (its keys s / a call screen.say / apu.play here)
 ruby examples/node.rb --router tcp/192.0.2.2:7447 [--peer fmruby-aaaaaa]
+ruby examples/node_polled.rb --router tcp/192.0.2.2:7447    # the same, polled
 
-# ROS 2: geometry_msgs/Twist on /cmd_vel, then AddTwoInts calls
+# ROS 2: /chatter and /cmd_vel from a timer, /chatter_in printed,
+# /cruby/add_two_ints served, AddTwoInts calls
 ruby examples/ros2_talker.rb --router tcp/192.0.2.2:7447 [--service NAME]
+
+# plain Zenoh: run two with different --name
+ruby examples/zenoh.rb --router tcp/192.0.2.2:7447 --name pc1
 ```
+
+## The Ruby-like API (CRuby only)
+
+On CRuby, `require "asterism"` also brings a layer with blocks, a receiving
+thread, Enumerators and pattern matching (`lib/asterism/cruby/`). It is
+built on the polled API below, which stays as it is: code written for a
+board still runs unchanged on CRuby, and code using this layer does not run
+on a board.
+
+### Zenoh
+
+```ruby
+Asterism::Zenoh.open("tcp/192.0.2.2:7447") do |s|   # closed when the block ends
+  s.subscribe("home/**") { |sample| puts "#{sample.key} = #{sample.payload}" }
+  s.queryable("home/pc/status") { |q| q.reply("ok") }
+  s.put("home/pc/hello", "hi")
+  s.get("home/**/status").each { |reply| p reply }   # until every answer came or the time ran out
+  sub = s.subscribe("sensor/temp")                    # no block: take from it
+  sub.each.lazy.map { _1.payload.to_f }.first(3)      # waits for the samples
+  s.liveliness_watch("asterism/**") { |key, alive| puts "#{key} #{alive}" }
+  s.run                                               # receive on this thread until Ctrl-C
+end
+```
+
+| Call | Notes |
+|---|---|
+| `Asterism::Zenoh.open(locator = nil, mode:, listen:, interval: 0.002)` | `Session.open` wrapped in a `Connection`. With a block: yields it, closes it after (also on an exception), returns the block's value |
+| `Connection.new(session)` | wraps a session opened with the polled API |
+| `s.put(key, payload, attachment: nil)` | a payload that is not a String is sent as `to_s` |
+| `s.subscribe(key, depth: 16) { \|sample\| }` | the block gets each `Sample` on the receiving thread. Returns a `Subscription` (`close` ends it) |
+| `s.subscribe(key, depth: 16)` | a `Subscription` to take from: `each(timeout: nil)` waits for samples (an Enumerator without a block; Enumerable), `each_pending` gives what is there now as Samples, `pending` / `received` / `dropped` / `closed?` / `close` |
+| `s.queryable(key, depth: 16, complete: false) { \|q\| }` | each query on the receiving thread, finished when the block returns. `q.reply(payload)` answers on the queryable's key (when it has no wildcard), `q.reply(key, payload, attachment:)` as before. Without a block, `each(timeout:)` yields the queries |
+| `s.get(key, timeout: 2.0, params:, payload:, attachment:, target:, consolidation:)` | an Enumerator of `Reply`; each iteration sends the get again. With a block: yields each, returns their number |
+| `s.liveliness(key)` | a token (`close`) |
+| `s.liveliness_watch(key) { \|key, alive\| }` | on the receiving thread; the tokens alive now come first. Without a block, `each` yields `Liveliness` (`key`, `alive?`) |
+| `s.liveliness_get(key, timeout: 2.0)` | the keys alive now (an Array) |
+| `s.start` / `s.stop` / `s.running?` | receive on a thread of its own |
+| `s.run` | receive on this thread until `stop`, the connection closing, or Ctrl-C (returns nil) |
+| `s.on_error { \|error, where\| }` | what the blocks raise (`StandardError`); without a handler it is printed with `warn`. Receiving goes on |
+| `s.session`, `zid`, `peers`, `poll`, `closed?`, `close` | |
+
+`Sample`, `Reply` (`key`, `payload`, `attachment`; `text` is the payload as
+UTF-8) and `Liveliness` are `Data` values, so they work with pattern
+matching: `case sample in {key: %r{/temp\z}, payload:}`. Times are seconds
+here (the polled API counts milliseconds).
+
+### Objects
+
+```ruby
+Asterism.connect("tcp/192.0.2.2:7447", node: "mypc", app: "demo") do |net|   # closed after
+  net.expose("screen", Screen.new, methods: [:say])
+  net.on_join  { |node| puts "joined #{node}" }
+  net.on_leave { |node| puts "left #{node}" }
+  board = net["fmruby-aaaaaa/demo/screen"]
+  board.say("hello")
+  net.each("*/demo/info").map(&:status)               # Enumerable
+  net.run                                             # answer calls until Ctrl-C
+end
+```
+
+| Call | Notes |
+|---|---|
+| `Asterism.connect(...) { \|net\| }` | yields an `Asterism::Net`, `Asterism.close` when the block ends; returns the block's value. Without a block, as before |
+| `Asterism.net` | the `Net` of the connection made without a block (nil when not connected) |
+| `net.expose` / `unexpose` / `exposed` | as `Asterism.expose`. The methods run on the receiving thread, in `run`, or in whatever polls |
+| `net[path, timeout: nil]` | a proxy (`timeout` in seconds) |
+| `net.each(pattern = "**")` | the proxies alive now; an Enumerator without a block |
+| `net.on_join { \|node\| }` / `net.on_leave { \|node\| }` | a node appeared (its node token or an object) / is gone. The nodes there already join on the first ticks; when the connection is lost every known node leaves |
+| `net.start` / `stop` / `run` / `running?` / `on_error` | as for Zenoh. A method of an exposed object that raises is answered to its caller as a `RemoteError`, as before; `on_error` gets what `on_join` / `on_leave` raise |
+| `net.nodes`, `node_id`, `app`, `connected?`, `lost_reason`, `poll`, `close` | |
+
+### ROS 2
+
+```ruby
+Asterism::ROS.connect("tcp/192.0.2.2:7447", domain: 0) do |ros|
+  node = ros.node("ruby_talker")
+  chatter = node.publisher("/chatter", "std_msgs/msg/String")
+  chatter << { data: "hello from Ruby" }
+  node.subscribe("/odom", "nav_msgs/msg/Odometry") { |odom| puts odom.pose.pose.position.x }
+  node.every(0.1) { chatter << { data: Time.now.to_s } }
+  node.service("/add_ruby", "example_interfaces/srv/AddTwoInts") { |req| { sum: req.a + req.b } }
+  p node.call("/add_two_ints", "example_interfaces/srv/AddTwoInts", a: 1, b: 2).sum
+  node.topic("/scan", "sensor_msgs/msg/LaserScan").each.lazy.first(1)
+  ros.spin                                            # until Ctrl-C
+end
+```
+
+| Call | Notes |
+|---|---|
+| `Asterism::ROS.connect(locator = nil, domain: 0, type_path: nil, mode:, listen:)` | opens a session; yields an `Asterism::ROS::Connection` and closes it after. `type_path:` adds directories to `TYPE_PATH` |
+| `ros.node(name, namespace: "/", enclave: "/")` | an `Asterism::ROS::Node` (every method of the polled API) with the calls below |
+| `node.subscribe(topic, type) { \|msg, info\| }` | on the receiving thread; `info` is the `Attachment` or nil. Without a block: a subscription whose `each(timeout: nil)` waits for `[msg, info]` (Enumerable) |
+| `node.topic(topic, type).each` | subscribes for the iteration and withdraws after it (`first(n)`, `break`, the time running out) |
+| `node.every(seconds) { }` | a timer on the receiving thread; returns a `Timer` (`cancel`, `fired`). It keeps the period; after a long stall it starts again from now instead of firing the missed times |
+| `node.service(name, type) { \|req\| response }` | answered while the connection spins (or from `node.poll`). What the block raises goes to `on_error`, and that request gets no answer |
+| `node.call(name, type, request = nil, timeout: 2.0, **fields)` | waits for the response |
+| `ros.spin` (`run`) / `start` / `stop` / `running?` / `on_error` / `close` | |
+| `ros.zenoh` | the `Asterism::Zenoh::Connection` underneath (same receiving thread) |
+
+`type` is a generated type or its name (`"geometry_msgs/msg/Twist"`).
+Messages and `Attachment` take part in pattern matching on CRuby
+(`deconstruct_keys`): `case msg in {linear: {x:}, angular: {z:}}`. A type
+that is not bundled: generate it with `tools/asterism_msggen.rb -o DIR`
+(see [Message types](#message-types)) and give the directory, as
+`Asterism::ROS.connect(..., type_path: "DIR")` or
+`Asterism::ROS::TYPE_PATH << "DIR"`; then pass its name like any other.
+
+### Threads
+
+- Each connection has at most one receiving thread, and only when the
+  application asks for it (`start`), or the application's own thread
+  inside `run` / `spin`. The blocks (subscriptions, queryables, timers,
+  services, exposed objects, `on_join`) run there, one after another. **A
+  block that takes long delays everything else that connection receives**:
+  hand long work to a thread or a Queue of your own.
+- zenoh-c never calls Ruby: it fills the queues, and the receiving thread
+  empties them every 2 ms (`interval:`) with the polled API.
+- A tick of the receiving thread holds the connection's lock (a `Monitor`;
+  for the object layer, which is one connection per process,
+  `Asterism::LOCK`). The application's calls into the same layer take it
+  too, so the layers written for one thread are never entered by two at
+  once.
+- A call that waits for an answer (`proxy.method`, `node.call`) from another
+  thread while the receiving thread runs does not poll by itself: it waits
+  until a tick brings the answer. On the receiving thread itself (a block
+  that calls), or while nothing receives, it polls as on the boards.
+- `stop`, `close` and the end of the block wait for the receiving thread to
+  end; no thread is left behind. When the connection is lost the receiving
+  thread ends by itself, and waiting calls raise as before.
+- Enumerators (`each`, `get`, `topic`) wait on the thread that iterates
+  them.
 
 ## License
 
@@ -108,7 +245,8 @@ RubyGems, and on mruby / PicoRuby the Zenoh binding is the separate mrbgem
 
 # The API
 
-The same on every Ruby. The examples use PicoRuby's `sleep_ms`; on CRuby
+The same on every Ruby (the polled API; CRuby adds the layer described in
+[The Ruby-like API](#the-ruby-like-api-cruby-only)). The examples use PicoRuby's `sleep_ms`; on CRuby
 write `sleep`. When PicoRuby's `Machine` is there it is used for the clock
 and the short pauses while waiting; otherwise `Time` and `sleep`. Besides
 `Asterism::Zenoh`, the layers need a `MessagePack` module with `pack` /

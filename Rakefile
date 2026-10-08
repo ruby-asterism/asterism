@@ -3,11 +3,14 @@
 #   - CRuby gem `asterism`: asterism.gemspec, lib/asterism.rb loads mrblib/
 #   - mrbgem `picoruby-asterism` (mruby / PicoRuby): mrbgem.rake + mrblib/
 #
-#   rake               both test suites (the default)
+#   rake               all the test suites (the default)
 #   rake test:msgs     the generator, the type hashes, CDR, the bundled
 #                      types and the layout (CRuby only: no Zenoh, no docker)
 #   rake test:objects  the object layer and Asterism::ROS between CRuby
 #                      sessions; needs asterism-zenoh (below)
+#   rake test:api      the Ruby-like API of CRuby (lib/asterism/cruby/):
+#                      blocks, receiving threads, Enumerators; needs
+#                      asterism-zenoh too
 #   rake gem           build pkg/asterism-<version>.gem (publishing is a
 #                      separate, manual step)
 #   rake types:check   compare the type hashes with a ROS 2 Jazzy image
@@ -51,10 +54,24 @@ namespace :test do
     incs += ["-I", lib] if lib
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_asterism.rb")
   end
+
+  desc "The Ruby-like API of CRuby (blocks, threads, Enumerators) for Zenoh, objects and ROS 2 (needs asterism-zenoh)"
+  task :api do
+    lib = asterism_zenoh_lib
+    unless lib || asterism_zenoh_gem?
+      abort "asterism-zenoh not found: build it next to this repository " \
+            "(../asterism-zenoh, rake compile), set ASTERISM_ZENOH_DIR, or install the gem"
+    end
+    incs = ["-I", File.join(ROOT, "lib")]
+    incs += ["-I", lib] if lib
+    Dir.glob(File.join(ROOT, "test/test_api_*.rb")).sort.each do |t|
+      sh RbConfig.ruby, *incs, t
+    end
+  end
 end
 
-desc "Run both test suites"
-task test: ["test:msgs", "test:objects"]
+desc "Run the test suites"
+task test: ["test:msgs", "test:objects", "test:api"]
 
 def ros2_image!
   img = ENV["ASTERISM_ROS2_IMAGE"].to_s
