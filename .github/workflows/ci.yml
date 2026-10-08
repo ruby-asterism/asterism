@@ -1,0 +1,106 @@
+# CI for asterism.
+#
+# test:    test:msgs (no Zenoh), then test:objects and test:api against
+#          asterism-zenoh built from the main branch of its repository
+#          (checked out next to this one, `rake compile`, ASTERISM_ZENOH_DIR).
+# install: `rake gem` in both repositories, `gem install --local` of
+#          asterism-zenoh then asterism (msgpack, a registry dependency, is
+#          installed first), then test/installed_check.rb from outside the
+#          checkouts.
+#
+# Runners: ubuntu-latest with Ruby 3.2 / 3.3 / 3.4, and one macOS leg
+# (macos-latest, arm64). The other CPUs and macOS on Intel are covered by
+# asterism-zenoh's own CI, where the native code is; this gem is pure Ruby.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ASTERISM_ZENOH_REF: main
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, Ruby ${{ matrix.ruby }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        ruby: ["3.2", "3.3", "3.4"]
+        include:
+          - os: macos-latest
+            ruby: "3.4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: asterism
+      - uses: actions/checkout@v4
+        with:
+          repository: ruby-asterism/asterism-zenoh
+          ref: ${{ env.ASTERISM_ZENOH_REF }}
+          path: asterism-zenoh
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+      - name: msgpack
+        run: gem install --no-document msgpack
+      - name: asterism-zenoh (fetch zenoh-c, compile)
+        working-directory: asterism-zenoh
+        run: rake compile
+      - name: rake test:msgs
+        working-directory: asterism
+        run: rake test:msgs
+      - name: rake test:objects
+        working-directory: asterism
+        run: rake test:objects
+        timeout-minutes: 10
+        env:
+          ASTERISM_ZENOH_DIR: ${{ github.workspace }}/asterism-zenoh
+      - name: rake test:api
+        working-directory: asterism
+        run: rake test:api
+        timeout-minutes: 10
+        env:
+          ASTERISM_ZENOH_DIR: ${{ github.workspace }}/asterism-zenoh
+
+  install:
+    name: gem install (${{ matrix.os }}, Ruby ${{ matrix.ruby }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        ruby: ["3.4"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: asterism
+      - uses: actions/checkout@v4
+        with:
+          repository: ruby-asterism/asterism-zenoh
+          ref: ${{ env.ASTERISM_ZENOH_REF }}
+          path: asterism-zenoh
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+      - name: rake gem (both)
+        run: |
+          (cd asterism-zenoh && rake gem)
+          (cd asterism && rake gem)
+      - name: gem install --local (asterism-zenoh, then asterism)
+        run: |
+          gem install --no-document msgpack
+          gem install --local --no-document asterism-zenoh/pkg/asterism-zenoh-*.gem
+          gem install --local --no-document asterism/pkg/asterism-*.gem
+          gem list asterism
+      - name: require "asterism" + put / subscribe from the installed gems
+        working-directory: ${{ runner.temp }}
+        run: ruby "$GITHUB_WORKSPACE/asterism/test/installed_check.rb"
+        timeout-minutes: 5
