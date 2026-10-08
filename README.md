@@ -31,15 +31,16 @@ repositories with `rake gem`).
 CRuby (needs CRuby 3.2+ and a C compiler):
 
 ```
-gem install asterism          # also installs asterism-zenoh (the same version) and msgpack
+gem install asterism          # also installs asterism-zenoh (~> 0.1.0) and msgpack
 ruby -e 'require "asterism"'
 ```
 
 `asterism-zenoh` compiles its C extension when it is installed and
 downloads the prebuilt zenoh-c for the machine (x86_64 / aarch64 Linux,
 glibc or musl; x86_64 / arm64 macOS), checked against a pinned sha256; see
-its README for machines without network access. Until the gems are
-published, build them from the two repositories and install the files:
+its README for machines without network access. Linux needs glibc 2.34 or
+newer (Ubuntu 22.04, Debian 12 and later) or musl; macOS is supported by the
+build but not yet tested. To install from the repositories instead:
 
 ```
 (cd ../asterism-zenoh && rake gem) && rake gem
