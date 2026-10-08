@@ -18,6 +18,12 @@ module Asterism
     end
   end
 
+  # A monotonic clock (deadlines and node.every must not jump with the
+  # wall clock).
+  def self.now_ms
+    Process.clock_gettime(Process::CLOCK_MONOTONIC, :millisecond)
+  end
+
   def self.error_reply(klass, message)
     ::MessagePack.pack(["error", klass.to_s, message.to_s], compatibility_mode: true)
   end

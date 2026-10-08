@@ -160,7 +160,7 @@ end
 | `net.expose` / `unexpose` / `exposed` | as `Asterism.expose`. The methods run on the receiving thread, in `run`, or in whatever polls |
 | `net[path, timeout: nil]` | a proxy (`timeout` in seconds) |
 | `net.each(pattern = "**")` | the proxies alive now; an Enumerator without a block |
-| `net.on_join { \|node\| }` / `net.on_leave { \|node\| }` | a node appeared (its node token or an object) / is gone. The nodes there already join on the first ticks; when the connection is lost every known node leaves |
+| `net.on_join { \|node\| }` / `net.on_leave { \|node\| }` | `Asterism.on_join` / `on_leave` of the polled API (the same blocks, told from `Asterism.poll`), here on the receiving thread; what they raise goes to `on_error` |
 | `net.start` / `stop` / `run` / `running?` / `on_error` | as for Zenoh. A method of an exposed object that raises is answered to its caller as a `RemoteError`, as before; `on_error` gets what `on_join` / `on_leave` raise |
 | `net.nodes`, `node_id`, `app`, `connected?`, `lost_reason`, `poll`, `close` | |
 
@@ -184,17 +184,17 @@ end
 |---|---|
 | `Asterism::ROS.connect(locator = nil, domain: 0, type_path: nil, mode:, listen:)` | opens a session; yields an `Asterism::ROS::Connection` and closes it after. `type_path:` adds directories to `TYPE_PATH` |
 | `ros.node(name, namespace: "/", enclave: "/")` | an `Asterism::ROS::Node` (every method of the polled API) with the calls below |
-| `node.subscribe(topic, type) { \|msg, info\| }` | on the receiving thread; `info` is the `Attachment` or nil. Without a block: a subscription whose `each(timeout: nil)` waits for `[msg, info]` (Enumerable) |
+| `node.subscribe(topic, type) { \|msg, info\| }` | the polled API's (run from `node.poll`), here on the receiving thread; `info` is the `Attachment` or nil. Without a block: a subscription whose `each(timeout: nil)` waits for `[msg, info]` (Enumerable) |
 | `node.topic(topic, type).each` | subscribes for the iteration and withdraws after it (`first(n)`, `break`, the time running out) |
-| `node.every(seconds) { }` | a timer on the receiving thread; returns a `Timer` (`cancel`, `fired`). It keeps the period; after a long stall it starts again from now instead of firing the missed times |
+| `node.every(seconds) { }` | the polled API's timer (run from `node.poll`), here on the receiving thread; returns a `Timer` (`cancel`, `fired`) |
 | `node.service(name, type) { \|req\| response }` | answered while the connection spins (or from `node.poll`). What the block raises goes to `on_error`, and that request gets no answer |
 | `node.call(name, type, request = nil, timeout: 2.0, **fields)` | waits for the response |
 | `ros.spin` (`run`) / `start` / `stop` / `running?` / `on_error` / `close` | |
 | `ros.zenoh` | the `Asterism::Zenoh::Connection` underneath (same receiving thread) |
 
 `type` is a generated type or its name (`"geometry_msgs/msg/Twist"`).
-Messages and `Attachment` take part in pattern matching on CRuby
-(`deconstruct_keys`): `case msg in {linear: {x:}, angular: {z:}}`. A type
+Messages and `Attachment` take part in pattern matching (`deconstruct_keys`,
+on the boards too): `case msg in {linear: {x:}, angular: {z:}}`. A type
 that is not bundled: generate it with `tools/asterism_msggen.rb -o DIR`
 (see [Message types](#message-types)) and give the directory, as
 `Asterism::ROS.connect(..., type_path: "DIR")` or
@@ -276,7 +276,8 @@ Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 | `Asterism.connect(locator, node:, app:, mode: nil, listen: nil)` | `Asterism` | `locator`, `mode:`, `listen:` go to `Asterism::Zenoh::Session.open` (client of a router by default; `mode: :peer` with or without `listen:` without one). `node:` is this machine's ID, `app:` the application's name (one key chunk each: no `/ * $ ? #`, not starting with `@`; else `ArgumentError`). `Disconnected` when it cannot connect; `Error` when objects of the same `<node>/<app>` are already alive (a second copy of the application), or when already connected. Waits up to about 1.5 s for that check (a router answers at once). |
 | `Asterism.expose(name, obj, methods:)` | `"<node>/<app>/<name>"` | `methods:` is an Array of names, or a Hash `name => number of arguments` (checked before the call; `-1` or the Array form: any). `ArgumentError` when `obj` has no such public method. Exposing a name again replaces it. |
 | `Asterism.unexpose(name)` | true / false | |
-| `Asterism.poll` | true / false | Call from the update loop: polls Zenoh, answers the calls that came in, follows who is alive. `false` once the connection is closed or lost. |
+| `Asterism.poll` | true / false | Call from the update loop: polls Zenoh, answers the calls that came in, follows who is alive and calls the `on_join` / `on_leave` blocks. `false` once the connection is closed or lost. |
+| `Asterism.on_join { \|node\| }` / `Asterism.on_leave { \|node\| }` | `Asterism` | Another node appeared (its node token or one of its objects) / is gone (no token and no object left). The nodes there already join on the first polls after connecting; when the connection is lost, every node known until then leaves (on the next `Asterism.poll`). The blocks run from `Asterism.poll` only, never from the polling inside a waiting call; what they raise comes out of `Asterism.poll`. `Asterism.close` forgets them (a lost connection does not). |
 | `Asterism[path, timeout_ms = 2000]` | `Proxy` | `path` is `<node>/<app>/<object>` without wildcards (`ArgumentError`). Nothing is sent until a method is called. |
 | `proxy.<method>(*args, **kw)` | the remote return value | Waits for the answer (`timeout_ms`). `RemoteError` when it raised there or could not be called (not exposed: `NoMethodError`; wrong number of arguments: `ArgumentError`; no such object: `NameError`), `Timeout` when no answer came in time (also at once when nobody answers that key), `Disconnected`, `EncodeError` (before anything is sent) for a value MessagePack cannot carry. A block cannot be sent (`ArgumentError`). |
 | `proxy.async.<method>(...)` | `Future` | Sends and returns at once. `EncodeError` / `Disconnected` are raised here. |
@@ -352,6 +353,22 @@ took zenoh replies through blocks and fetched the meta from inside
 `respond_to_missing?`, overflowed the stack there. Make waiting calls from
 the update loop, or use `async`.
 
+The blocks the layers call (`Asterism.on_join` / `on_leave`, the ROS
+`node.subscribe` and `node.every` blocks) run from `Asterism.poll` /
+`node.poll`, that is on the update loop's stack, one Ruby block call deeper.
+The layers walk their lists with `while` loops so that nothing else stands
+between the update loop and the block. **Do not wait inside these blocks**
+(no proxy call, no `node.call` / `client.call`): note what came, and make
+the call from the update loop, or start a `call_async` / `async` call and
+look at it later.
+
+Measured on the P4 (Family mruby, 16 KB): an application with
+`on_join` / `on_leave` blocks, relaying calls with another machine in both
+directions at once, keeps 5.8 KB free (as before the blocks); a ROS node
+publishing from `node.every` and receiving through a `node.subscribe` block
+keeps 6.9 KB free, the same as polling `each_pending` by hand. Loading a
+nested type (`geometry_msgs/msg/Twist`) at start-up took 0.6 KB more.
+
 ## Limits
 
 - Objects cannot be passed by reference (a return value is a copy), blocks
@@ -360,6 +377,14 @@ the update loop, or use `async`.
   node; when one of them closes, the others still list the node through
   their objects, but a watcher may see the node token go away.
 - No authentication: a trusted LAN is assumed.
+- Pattern matching on the boards: PicoRuby's compiler (checked on Family
+  mruby's application VM) runs `case/in` with `deconstruct_keys`, nested
+  hash patterns, array patterns, guards, alternatives, ranges, pins and
+  `**rest`, but not two forms: a class as the value in a hash pattern
+  (`in {x: Float}` does not match) and, inside a block, binding a variable
+  of the enclosing method (`v = nil; list.each { |m| case m in {a: v} ... }`
+  leaves it nil). Put the `case` in a method of its own, as in the example
+  above.
 
 ## ROS 2 (rmw_zenoh): `Asterism::ROS` and `Asterism::CDR`
 
@@ -381,6 +406,17 @@ loop do
   s.poll
   pub << { data: "hello" }                               # or pub.publish(str.new(data: "hello"))
   sub.each_pending { |msg, info| puts "#{info && info.sequence}: #{msg.data}" }
+end
+
+# or with blocks, run from node.poll (in the update loop):
+node.every(1) { pub << { data: "tick" } }
+node.subscribe("/cmd_vel", "geometry_msgs/msg/Twist") { |msg, _info| drive(msg) }
+loop { node.poll }
+
+def drive(msg)
+  case msg                                               # deconstruct_keys
+  in { linear: { x: }, angular: { z: } } then move(x, z)
+  end
 end
 node.close                                               # or let the session close
 ```
@@ -409,7 +445,9 @@ end
 | `node.subscription(topic, type, qos: DEFAULT_QOS, depth: 16)` | `Subscription` | Subscribes and declares the subscription token. |
 | `sub.each_pending { \|msg, info\| }` | count | `info` is an `Attachment` (`sequence`, `stamp_ns`, `gid`) or nil. Samples that are not valid CDR are skipped and counted in `sub.errors`. |
 | `node.service(name, type, qos: DEFAULT_QOS, depth: 8) { \|req\| response }` | `Service` | Serves `name` (`ros2 service list`). The block gets a `type::Request` and returns a `type::Response` or a Hash of its fields. It runs from `node.poll` (or `service.handle_pending`), never behind the application. A request without rmw_zenoh's attachment, or that does not decode, is counted in `service.errors` and gets no answer. An exception from the block ends that request without an answer and is raised from `node.poll`. `service.handled`: answered so far. |
-| `node.poll(steps = 8)` | true / false | `session.poll(steps)`, then answers the requests waiting for this node's services. Returns what `session.poll` returns. |
+| `node.poll(steps = 8)` | true / false | `session.poll(steps)`, then answers the requests waiting for this node's services, then gives what came to the `subscribe` blocks and fires the `every` timers that are due. Returns what `session.poll` returns. A waiting `client.call` polls only the session and the services (`node.pump`), not the blocks. |
+| `node.subscribe(topic, type, qos: DEFAULT_QOS, depth: 16) { \|msg, info\| }` | `Subscription` | `node.subscription` whose messages (decoded, with their `Attachment` or nil) go to the block, from `node.poll`. `sub.close` ends it. Do not wait in the block (see [Stack](#stack)). |
+| `node.every(seconds) { }` | `Timer` | Calls the block every `seconds` (a Float works), the first time one period from now, from `node.poll` (so no more often than the update loop polls). It keeps the period; after a long stall it starts again from now instead of firing the missed times at once. `timer.cancel`, `timer.fired` (count), `timer.period`. Do not wait in the block. |
 | `node.client(name, type, qos: DEFAULT_QOS)` | `Client` | Declares the client token. |
 | `client.call(request = nil, timeout_ms: 2000, **fields)` | `type::Response` | Sends the request (a `type::Request`, a Hash, or the fields as keywords) and waits, polling the node (its services keep answering). `Asterism::ROS::Timeout` when no response came in time, at once when nobody serves the name; `Asterism::Zenoh::Error` when the session closed. |
 | `client.call_async(request = nil, timeout_ms: 2000, **fields)` | `Call` | Sends and returns at once. `call.done?` never waits (`node.poll` moves it on); `call.value` waits and returns the response or raises like `call`; `call.response` (nil until it came), `call.took_ms`, `call.sequence`. |

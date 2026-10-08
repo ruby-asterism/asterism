@@ -166,7 +166,7 @@ module Asterism
   # and Error when the same <node>/<app> is already on the network.
   def self.connect(locator, node:, app:, mode: nil, listen: nil)
     raise Error, "already connected (Asterism.close first)" if connected?
-    close
+    release
     node = check_name("node", node)
     app = check_name("app", app)
     begin
@@ -195,6 +195,7 @@ module Asterism
     @proxies = {}
     @depth = 0
     @lost = nil
+    @known = []    # the other nodes told to on_join so far
     self
   end
 
@@ -206,8 +207,9 @@ module Asterism
     found = false
     while true
       s.poll
+      ended = g.done? # before taking the replies (see Future#collect)
       found = true if g.each_reply.size > 0
-      break if found || g.done? || now_ms - t0 > 1500
+      break if found || ended || now_ms - t0 > 1500
       pause(WAIT_STEP_MS)
     end
     found
@@ -235,8 +237,17 @@ module Asterism
     @lost
   end
 
-  # Closes the connection (and with it every exposed object). Idempotent.
+  # Closes the connection (and with it every exposed object), and forgets
+  # the on_join / on_leave blocks. Idempotent.
   def self.close
+    release
+    @known = nil
+    @on_join = nil
+    @on_leave = nil
+    nil
+  end
+
+  def self.release
     s = @session
     @session = nil
     @objects = {}
@@ -247,7 +258,6 @@ module Asterism
     @node_token = nil
     @queryable = nil
     @watch = nil
-    nil
   end
 
   def self.session!
@@ -255,10 +265,11 @@ module Asterism
     @session
   end
 
+  # The connection went away: closed, but the next Asterism.poll still tells
+  # on_leave about every node known until then.
   def self.lost(reason)
     @lost = reason
-    close
-    @lost = reason
+    release
   end
 
   # ------------------------------------------------------------ exposing
@@ -300,10 +311,71 @@ module Asterism
   # ------------------------------------------------------------ polling
 
   # Call from the application's update loop. Answers the calls that came
-  # in and follows who is alive. false once the connection is closed.
+  # in, follows who is alive and calls the on_join / on_leave blocks. false
+  # once the connection is closed.
   def self.poll
-    return false unless @session
-    pump
+    ok = @session ? pump : false
+    tell_nodes
+    ok
+  end
+
+  # ------------------------------------------------------------ nodes coming and going
+
+  # on_join { |node| }: another node appeared (its node token or one of its
+  # objects). The nodes there already join on the first polls after
+  # connecting. on_leave { |node| }: a node is gone (no token and no object
+  # left); when the connection is lost, every node known until then leaves.
+  #
+  # The blocks run from Asterism.poll only, never from the polling inside a
+  # waiting call. What a block raises comes out of Asterism.poll (on CRuby
+  # with a receiving thread: to on_error). Asterism.close forgets them.
+  def self.on_join(&blk)
+    raise ArgumentError, "on_join needs a block" unless blk
+    (@on_join ||= []) << blk
+    self
+  end
+
+  def self.on_leave(&blk)
+    raise ArgumentError, "on_leave needs a block" unless blk
+    (@on_leave ||= []) << blk
+    self
+  end
+
+  # Compares the nodes alive now with those told before and calls the
+  # blocks for the difference.
+  def self.tell_nodes
+    known = @known
+    return if known.nil?
+    now = @session ? nodes : []
+    now.shift if @session # this node
+    joined = []
+    left = []
+    now.each { |n| joined << n unless known.include?(n) }
+    known.each { |n| left << n unless now.include?(n) }
+    # After a loss, everything has been told: nothing more to compare.
+    @known = @session ? now : nil
+    tell_each("on_join", @on_join, joined)
+    tell_each("on_leave", @on_leave, left)
+  end
+
+  # While loops, not each with a block: the blocks are the application's,
+  # and nothing else stands between them and the update loop on the stack.
+  def self.tell_each(where, blocks, names)
+    return if blocks.nil? || names.empty?
+    i = 0
+    while i < names.size
+      j = 0
+      while j < blocks.size
+        tell(where, blocks[j], names[i])
+        j += 1
+      end
+      i += 1
+    end
+  end
+
+  # One block for one node (CRuby routes what it raises to on_error).
+  def self.tell(_where, blk, node)
+    blk.call(node)
   end
 
   def self.pump

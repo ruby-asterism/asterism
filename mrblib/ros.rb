@@ -11,8 +11,11 @@
 #   add = Asterism::ROS.require_type("example_interfaces/srv/AddTwoInts")
 #   node.service("/add_two_ints_fmrb", add) { |req| { sum: req.a + req.b } }
 #   cli = node.client("/add_two_ints", add)
+#   node.subscribe("/cmd", "std_msgs/msg/String") { |msg, info| puts msg.data }
+#   node.every(1.0) { pub << { data: "tick" } }
 #   loop do
-#     node.poll                                   # session.poll + answer services
+#     node.poll                                   # session.poll, services, then the
+#                                                 # subscribe and every blocks
 #     pub << { data: "hello" }                    # or pub.publish(str.new(data: "hello"))
 #     sub.each_pending { |msg, info| puts msg.data }   # info: Attachment or nil
 #   end
@@ -138,6 +141,11 @@ module Asterism
         @sequence = sequence
         @stamp_ns = stamp_ns
         @gid = gid
+      end
+
+      # For pattern matching: case info in {sequence:, gid:}.
+      def deconstruct_keys(_keys)
+        { sequence: @sequence, stamp_ns: @stamp_ns, gid: @gid }
       end
 
       def encode
@@ -290,6 +298,20 @@ module Asterism
         end
       end
 
+      # For pattern matching: case msg in {linear: {x:}, angular: {z:}}.
+      # Nested messages stay messages (they match the same way).
+      def deconstruct_keys(keys)
+        h = {}
+        fs = self.class::FIELDS
+        i = 0
+        while i < fs.size
+          f = fs[i]
+          h[f] = __send__(f) if keys.nil? || keys.include?(f)
+          i += 1
+        end
+        h
+      end
+
       def ==(other)
         other.class == self.class && to_h == other.to_h
       end
@@ -318,6 +340,8 @@ module Asterism
         @next_id = 1
         @entities = []
         @services = []
+        @handled = []  # subscriptions with a block
+        @timers = []
         @key = "#{LIVELINESS_ROOT}/#{@domain}/#{@zid}/#{@nid}/#{@nid}/NN/" \
                "#{::Asterism::ROS.mangle(@enclave)}/#{::Asterism::ROS.mangle(@namespace)}/#{@name}"
         @token = session.liveliness(@key)
@@ -353,6 +377,35 @@ module Asterism
         e
       end
 
+      # Subscribes and gives each message (and its Attachment, or nil) to
+      # the block, from node.poll. Returns the Subscription (close ends it).
+      # The block runs on the update loop's stack: do not wait in it (no
+      # service call, no proxy call); start a call_async and look at it
+      # later instead.
+      def subscribe(topic, type, qos: DEFAULT_QOS, depth: 16, &handler)
+        raise ArgumentError, "subscribe needs a block (or use subscription)" unless handler
+        e = subscription(topic, type, qos: qos, depth: depth)
+        e.handler = handler
+        @handled << e
+        e
+      end
+
+      # Calls the block every `seconds` (the first time one period from now),
+      # from node.poll. Returns a Timer (cancel). It keeps the period; after
+      # a long stall it starts again from now instead of firing the missed
+      # times at once. As for subscribe: do not wait in the block.
+      def every(seconds, &blk)
+        raise ArgumentError, "every needs a block" unless blk
+        t = ::Asterism::ROS::Timer.new(self, seconds, blk)
+        @timers << t
+        t
+      end
+
+      def cancel_timer(timer)
+        @timers.delete(timer)
+        nil
+      end
+
       # node.call("/add_two_ints", AddTwoInts, a: 1, b: 2) -> response.
       # A client per service name is made on first use and kept.
       def call(service, type, request = nil, timeout_ms: ::Asterism::ROS::Client::DEFAULT_TIMEOUT_MS, **fields)
@@ -365,13 +418,75 @@ module Asterism
         c.call(request, timeout_ms: timeout_ms, **fields)
       end
 
-      # Polls the session (Asterism::Zenoh::Session#poll) and answers the
-      # requests that came in for this node's services. Returns what
-      # session.poll returns (false once the session is closed).
+      # Polls the session (Asterism::Zenoh::Session#poll), answers the
+      # requests that came in for this node's services, then gives the
+      # messages that came in to the subscribe blocks and fires the timers
+      # that are due. Returns what session.poll returns (false once the
+      # session is closed).
       def poll(steps = 8)
-        ok = @session.poll(steps)
-        @services.each { |sv| sv.handle_pending }
+        ok = pump(steps)
+        deliver
+        fire_timers
         ok
+      end
+
+      # What a waiting service call polls: the session and the services, not
+      # the subscribe / every blocks (those run from node.poll only).
+      def pump(steps = 8)
+        ok = @session.poll(steps)
+        i = 0
+        while i < @services.size
+          @services[i].handle_pending
+          i += 1
+        end
+        ok
+      end
+
+      # While loops, not each with a block: the application's blocks are
+      # called from here, and nothing else should stand between them and
+      # the update loop on the stack.
+      def deliver
+        i = 0
+        while i < @handled.size
+          sub = @handled[i]
+          if sub.closed?
+            @handled.delete_at(i)
+            next
+          end
+          got = sub.each_pending
+          j = 0
+          while j < got.size
+            handle(sub, got[j][0], got[j][1])
+            j += 1
+          end
+          i += 1
+        end
+      end
+
+      def fire_timers
+        return if @timers.empty?
+        now = ::Asterism::ROS.now_ms
+        due = []
+        i = 0
+        while i < @timers.size
+          due << @timers[i] if @timers[i].due?(now)
+          i += 1
+        end
+        i = 0
+        while i < due.size
+          fire(due[i], now)
+          i += 1
+        end
+      end
+
+      # One message for one subscribe block, one timer firing (CRuby routes
+      # what they raise to on_error).
+      def handle(sub, msg, info)
+        sub.handler.call(msg, info)
+      end
+
+      def fire(timer, now)
+        timer.fire(now)
       end
 
       # Withdraws the node and its publishers, subscriptions, services and
@@ -380,6 +495,8 @@ module Asterism
         @entities.each { |e| e.close }
         @entities = []
         @services = []
+        @handled = []
+        @timers = []
         @clients = {}
         @token.close if @token
         @token = nil
@@ -419,8 +536,10 @@ module Asterism
       # take their defaults).
       def publish(msg)
         raise ::Asterism::Zenoh::Error, "publisher closed" if @token.nil?
-        @sequence += 1
-        att = ::Asterism::ROS::Attachment.new(@sequence, ::Asterism::ROS.now_ns, @gid)
+        # Read once (a second thread may publish meanwhile on CRuby).
+        seq = @sequence + 1
+        @sequence = seq
+        att = ::Asterism::ROS::Attachment.new(seq, ::Asterism::ROS.now_ns, @gid)
         @session.put(@topic_key, @type.encode(msg), attachment: att.encode)
         nil
       end
@@ -440,6 +559,8 @@ module Asterism
 
     class Subscription
       attr_reader :topic_key, :token_key, :errors
+      # The block of node.subscribe (nil for node.subscription).
+      attr_accessor :handler
 
       def initialize(node, session, topic, type, qos, depth)
         @type = type
@@ -479,6 +600,47 @@ module Asterism
         @token.close if @token
         @token = nil
         nil
+      end
+
+      def closed?
+        @token.nil?
+      end
+    end
+
+    # node.every: a block called every period, from node.poll.
+    class Timer
+      # period: seconds as given; fired: how many times it ran.
+      attr_reader :period, :fired
+
+      def initialize(node, seconds, blk)
+        @period_ms = (seconds * 1000).to_i
+        raise ArgumentError, "the period must be positive" unless @period_ms > 0
+        @node = node
+        @period = seconds
+        @blk = blk
+        @next = ::Asterism::ROS.now_ms + @period_ms
+        @fired = 0
+      end
+
+      def due?(now_ms)
+        now_ms >= @next
+      end
+
+      # Keeps the period without drifting; after a long stall it starts
+      # again from now instead of firing the missed times at once.
+      def fire(now_ms)
+        @next += @period_ms
+        @next = now_ms + @period_ms if @next <= now_ms
+        @fired += 1
+        @blk.call
+      end
+
+      def cancel
+        @node.cancel_timer(self)
+      end
+
+      def inspect
+        "#<Asterism::ROS::Timer every #{@period} s>"
       end
     end
   end
@@ -600,6 +762,8 @@ module Asterism
       def collect
         return if @finished
         g = @get
+        # done? before taking the replies, as in Asterism::Future#collect.
+        ended = g.done?
         # The Array form, as in Asterism::Future (no block called from C).
         g.each_reply.each do |r|
           next unless @response.nil?
@@ -613,7 +777,7 @@ module Asterism
           end
         end
         now = ::Asterism::ROS.now_ms
-        if !@response.nil? || g.done? || now >= @deadline
+        if !@response.nil? || ended || now >= @deadline
           @nobody = @response.nil? && now < @deadline
           @finished = true
           @took_ms = now - @started
@@ -647,11 +811,15 @@ module Asterism
         raise ::Asterism::Zenoh::Error, "client closed" if @token.nil?
         req = request.nil? ? fields : request
         payload = @type::Request.encode(req)
-        @sequence += 1
-        att = ::Asterism::ROS::Attachment.new(@sequence, ::Asterism::ROS.now_ns, @gid)
+        # Read once into a local: the request and its Call carry the same
+        # number even when another thread (CRuby) calls through this client
+        # meanwhile.
+        seq = @sequence + 1
+        @sequence = seq
+        att = ::Asterism::ROS::Attachment.new(seq, ::Asterism::ROS.now_ns, @gid)
         g = @session.get(@service_key, timeout_ms, nil, payload, attachment: att.encode,
                          target: :all_complete, consolidation: :none)
-        ::Asterism::ROS::Call.new(self, g, @sequence, timeout_ms)
+        ::Asterism::ROS::Call.new(self, g, seq, timeout_ms)
       end
 
       # Sends the request and waits for the response (polling the node, so
@@ -661,9 +829,11 @@ module Asterism
         call_async(request, timeout_ms: timeout_ms, **fields).value
       end
 
+      # Polls the node's session and services (not its subscribe / every
+      # blocks) until the call is done.
       def wait_for(c)
         until c.done?
-          break unless @node.poll
+          break unless @node.pump
           break if c.done?
           ::Asterism::ROS.pause(WAIT_STEP_MS)
         end

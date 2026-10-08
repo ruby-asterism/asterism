@@ -61,7 +61,14 @@ class TestAsterismObjects < Minitest::Test
       Asterism.connect(loc, node: "parent", app: "t", mode: :peer)
     end
     Asterism.expose("back", Back.new, methods: [:name])
+    joined = []
+    left = []
+    Asterism.on_join { |n| joined << n }
+    Asterism.on_leave { |n| left << n }
     assert wait_for { Asterism.poll; Asterism.nodes.include?("child") }
+    # Told from Asterism.poll (the shared layer; no receiving thread here).
+    assert_equal ["child"], joined
+    assert_equal [], left
 
     calc = Asterism["child/t/calc"]
     assert_equal 5, calc.add(2, 3)
@@ -112,6 +119,11 @@ class TestAsterismObjects < Minitest::Test
       assert Asterism.lost_reason
       assert_raises(Asterism::Disconnected) { calc.add(1, 2) }
     end
+    # Gone (or the connection lost): told once.
+    assert_equal ["child"], left
+    Asterism.poll
+    assert_equal ["child"], left
+    assert_equal ["child"], joined
   ensure
     Asterism.close
     if child && !child.closed?
@@ -187,5 +199,75 @@ class TestAsterismROS < Minitest::Test
     end
     e = assert_raises(Asterism::ROS::Timeout) { @nb.call("/c1/nobody", add, a: 1, b: 1) }
     assert_match(/nobody serves it/, e.message)
+  end
+
+  # node.subscribe with a block and node.every, polled as on the boards:
+  # they run from node.poll, never from the polling of a waiting call.
+  def test_subscribe_block_and_every_from_poll
+    @na = Asterism::ROS::Node.new(@a, "c6_a")
+    @nb = Asterism::ROS::Node.new(@b, "c6_b")
+    add = "example_interfaces/srv/AddTwoInts"
+    got = []
+    ticks = 0
+    sub = @na.subscribe("/c6/chatter", "std_msgs/msg/String") { |msg, info| got << [msg.data, info.sequence] }
+    timer = @na.every(0.05) { ticks += 1 }
+    assert_equal 0.05, timer.period
+    @nb.service("/c6/add", add) { |req| { sum: req.a + req.b } }
+    pub = @nb.publisher("/c6/chatter", "std_msgs/msg/String")
+    sleep 0.3
+    pub << { data: "one" }
+    pub << { data: "two" }
+    assert wait_for { @na.poll; got.size == 2 }
+    assert_equal [["one", 1], ["two", 2]], got
+
+    # While @na waits for a service call, what comes in waits for node.poll.
+    stop = false
+    th = Thread.new { until stop; @nb.poll; sleep 0.002; end }
+    begin
+      pub << { data: "three" }
+      sleep 0.1
+      before = ticks
+      assert_equal 3, @na.call("/c6/add", add, a: 1, b: 2).sum
+      sleep 0.12
+      assert_equal 7, @na.call("/c6/add", add, a: 3, b: 4).sum
+      assert_equal 2, got.size, "no subscribe block inside a waiting call"
+      assert_equal before, ticks, "no timer inside a waiting call"
+    ensure
+      stop = true
+      th.join
+    end
+    @na.poll
+    assert_equal ["three", 3], got[2]
+    assert_operator ticks, :>, before
+
+    timer.cancel
+    n = ticks
+    sleep 0.12
+    @na.poll
+    assert_equal n, ticks, "no more after cancel"
+    sub.close
+    pub << { data: "four" }
+    sleep 0.1
+    @na.poll
+    assert_equal 3, got.size, "no more after close"
+    assert_raises(ArgumentError) { @na.subscribe("/c6/x", "std_msgs/msg/String") }
+    assert_raises(ArgumentError) { @na.every(0) { nil } }
+  end
+
+  # deconstruct_keys is in the shared layer (the boards' VM runs case/in).
+  def test_pattern_matching_on_messages
+    twist = Asterism::ROS.require_type("geometry_msgs/msg/Twist")
+    msg = twist.from(linear: { x: 0.5 }, angular: { z: -1.0 })
+    case msg
+    in { linear: { x: }, angular: { z: } }
+      assert_in_delta 0.5, x
+      assert_in_delta(-1.0, z)
+    end
+    assert_equal({ linear: msg.linear }, msg.deconstruct_keys([:linear]))
+    att = Asterism::ROS::Attachment.new(7, 9, "g" * 16)
+    case att
+    in { sequence: 7, stamp_ns: }
+      assert_equal 9, stamp_ns
+    end
   end
 end

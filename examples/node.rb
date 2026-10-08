@@ -3,7 +3,7 @@
 # examples/node_polled.rb is the same with the polled API of the boards.
 #
 #   ruby examples/node.rb --router tcp/192.0.2.2:7447 [--node cruby]
-#        [--peer fmruby-aaaaaa] [--calls 20] [--serve 30]
+#        [--peer fmruby-aaaaaa] [--calls 20] [--serve 30] [--relay]
 #
 # It joins the app "demo", the app of fmruby-core's asterism_demo, so a
 # board running asterism_demo takes this node as its peer: it calls
@@ -12,6 +12,13 @@
 # the board's window) while a receiving thread answers the board, times
 # --calls more status calls, then answers on the main thread (net.run) for
 # --serve seconds or until Ctrl-C.
+#
+# The board's key m calls info.relay here ten times; each relay calls the
+# board's info.status back before it answers (a nested call), and is logged.
+# With --relay, this node does the same to the board meanwhile: during
+# --serve it calls the board's info.relay ten at a time, over and over,
+# while the receiving thread answers the board. Pressing m on the board
+# then makes both sides call each other at once.
 # This repository's lib, and asterism-zenoh's next to it (ASTERISM_ZENOH_DIR
 # overrides; an installed asterism-zenoh gem works too).
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__),
@@ -26,6 +33,7 @@ OptionParser.new do |o|
   o.on("--peer ID", "the board to call (default: the first other node of the app)") { |v| opt[:peer] = v }
   o.on("--calls N", Integer) { |v| opt[:calls] = v }
   o.on("--serve SECONDS", Float) { |v| opt[:serve] = v }
+  o.on("--relay", "call the board's info.relay over and over while serving") { opt[:relay] = true }
 end.parse!
 
 def log(text)
@@ -74,7 +82,11 @@ class Info
 
   # A call that calls back (the board's key m).
   def relay(from, n)
-    [n, Asterism["#{from}/demo/info"].status["name"]]
+    t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    name = Asterism["#{from}/demo/info"].status["name"]
+    log(format("info.relay from %s #%d (called %s back: %.1f ms)", from, n, name,
+               (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t) * 1000))
+    [n, name]
   end
 
   def boom
@@ -129,12 +141,35 @@ Asterism.connect(opt[:router], node: opt[:node], app: opt[:app]) do |net|
     log("#{opt[:calls]} x info.status: min #{times.first} ms, median #{times[times.size / 2]} ms, max #{times.last} ms")
   end
 
-  net.stop
-  log("serving on the main thread for #{opt[:serve]} s (Ctrl-C ends)")
-  Thread.new do
-    sleep opt[:serve]
+  if opt[:relay]
+    # The receiving thread keeps answering the board; this thread relays.
+    log("relaying to #{peer} for #{opt[:serve]} s (Ctrl-C ends)")
+    until_t = Time.now + opt[:serve]
+    begin
+      while Time.now < until_t && net.connected?
+        ok = 0
+        _, ms = timed do
+          10.times do |i|
+            r = info.relay(opt[:node], i)
+            ok += 1 if r[0] == i
+          rescue Asterism::Error => e
+            log("relay #{i}: #{e.class}: #{e.message}")
+          end
+        end
+        log("relay x10 to #{peer}: #{ok} ok (#{ms} ms)")
+        sleep 0.2
+      end
+    rescue Interrupt
+      nil
+    end
+  else
     net.stop
+    log("serving on the main thread for #{opt[:serve]} s (Ctrl-C ends)")
+    Thread.new do
+      sleep opt[:serve]
+      net.stop
+    end
+    net.run
   end
-  net.run
   log(net.connected? ? "done" : "disconnected: #{net.lost_reason}")
 end

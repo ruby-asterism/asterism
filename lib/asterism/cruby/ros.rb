@@ -1,6 +1,8 @@
-# Asterism::ROS with blocks, a receiving thread, timers, Enumerators and
-# pattern matching (CRuby only). Asterism::ROS::Node and node.poll work as
-# on the boards; this is a layer on top of them.
+# Asterism::ROS with a receiving thread and Enumerators (CRuby only).
+# Asterism::ROS::Node, node.poll, the subscribe / every blocks and pattern
+# matching on messages are the shared ones (mrblib/ros.rb), as on the
+# boards; this layer runs node.poll on a receiving thread, routes what the
+# blocks raise to on_error, and adds the Enumerators.
 #
 #   Asterism::ROS.connect("tcp/192.0.2.2:7447", domain: 0) do |ros|
 #     node = ros.node("ruby_talker")
@@ -14,10 +16,10 @@
 #     ros.spin
 #   end
 #
-# Locking: each connection has one lock (its Runner's). A tick (services
-# answered, subscription blocks, timers) holds it; so do the calls that
-# change a node (making publishers, subscriptions, services, clients) and
-# publishing. A service call made on another thread while the connection
+# Locking: each connection has one lock (its Runner's). A tick (node.poll:
+# services answered, subscription blocks, timers) holds it; so do the calls
+# that change a node (making publishers, subscriptions, services, clients,
+# timers) and publishing. A service call made on another thread while the connection
 # spins waits for the ticks (Asterism::Runner#wait_until) instead of
 # polling by itself.
 module Asterism
@@ -115,26 +117,33 @@ module Asterism
     module Spinning
       def asterism_spin_on(runner)
         @asterism_runner = runner
-        @asterism_timers = []
         node = self
-        @asterism_task = runner.add do
-          next false unless node.poll
-          node.asterism_fire_timers
-        end
+        @asterism_task = runner.add { node.poll ? 0 : false }
       end
 
-      # As Node#poll. A service block that raised was reported (on_error)
-      # and its request left unanswered; polling goes on.
-      def poll(steps = 8)
+      # As Node#pump (node.poll and waiting service calls go through it). A
+      # service block that raised was reported (on_error) and its request
+      # left unanswered; polling goes on.
+      def pump(steps = 8)
         super
       rescue ::Asterism::ROS::ServiceFailed
         !@session.closed?
       end
 
+      # The subscribe and every blocks (called from node.poll): what they
+      # raise goes to on_error, and the others still run.
+      def handle(sub, msg, info)
+        @asterism_runner.guard("subscribe #{sub.topic_key}") { super }
+      end
+
+      def fire(timer, now)
+        @asterism_runner.guard("every #{timer.period}") { super }
+      end
+
       def asterism_runner = @asterism_runner
 
       # The calls that change the node take the connection's lock.
-      %i[subscription client close].each do |m|
+      %i[subscription client close every cancel_timer].each do |m|
         define_method(m) do |*args, **kw, &blk|
           @asterism_runner.lock.synchronize { super(*args, **kw, &blk) }
         end
@@ -168,16 +177,16 @@ module Asterism
         r.lock.synchronize { super(name, type, qos: qos, depth: depth, &wrapped) }
       end
 
-      # With a block: each message (and its Attachment, or nil) is given to
-      # it while the connection spins; returns the Subscription. Without: a
-      # Subscription whose each waits for messages (an Enumerator).
+      # With a block: as on the boards (Node#subscribe), the block gets each
+      # message (and its Attachment, or nil) from node.poll, here while the
+      # connection spins; returns the Subscription. Without: a Subscription
+      # whose each waits for messages (an Enumerator).
       def subscribe(topic, type, qos: DEFAULT_QOS, depth: 16, &blk)
         r = @asterism_runner
         r.lock.synchronize do
-          sub = subscription(topic, type, qos: qos, depth: depth)
+          sub = blk ? super : subscription(topic, type, qos: qos, depth: depth)
           sub.extend(Stream)
-          sub.asterism_stream_on(r, session)
-          sub.asterism_handle(&blk) if blk
+          sub.asterism_stream_on(session)
           sub
         end
       end
@@ -186,32 +195,6 @@ module Asterism
       # after it (node.topic("/scan", "sensor_msgs/msg/LaserScan").each.lazy.first(1)).
       def topic(topic, type, qos: DEFAULT_QOS, depth: 16)
         Topic.new(self, topic, type, qos, depth)
-      end
-
-      # Calls the block every `seconds` while the connection spins (the
-      # first time one period from now). Returns a Timer (cancel).
-      def every(seconds, &blk)
-        raise ArgumentError, "every needs a block" unless blk
-        raise ArgumentError, "the period must be positive" unless seconds.to_f > 0
-        t = Timer.new(self, seconds.to_f, blk)
-        @asterism_runner.lock.synchronize { @asterism_timers << t }
-        t
-      end
-
-      def asterism_cancel(timer)
-        @asterism_runner.lock.synchronize { @asterism_timers.delete(timer) }
-      end
-
-      # On the receiving thread, with the lock held.
-      def asterism_fire_timers
-        now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-        n = 0
-        @asterism_timers.dup.each do |t|
-          next unless t.due?(now)
-          n += 1
-          @asterism_runner.guard("every #{t.period}") { t.fire(now) }
-        end
-        n
       end
 
       # Node#call with the time limit in seconds as well: timeout: 2.0.
@@ -240,21 +223,8 @@ module Asterism
     module Stream
       include Enumerable
 
-      def asterism_stream_on(runner, session)
-        @asterism_runner = runner
+      def asterism_stream_on(session)
         @asterism_session = session
-        @asterism_task = nil
-      end
-
-      def asterism_handle(&blk)
-        r = @asterism_runner
-        sub = self
-        where = "subscribe #{@topic_key}"
-        @asterism_task = r.add do
-          got = sub.each_pending
-          got.each { |m| r.guard(where) { blk.call(m[0], m[1]) } }
-          got.size
-        end
       end
 
       # Yields each message (and its Attachment) as it comes, waiting for
@@ -262,7 +232,7 @@ module Asterism
       # timeout seconds. Without a block, an Enumerator.
       def each(timeout: nil, &blk)
         return enum_for(:each, timeout: timeout) unless blk
-        raise ::Asterism::Error, "this subscription has a block; its messages go there" if @asterism_task
+        raise ::Asterism::Error, "this subscription has a block; its messages go there" if handler
         deadline = timeout && (Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout)
         loop do
           got = each_pending
@@ -274,15 +244,6 @@ module Asterism
         self
       end
 
-      def closed?
-        @token.nil?
-      end
-
-      def close
-        @asterism_runner.remove(@asterism_task) if @asterism_task
-        @asterism_task = nil
-        super
-      end
     end
 
     # node.topic: subscribes while it is iterated.
@@ -318,52 +279,14 @@ module Asterism
       end
     end
 
-    # node.every
-    class Timer
-      attr_reader :period, :fired
-
-      def initialize(node, period, blk)
-        @node = node
-        @period = period
-        @blk = blk
-        @next = Process.clock_gettime(Process::CLOCK_MONOTONIC) + period
-        @fired = 0
-      end
-
-      def due?(now)
-        now >= @next
-      end
-
-      # Keeps the period without drifting; after a long stall it starts
-      # again from now instead of firing the missed times at once.
-      def fire(now)
-        @next += @period
-        @next = now + @period if @next <= now
-        @fired += 1
-        @blk.call
-      end
-
-      def cancel
-        @node.asterism_cancel(self)
-        nil
-      end
-    end
-
     class Client
       # Prepended: a call made on another thread while the connection
       # spins waits for the ticks instead of polling the node by itself.
       # (Calls from a board's update loop are on one thread; here the
       # application may call from several.)
+      # (The sequence number is read once in the shared call_async, so
+      # several threads may call through one client without a lock.)
       module Waiting
-        # Taken while a request goes out: the sequence number a request
-        # carries and the one its Call waits for must be the same, also
-        # when several threads call through one client.
-        SEND_LOCK = Mutex.new
-
-        def call_async(*args, **kw)
-          SEND_LOCK.synchronize { super }
-        end
-
         def wait_for(c)
           loop do
             r = ::Asterism::Runner.for(@session)
@@ -377,22 +300,6 @@ module Asterism
         end
       end
       prepend Waiting
-    end
-
-    # Pattern matching on messages (CRuby): case msg in {linear: {x:}}.
-    class Message
-      def deconstruct_keys(keys)
-        fs = self.class::FIELDS
-        h = {}
-        fs.each { |f| h[f] = __send__(f) if keys.nil? || keys.include?(f) }
-        h
-      end
-    end
-
-    class Attachment
-      def deconstruct_keys(_keys)
-        { sequence: @sequence, stamp_ns: @stamp_ns, gid: @gid }
-      end
     end
   end
 end

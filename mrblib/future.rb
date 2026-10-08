@@ -70,11 +70,16 @@ module Asterism
     def collect
       return if @finished
       g = @get
+      # done? before taking the replies: with a binding whose replies come
+      # in on another thread (zenoh-c), a reply and the end of the get may
+      # both arrive between the two; read the other way round, the get
+      # would look finished with its reply still queued.
+      ended = g.done?
       # The Array form, not a block: a block called from C costs another
       # interpreter entry on the C stack, and this runs inside nested waits.
       replies = g.each_reply
       @reply = replies[0][1] if @reply.nil? && replies.size > 0
-      if !@reply.nil? || g.done? || ::Asterism.now_ms >= @deadline || !::Asterism.connected?
+      if !@reply.nil? || ended || ::Asterism.now_ms >= @deadline || !::Asterism.connected?
         @finished = true
         @took = ::Asterism.now_ms - @started
       end

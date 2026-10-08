@@ -26,7 +26,7 @@ module Asterism
   # The polled API, entered under LOCK. Prepended to the Asterism module's
   # singleton class, so the shared methods themselves are not changed.
   module Locked
-    %i[expose unexpose poll nodes [] call_async meta connected? exposed].each do |m|
+    %i[expose unexpose poll nodes [] call_async meta connected? exposed on_join on_leave].each do |m|
       define_method(m) do |*args, **kw, &blk|
         ::Asterism::LOCK.synchronize { super(*args, **kw, &blk) }
       end
@@ -36,7 +36,14 @@ module Asterism
     # (also on an exception); returns the block's value. Without a block,
     # as before (returns Asterism).
     def connect(locator, node:, app:, mode: nil, listen: nil, &blk)
-      ::Asterism::LOCK.synchronize { super(locator, node: node, app: app, mode: mode, listen: listen) }
+      ::Asterism::LOCK.synchronize do
+        super(locator, node: node, app: app, mode: mode, listen: listen)
+        # The Net of a connection that was lost (not closed) belongs to the
+        # old session.
+        old = @net
+        @net = nil
+        old&.release
+      end
       return self unless blk
       net = ::Asterism.net
       begin
@@ -53,6 +60,14 @@ module Asterism
       @net = nil
       net&.release
       ::Asterism::LOCK.synchronize { super }
+    end
+
+    # The on_join / on_leave blocks (called from Asterism.poll): with a Net,
+    # what they raise goes to its on_error and the other blocks still run.
+    def tell(where, blk, node)
+      net = @net
+      return super unless net
+      net.runner.guard(where) { super }
     end
 
     # Lists under the lock, yields outside it (the block may make calls).
@@ -107,10 +122,9 @@ module Asterism
 
     def initialize
       @runner = Runner.new(::Asterism.instance_variable_get(:@session), lock: ::Asterism::LOCK, name: "asterism")
-      @join = []
-      @leave = []
-      @known = []
-      @runner.add { tick }
+      # One tick: Asterism.poll (answers the calls, tells on_join /
+      # on_leave); false once the connection is gone.
+      @runner.add { ::Asterism.poll ? 0 : false }
     end
 
     def node_id = ::Asterism.node_id
@@ -146,18 +160,16 @@ module Asterism
     end
     include Enumerable
 
-    # on_join { |node| }: a node (other than this one) appeared: its node
-    # token or one of its objects. The nodes there already are reported on
-    # the first ticks after connecting. Runs on the receiving thread.
+    # on_join { |node| } / on_leave { |node| }: Asterism.on_join /
+    # on_leave, the same as on the boards (called from Asterism.poll), here
+    # on the receiving thread. What they raise goes to on_error.
     def on_join(&blk)
-      ::Asterism::LOCK.synchronize { @join << blk }
+      ::Asterism.on_join(&blk)
       self
     end
 
-    # on_leave { |node| }: a node is gone (no token and no object left).
-    # When the connection is lost, every node known until then leaves.
     def on_leave(&blk)
-      ::Asterism::LOCK.synchronize { @leave << blk }
+      ::Asterism.on_leave(&blk)
       self
     end
 
@@ -207,24 +219,6 @@ module Asterism
 
     def inspect
       "#<Asterism::Net #{node_id}/#{app}#{running? ? ' running' : ''}>"
-    end
-
-    private
-
-    # One tick, with LOCK held: poll (answers the calls), then tell the
-    # node changes. false once the connection is gone (after telling that
-    # every node left).
-    def tick
-      lost = !::Asterism.poll
-      now = lost ? [] : ::Asterism.nodes
-      now.shift # this node
-      joined = now - @known
-      left = @known - now
-      @known = now
-      joined.each { |n| @join.each { |b| @runner.guard("on_join") { b.call(n) } } }
-      left.each { |n| @leave.each { |b| @runner.guard("on_leave") { b.call(n) } } }
-      return false if lost
-      joined.size + left.size
     end
   end
 end
