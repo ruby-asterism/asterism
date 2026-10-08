@@ -58,7 +58,7 @@ module Asterism
     def self.mangle(name)
       s = name.to_s
       return "%" if s.empty? || s == "/"
-      out = ""
+      out = "".dup
       i = 0
       n = s.bytesize
       while i < n
@@ -104,7 +104,7 @@ module Asterism
     # rmw_zenoh hashes the entity's liveliness key the same way (with XXH3);
     # receivers only use the GID to tell publishers apart.
     def self.gid_for(key)
-      out = ""
+      out = "".dup
       lane = 0
       while lane < 4
         h = 0x811c9dc5 ^ (lane * 0x9e3779b9 & 0xffffffff)
@@ -225,7 +225,7 @@ module Asterism
 
     # Asterism::ROS::<Pkg>::<Name>, or nil.
     def self.type_constant(pkg, name)
-      mod_name = ""
+      mod_name = "".dup  # a fresh String: literals may be frozen (Ruby 4)
       pkg.split("_").each do |w|
         mod_name << w.byteslice(0, 1).upcase << w.byteslice(1, w.bytesize - 1) if w.bytesize > 0
       end

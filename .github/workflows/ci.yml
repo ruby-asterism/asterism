@@ -8,7 +8,7 @@
 #          installed first), then test/installed_check.rb from outside the
 #          checkouts.
 #
-# Runners: ubuntu-latest with Ruby 3.2 / 3.3 / 3.4, and one macOS leg
+# Runners: ubuntu-latest with Ruby 3.2 / 3.3 / 3.4 / 4.0, and one macOS leg
 # (macos-latest, arm64). The other CPUs and macOS on Intel are covered by
 # asterism-zenoh's own CI, where the native code is; this gem is pure Ruby.
 name: CI
@@ -33,7 +33,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        ruby: ["3.2", "3.3", "3.4"]
+        ruby: ["3.2", "3.3", "3.4", "4.0"]
         include:
           - os: macos-latest
             ruby: "3.4"
@@ -69,6 +69,16 @@ jobs:
         timeout-minutes: 10
         env:
           ASTERISM_ZENOH_DIR: ${{ github.workspace }}/asterism-zenoh
+      # String literals may become frozen by default in a future Ruby:
+      # run the tests once more with them frozen.
+      - name: tests with frozen string literals
+        if: matrix.ruby == '4.0'
+        working-directory: asterism
+        run: rake test:msgs test:objects test:api
+        timeout-minutes: 15
+        env:
+          ASTERISM_ZENOH_DIR: ${{ github.workspace }}/asterism-zenoh
+          RUBYOPT: --enable-frozen-string-literal
 
   install:
     name: gem install (${{ matrix.os }}, Ruby ${{ matrix.ruby }})
@@ -77,7 +87,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        ruby: ["3.4"]
+        ruby: ["3.4", "4.0"]
     steps:
       - uses: actions/checkout@v4
         with:
