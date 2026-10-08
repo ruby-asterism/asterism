@@ -4,6 +4,10 @@
 #
 #   ruby examples/node.rb --router tcp/192.0.2.2:7447 [--node cruby]
 #        [--peer fmruby-aaaaaa] [--calls 20] [--serve 30] [--relay]
+#        [--ca ca.pem --cert cruby.pem --key cruby.key]
+#
+# With --ca (and --cert / --key for mutual TLS) it connects over TLS, e.g. to
+# a router on the internet: --router tls/router.example.org:7448.
 #
 # It joins the app "demo", the app of fmruby-core's asterism_demo, so a
 # board running asterism_demo takes this node as its peer: it calls
@@ -34,6 +38,9 @@ OptionParser.new do |o|
   o.on("--calls N", Integer) { |v| opt[:calls] = v }
   o.on("--serve SECONDS", Float) { |v| opt[:serve] = v }
   o.on("--relay", "call the board's info.relay over and over while serving") { opt[:relay] = true }
+  o.on("--ca FILE", "TLS: the CA that signed the router's certificate") { |v| opt[:ca] = v }
+  o.on("--cert FILE", "mutual TLS: this node's certificate") { |v| opt[:cert] = v }
+  o.on("--key FILE", "mutual TLS: this node's private key") { |v| opt[:key] = v }
 end.parse!
 
 def log(text)
@@ -98,7 +105,16 @@ class Info
   end
 end
 
-Asterism.connect(opt[:router], node: opt[:node], app: opt[:app]) do |net|
+# TLS settings for Session.open (zenoh's configuration keys).
+tls = {}
+tls["transport/link/tls/root_ca_certificate"] = opt[:ca] if opt[:ca]
+if opt[:cert]
+  tls["transport/link/tls/connect_certificate"] = opt[:cert]
+  tls["transport/link/tls/connect_private_key"] = opt[:key]
+  tls["transport/link/tls/enable_mtls"] = true
+end
+
+Asterism.connect(opt[:router], node: opt[:node], app: opt[:app], config: tls.empty? ? nil : tls) do |net|
   net.expose("apu", Apu.new, methods: { play: 1, stop: 0 })
   net.expose("screen", Screen.new, methods: [:say])
   net.expose("info", Info.new(opt[:node]), methods: { status: 0, relay: 2, boom: 0, echo: 1 })

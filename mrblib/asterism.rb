@@ -161,16 +161,22 @@ module Asterism
 
   # Opens the connection. locator, mode: and listen: go to
   # Asterism::Zenoh::Session.open (client of a router by default; mode: :peer
-  # with or without listen: for no router). node: is this machine's ID and
+  # with or without listen: for no router), and so does config: when it is
+  # given (a Hash of "key/path" => value or a JSON5 String, e.g. TLS
+  # certificates; CRuby's asterism-zenoh only). node: is this machine's ID and
   # app: this application's name. Raises Disconnected when it cannot connect,
   # and Error when the same <node>/<app> is already on the network.
-  def self.connect(locator, node:, app:, mode: nil, listen: nil)
+  def self.connect(locator, node:, app:, mode: nil, listen: nil, config: nil)
     raise Error, "already connected (Asterism.close first)" if connected?
     release
     node = check_name("node", node)
     app = check_name("app", app)
     begin
-      s = Asterism::Zenoh::Session.open(locator, mode: mode, listen: listen)
+      s = if config.nil?
+            Asterism::Zenoh::Session.open(locator, mode: mode, listen: listen)
+          else
+            Asterism::Zenoh::Session.open(locator, mode: mode, listen: listen, config: config)
+          end
     rescue Asterism::Zenoh::Error => e
       raise Disconnected, e.message
     end

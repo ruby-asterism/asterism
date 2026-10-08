@@ -35,9 +35,9 @@ module Asterism
     # With a block: yields an Asterism::Net and closes when the block ends
     # (also on an exception); returns the block's value. Without a block,
     # as before (returns Asterism).
-    def connect(locator, node:, app:, mode: nil, listen: nil, &blk)
+    def connect(locator, node:, app:, mode: nil, listen: nil, config: nil, &blk)
       ::Asterism::LOCK.synchronize do
-        super(locator, node: node, app: app, mode: mode, listen: listen)
+        super(locator, node: node, app: app, mode: mode, listen: listen, config: config)
         # The Net of a connection that was lost (not closed) belongs to the
         # old session.
         old = @net

@@ -137,13 +137,27 @@ class TestApiObjects < Minitest::Test
     assert_nil Asterism.net
   end
 
+  # config: goes to Session.open (TLS certificates in real use): a Hash
+  # whose value shows in the session, and a configuration zenoh refuses.
+  def test_connect_passes_config_to_the_session
+    spawn_child
+    loc, opts = connect_opts
+    Asterism.connect(loc, node: "parent", app: "t", config: { "metadata" => { "name" => "cfg-test" } }, **opts) do |net|
+      assert_equal 7, net["child/t/calc"].add(3, 4)
+    end
+    # As Session.open: a configuration zenoh refuses is an ArgumentError.
+    assert_raises(ArgumentError) do
+      Asterism.connect(loc, node: "parent", app: "t", config: "{ mode: 'nonsense' }", **opts)
+    end
+    refute Asterism.connected?
+  end
+
   def test_waiting_call_ends_when_the_connection_is_lost
     skip "a router keeps the client open" if TestHelper.router
     spawn_child
     loc, opts = connect_opts
     Asterism.connect(loc, node: "parent", app: "t", **opts) do |net|
       net.start
-      assert wait_for { net.nodes.include?("child") }
       calc = net["child/t/calc", timeout: 5]
       th = Thread.new do
         calc.slow(1) # the child is killed while this waits

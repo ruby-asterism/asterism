@@ -197,6 +197,32 @@ end
 | `net.start` / `stop` / `run` / `running?` / `on_error` | as for Zenoh. A method of an exposed object that raises is answered to its caller as a `RemoteError`, as before; `on_error` gets what `on_join` / `on_leave` raise |
 | `net.nodes`, `node_id`, `app`, `connected?`, `lost_reason`, `poll`, `close` | |
 
+### Over TLS (a router on the internet)
+
+`config:` of `Asterism.connect` (and of `Asterism::Zenoh.open`,
+`Asterism::ROS.connect`) goes to the zenoh session: a Hash of zenoh's
+configuration keys, or a JSON5 String (`File.read("client.json5")`). For a
+router that asks for a client certificate (mutual TLS):
+
+```ruby
+tls = {
+  "transport/link/tls/root_ca_certificate" => "certs/ca.pem",     # the CA that signed the router
+  "transport/link/tls/connect_certificate" => "certs/cruby.pem",  # this node's certificate
+  "transport/link/tls/connect_private_key" => "certs/cruby.key",
+  "transport/link/tls/enable_mtls" => true
+}
+Asterism.connect("tls/router.example.org:7448", node: "cruby", app: "demo", config: tls) do |net|
+  net["fmruby-aaaaaa/demo/info"].status        # a board on the router's other side
+end
+```
+
+The router checks the certificate against its CA, and its ACL can tell the
+nodes apart by the certificate's common name. The name in the locator must
+be one the router's certificate is valid for (zenoh checks it; it is
+`verify_name_on_connect`). `examples/node.rb --ca --cert --key` does the same.
+The boards (zenoh-pico on ESP32) have no TLS: they stay on a router in their
+own network, which connects to the outside one.
+
 ### ROS 2
 
 ```ruby
@@ -306,7 +332,7 @@ Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 
 | Call | Returns | Raises / notes |
 |---|---|---|
-| `Asterism.connect(locator, node:, app:, mode: nil, listen: nil)` | `Asterism` | `locator`, `mode:`, `listen:` go to `Asterism::Zenoh::Session.open` (client of a router by default; `mode: :peer` with or without `listen:` without one). `node:` is this machine's ID, `app:` the application's name (one key chunk each: no `/ * $ ? #`, not starting with `@`; else `ArgumentError`). `Disconnected` when it cannot connect; `Error` when objects of the same `<node>/<app>` are already alive (a second copy of the application), or when already connected. Waits up to about 1.5 s for that check (a router answers at once). |
+| `Asterism.connect(locator, node:, app:, mode: nil, listen: nil, config: nil)` | `Asterism` | `locator`, `mode:`, `listen:` (and `config:` when given, CRuby only: TLS and the rest of zenoh's configuration) go to `Asterism::Zenoh::Session.open` (client of a router by default; `mode: :peer` with or without `listen:` without one). `node:` is this machine's ID, `app:` the application's name (one key chunk each: no `/ * $ ? #`, not starting with `@`; else `ArgumentError`). `Disconnected` when it cannot connect; `Error` when objects of the same `<node>/<app>` are already alive (a second copy of the application), or when already connected. Waits up to about 1.5 s for that check (a router answers at once). |
 | `Asterism.expose(name, obj, methods:)` | `"<node>/<app>/<name>"` | `methods:` is an Array of names, or a Hash `name => number of arguments` (checked before the call; `-1` or the Array form: any). `ArgumentError` when `obj` has no such public method. Exposing a name again replaces it. |
 | `Asterism.unexpose(name)` | true / false | |
 | `Asterism.poll` | true / false | Call from the update loop: polls Zenoh, answers the calls that came in, follows who is alive and calls the `on_join` / `on_leave` blocks. `false` once the connection is closed or lost. |
