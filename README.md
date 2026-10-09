@@ -31,8 +31,8 @@ in asterism-zenoh's
 The ones added in 0.3.0 are CRuby only: the shared layer (`mrblib/`) does
 not use them.
 
-Neither gem is on rubygems.org yet (version 0.4.0 builds from these
-repositories with `rake gem`). What changed in each version is in
+Both gems are on rubygems.org (`gem install asterism` installs
+asterism-zenoh too). What changed in each version is in
 [CHANGELOG.md](CHANGELOG.md); 0.4.0 is the first step toward 1.0
 ([docs/api_review.md](docs/api_review.md)) and only adds and deprecates
 (see [Deprecations and 1.0](#deprecations-and-10)).
