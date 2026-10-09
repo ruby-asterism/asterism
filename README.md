@@ -13,7 +13,7 @@ repository holds the pure Ruby layers, written once for every Ruby:
 | `data/msgs/` | ROS 2 message types generated from ROS 2 Jazzy's definitions (Apache-2.0; tf2_msgs BSD-3-Clause; see NOTICE) |
 | `tools/` | The type generator `asterism_msggen.rb`, the Jazzy definitions it reads, `ros2_types.rb` (refreshes them from a ROS 2 image) |
 | `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_api_*.rb` (the CRuby API) |
-| `examples/` | CRuby: `node.rb` (objects with a board), `node_polled.rb` (the same with the portable API of the boards), `ros2_talker.rb` (topics, a timer, services with ROS 2), `zenoh.rb` (plain Zenoh) |
+| `examples/` | CRuby: `node.rb` (objects with a board), `node_polled.rb` (the same with the portable API of the boards), `ros2_talker.rb` (topics, a timer, services with ROS 2), `ros2_rover.rb` (drive a ROS 2 robot: `/cmd_vel`, `/odom`, `/imu`), `zenoh.rb` (plain Zenoh) |
 
 The Zenoh binding underneath is a separate gem with the same Ruby API on
 each Ruby:
@@ -130,6 +130,11 @@ ruby examples/node_polled.rb --router tcp/192.0.2.2:7447    # the same, polled
 # ROS 2: /chatter and /cmd_vel from a timer, /chatter_in printed,
 # /cruby/add_two_ints served, AddTwoInts calls
 ruby examples/ros2_talker.rb --router tcp/192.0.2.2:7447 [--service NAME]
+
+# ROS 2: drive a robot (made for family-mruby's MuJoCo rover,
+# docker-compose.mujoco.yml): 1 m forward and 90 degrees left by /odom,
+# compared with /ground_truth/odom; or the keyboard
+ruby examples/ros2_rover.rb --router tcp/192.0.2.2:7447 [--keys]
 
 # plain Zenoh: run two with different --name
 ruby examples/zenoh.rb --router tcp/192.0.2.2:7447 --name pc1
