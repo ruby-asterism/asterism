@@ -436,14 +436,18 @@ nested type (`geometry_msgs/msg/Twist`) at start-up took 0.6 KB more.
   node; when one of them closes, the others still list the node through
   their objects, but a watcher may see the node token go away.
 - No authentication: a trusted LAN is assumed.
-- Pattern matching on the boards: PicoRuby's compiler (checked on Family
-  mruby's application VM) runs `case/in` with `deconstruct_keys`, nested
-  hash patterns, array patterns, guards, alternatives, ranges, pins and
-  `**rest`, but not two forms: a class as the value in a hash pattern
-  (`in {x: Float}` does not match) and, inside a block, binding a variable
-  of the enclosing method (`v = nil; list.each { |m| case m in {a: v} ... }`
-  leaves it nil). Put the `case` in a method of its own, as in the example
-  above.
+- Pattern matching on the boards: PicoRuby's compiler as Family mruby
+  vendors it runs `case/in` with `deconstruct_keys`, nested hash patterns,
+  array and find patterns, guards, alternatives and pins of a local of the
+  same scope, but a hash pattern's value is compared the wrong way round:
+  a class or a range there never matches (`in {x: Float}`), and a literal
+  there matches any value of that key (`in {x: 3}`). Inside a block, a
+  pattern does not bind a variable of the enclosing method
+  (`v = nil; list.each { |m| case m in {a: v} ... }` leaves it nil). Match
+  on the key alone and test the value in Ruby, and put the `case` in a
+  method of its own, as in the example above. Upstream PicoRuby has the
+  fixes; the full list of what the boards' Ruby can and cannot do is in
+  [docs/ruby_profile.md](docs/ruby_profile.md).
 
 ## ROS 2 (rmw_zenoh): `Asterism::ROS` and `Asterism::CDR`
 

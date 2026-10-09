@@ -1,0 +1,179 @@
+RPROF-BEGIN|app-vm|177|v1
+RPROF|regexp_literal|ng|NameError: uninitialized constant Regexp
+RPROF|regexp_class|ng|NameError: uninitialized constant RubyProfile::Runner::Regexp
+RPROF|defined_const|ok|
+RPROF|defined_missing|ok|
+RPROF|defined_ivar|ok|
+RPROF|const_defined|ok|
+RPROF|safe_navigation|ok|
+RPROF|endless_def|ok|
+RPROF|numbered_param|ok|
+RPROF|it_param|ok|
+RPROF|hash_shorthand|ok|
+RPROF|kwargs|ok|
+RPROF|kwargs_unknown|ok|
+RPROF|kwargs_forward|ok|
+RPROF|args_forward_dots|ok|
+RPROF|multi_assign|ok|
+RPROF|multi_assign_index|ok|
+RPROF|heredoc_squiggly|ok|
+RPROF|string_interp|ok|
+RPROF|begin_end_while|ok|
+RPROF|flip_case_when|ok|
+RPROF|pattern_hash_bind|ok|
+RPROF|pattern_hash_literal|differs|[:three, :three]
+RPROF|pattern_hash_class|differs|:no
+RPROF|pattern_hash_class_capture|differs|:no
+RPROF|pattern_hash_range|differs|:no
+RPROF|pattern_hash_nested|ok|
+RPROF|pattern_hash_rest|differs|{b: 2}
+RPROF|pattern_second_clause|ok|
+RPROF|pattern_deconstruct_keys|ok|
+RPROF|pattern_array_class|ok|
+RPROF|pattern_find|ok|
+RPROF|pattern_guard_alt|ok|
+RPROF|pattern_pin_local|ok|
+RPROF|pattern_pin_block|differs|[false]
+RPROF|pattern_pin_expr|differs|false
+RPROF|pattern_bind_in_block|differs|nil
+RPROF|pattern_rightward_in_block|differs|nil
+RPROF|pattern_block_local|ok|
+RPROF|pattern_const_pattern|differs|true
+RPROF|pattern_no_match|ok|
+RPROF|pattern_one_line_in|differs|[true, true]
+RPROF|const_top_from_class|ok|
+RPROF|const_builtin_from_class|ok|
+RPROF|const_lexical_nested|ok|
+RPROF|const_mixin_host|ok|
+RPROF|const_self_class|ok|
+RPROF|const_get_path|ok|
+RPROF|const_get_module|ok|
+RPROF|module_name|ng|NoMethodError: undefined method 'name' for Class
+RPROF|module_to_s|ok|
+RPROF|struct|ng|NameError: uninitialized constant RubyProfile::Runner::Struct
+RPROF|data_define|ng|NameError: uninitialized constant RubyProfile::Runner::Data
+RPROF|set|ng|NameError: uninitialized constant RubyProfile::Runner::Set
+RPROF|comparable|ok|
+RPROF|enumerable_custom|ok|
+RPROF|prepend|ok|
+RPROF|singleton_class_block|ok|
+RPROF|protected_method|ng|NoMethodError: protected method 'v' called for RubyProfile::Runner::RpPr...
+RPROF|equal_eql_hash|ok|
+RPROF|object_id_equal|ok|
+RPROF|freeze|ok|
+RPROF|method_missing|ok|
+RPROF|respond_to_missing|ok|
+RPROF|define_method|ok|
+RPROF|send_public_send|ok|
+RPROF|instance_variable_get_set|ok|
+RPROF|method_object|ng|NoMethodError: undefined method 'method' for RubyProfile::Runner
+RPROF|instance_methods_false|ok|
+RPROF|class_eval_string|ng|NotImplementedError: module_eval/class_eval with string not implemented
+RPROF|instance_exec|ng|NoMethodError: undefined method 'instance_exec' for Object
+RPROF|kernel_eval|ok|
+RPROF|lambda_strict|ok|
+RPROF|proc_new_lenient|ok|
+RPROF|kernel_proc|ng|NoMethodError: undefined method 'proc' for RubyProfile::Runner
+RPROF|proc_auto_splat|ok|
+RPROF|proc_return|ok|
+RPROF|block_given|ok|
+RPROF|stored_block_capture|ok|
+RPROF|symbol_to_proc|ok|
+RPROF|curry|ng|NoMethodError: undefined method 'curry' for Proc
+RPROF|exception_custom|ok|
+RPROF|exception_retry_ensure|ok|
+RPROF|exception_backtrace|ok|
+RPROF|exception_cause|ng|NoMethodError: undefined method 'cause' for RuntimeError
+RPROF|catch_throw|ng|NoMethodError: undefined method 'catch' for RubyProfile::Runner
+RPROF|rescue_modifier|ok|
+RPROF|rescue_modifier_bang|ng|NoMethodError: undefined method 'message' for NilClass
+RPROF|string_literal_mutable|ok|
+RPROF|string_literal_frozen_p|ok|
+RPROF|string_literal_magic_frozen|differs|false
+RPROF|string_dup_append|ok|
+RPROF|string_length_utf8|ok|
+RPROF|string_byte_ops|ok|
+RPROF|string_b|ng|NoMethodError: undefined method 'encoding' for String
+RPROF|string_force_encoding|ng|NoMethodError: undefined method 'force_encoding' for String
+RPROF|string_unpack|ok|
+RPROF|array_pack|ok|
+RPROF|pack_float|ok|
+RPROF|string_format|ok|
+RPROF|string_methods|ok|
+RPROF|string_split_join|ok|
+RPROF|string_sub_string|ok|
+RPROF|string_scan_regexp|ng|NameError: uninitialized constant Regexp
+RPROF|string_inspect_escape|differs|"\"a\\n\\x01\""
+RPROF|symbol_string|ok|
+RPROF|chr_ord|ok|
+RPROF|integer_division|ok|
+RPROF|integer_64bit|ok|
+RPROF|integer_bignum|ng|RangeError: integer overflow in power
+RPROF|nil_to_i|ng|NoMethodError: undefined method 'to_i' for NilClass
+RPROF|nil_to_a|ng|NoMethodError: undefined method 'to_a' for NilClass
+RPROF|nil_to_s|ok|
+RPROF|kernel_integer_float|ok|
+RPROF|float_to_s|ok|
+RPROF|float_round|ok|
+RPROF|float_special|ok|
+RPROF|math_functions|ok|
+RPROF|rational|ng|NoMethodError: undefined method 'Rational' for RubyProfile::Runner
+RPROF|complex|ng|NoMethodError: undefined method 'Complex' for RubyProfile::Runner
+RPROF|integer_digits|ng|NoMethodError: undefined method 'digits' for Integer
+RPROF|integer_pow_mod|ng|NoMethodError: undefined method 'pow' for Integer
+RPROF|integer_bit_length|ng|NoMethodError: undefined method 'bit_length' for Integer
+RPROF|integer_clamp|ng|NoMethodError: undefined method 'clamp' for Integer
+RPROF|hash_insertion_order|ok|
+RPROF|hash_transform_values|ng|NoMethodError: undefined method 'transform_values' for Hash
+RPROF|hash_dig|ng|NoMethodError: undefined method 'dig' for Hash
+RPROF|hash_to_a|ok|
+RPROF|hash_default_proc|ok|
+RPROF|hash_compare_by_identity|ng|NoMethodError: undefined method 'compare_by_identity' for Hash
+RPROF|hash_any|ok|
+RPROF|hash_count|ng|NoMethodError: undefined method 'count' for Hash
+RPROF|hash_min_by|ng|NoMethodError: undefined method 'min_by' for Hash
+RPROF|hash_sum|ng|NoMethodError: undefined method 'sum' for Hash
+RPROF|array_each_slice|ng|NoMethodError: undefined method 'each_slice' for Array
+RPROF|array_each_cons|ng|NoMethodError: undefined method 'each_cons' for Array
+RPROF|array_tally|ng|NoMethodError: undefined method 'tally' for Array
+RPROF|array_filter_map|ng|NoMethodError: undefined method 'filter_map' for Array
+RPROF|array_sum|ng|NoMethodError: undefined method 'sum' for Array
+RPROF|array_minmax|ng|NoMethodError: undefined method 'minmax' for Array
+RPROF|array_zip|ng|NoMethodError: undefined method 'zip' for Array
+RPROF|array_flat_map|ng|NoMethodError: undefined method 'flat_map' for Array
+RPROF|array_group_by|ng|NoMethodError: undefined method 'group_by' for Array
+RPROF|array_partition|ok|
+RPROF|array_sort_by|ng|NoMethodError: undefined method 'sort_by' for Array
+RPROF|array_uniq|ok|
+RPROF|array_rotate|ok|
+RPROF|array_include_index|ok|
+RPROF|array_bsearch|ok|
+RPROF|array_dig|ok|
+RPROF|array_cycle|ng|NoMethodError: undefined method 'cycle' for Array
+RPROF|array_product|ok|
+RPROF|range_step|ng|NotImplementedError: fiber required for enumerator
+RPROF|range_endless|ng|ArgumentError: wrong number of arguments (given 1, expected 0)
+RPROF|range_sum|ng|NoMethodError: undefined method 'sum' for Range
+RPROF|range_include|ok|
+RPROF|enumerator_next|ng|NotImplementedError: fiber required for enumerator
+RPROF|enumerator_lazy|ng|NoMethodError: undefined method 'lazy' for Range
+RPROF|enumerator_new|ng|NameError: uninitialized constant RubyProfile::Runner::Enumerator
+RPROF|fiber|ng|NameError: uninitialized constant RubyProfile::Runner::Fiber
+RPROF|thread|ng|NameError: uninitialized constant RubyProfile::Runner::Thread
+RPROF|mutex|ng|NameError: uninitialized constant RubyProfile::Runner::Mutex
+RPROF|object_space_gc|ok|
+RPROF|time_now|ok|
+RPROF|process_clock|ng|NameError: uninitialized constant RubyProfile::Runner::Process
+RPROF|kernel_rand|ng|NameError: uninitialized constant RubyProfile::Runner::Random
+RPROF|object_then|ng|NoMethodError: undefined method 'then' for Integer
+RPROF|object_tap|ng|NoMethodError: undefined method 'tap' for Integer
+RPROF|object_itself|ng|NoMethodError: undefined method 'itself' for Integer
+RPROF|method_name|ok|
+RPROF|recursion_1000|ng|SystemStackError: SystemStackError
+RPROF|recursion_via_block_100|ok|
+RPROF|recursion_limit|value|501.0
+RPROF|measure_while|value|0.0247
+RPROF|measure_method_call|value|0.0417
+RPROF|measure_block_call|value|0.1064
+RPROF|measure_each|value|0.0623
+RPROF-END|app-vm|ok=100|differs=13|ng=59|value=5
