@@ -114,7 +114,7 @@ log("#{peer} info.status -> #{st.inspect} (#{ms_since(t)} ms)")
 t = now
 n = screen.say("hello from CRuby (#{opt[:node]})")
 log("#{peer} screen.say -> #{n} (#{ms_since(t)} ms)")
-log("#{peer} respond_to?(:status)=#{info.respond_to?(:status)} methods=#{info.methods.inspect}")
+log("#{peer} respond_to?(:status)=#{info.respond_to?(:status)} methods=#{info.remote_methods.inspect}")
 
 if opt[:calls] > 0
   times = []

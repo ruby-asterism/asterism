@@ -24,6 +24,9 @@ permissions:
 
 env:
   ASTERISM_ZENOH_REF: main
+  # Deprecated calls raise (test/helper.rb sets the same), so neither the
+  # gem nor its tests use an old form by accident.
+  ASTERISM_DEPRECATIONS: raise
 
 jobs:
   test:

@@ -197,9 +197,11 @@ module Asterism
         Topic.new(self, topic, type, qos, depth)
       end
 
-      # Node#call with the time limit in seconds as well: timeout: 2.0.
-      def call(service, type, request = nil, timeout: nil, timeout_ms: nil, **fields)
-        ms = timeout_ms || ::Asterism::Zenoh.ms(timeout, Client::DEFAULT_TIMEOUT_MS)
+      # Node#call; here timeout: is always the time limit, also for a
+      # request type with a field named timeout (give such a request as
+      # request: { ... }).
+      def call(service, type, req = nil, request: nil, timeout: nil, timeout_ms: nil, **fields)
+        ms = ::Asterism.time_ms("Node#call", timeout, timeout_ms, nil, nil)
         c = @asterism_runner.lock.synchronize do
           @clients ||= {}
           cl = @clients[service]
@@ -209,7 +211,7 @@ module Asterism
           end
           cl
         end
-        c.call(request, timeout_ms: ms, **fields)
+        c.call(req, request: request, timeout_ms: ms, **fields)
       end
     end
 

@@ -9,11 +9,11 @@ repository holds the pure Ruby layers, written once for every Ruby:
 |---|---|
 | `mrblib/` | The layers: remote objects (`Asterism`), `Asterism::CDR`, `Asterism::ROS`. The source of truth for both forms below |
 | `mrbgem.rake` | The mrbgem `picoruby-asterism` (mruby / PicoRuby): compiles `mrblib/` |
-| `asterism.gemspec`, `lib/` | The CRuby gem `asterism`: `lib/asterism.rb` loads `mrblib/` as it is, `lib/asterism/cruby.rb` adds what CRuby needs, `lib/asterism/cruby/` the Ruby-like API (CRuby only) |
+| `asterism.gemspec`, `lib/` | The CRuby gem `asterism`: `lib/asterism.rb` loads `mrblib/` as it is, `lib/asterism/cruby.rb` adds what CRuby needs, `lib/asterism/cruby/` the CRuby API (CRuby only) |
 | `data/msgs/` | ROS 2 message types generated from ROS 2 Jazzy's definitions (Apache-2.0, see NOTICE) |
 | `tools/` | The type generator `asterism_msggen.rb`, the Jazzy definitions it reads, `ros2_types.rb` (refreshes them from a ROS 2 image) |
-| `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_api_*.rb` (the Ruby-like API) |
-| `examples/` | CRuby: `node.rb` (objects with a board), `node_polled.rb` (the same with the polled API of the boards), `ros2_talker.rb` (topics, a timer, services with ROS 2), `zenoh.rb` (plain Zenoh) |
+| `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_api_*.rb` (the CRuby API) |
+| `examples/` | CRuby: `node.rb` (objects with a board), `node_polled.rb` (the same with the portable API of the boards), `ros2_talker.rb` (topics, a timer, services with ROS 2), `zenoh.rb` (plain Zenoh) |
 
 The Zenoh binding underneath is a separate gem with the same Ruby API on
 each Ruby:
@@ -31,15 +31,46 @@ in asterism-zenoh's
 The ones added in 0.3.0 are CRuby only: the shared layer (`mrblib/`) does
 not use them.
 
-Neither gem is on rubygems.org yet (version 0.3.0 builds from these
-repositories with `rake gem`).
+Neither gem is on rubygems.org yet (version 0.4.0 builds from these
+repositories with `rake gem`). What changed in each version is in
+[CHANGELOG.md](CHANGELOG.md); 0.4.0 is the first step toward 1.0
+([docs/api_review.md](docs/api_review.md)) and only adds and deprecates
+(see [Deprecations and 1.0](#deprecations-and-10)).
+
+## Which API?
+
+Asterism has two APIs over the same layers. Both are in the CRuby gem;
+the boards have the first one only.
+
+| You write for | Use | Why |
+|---|---|---|
+| A board, or code that must run on both | the **portable API** ([below](#the-portable-api): `Asterism.poll`, `node.poll`, `each_pending`) | the only one on the boards; nothing runs behind your back |
+| CRuby only (tools, servers, scripts) | the **CRuby API** ([The CRuby API](#the-cruby-api): `Asterism.connect { }`, `Asterism::Zenoh.open { }`, `Asterism::ROS.connect { }`) | blocks, a receiving thread, Enumerators, `Data` values |
+| CRuby, but you own the loop (a game loop, a test) | the portable API | same as the boards |
+
+Entry points and what they give:
+
+| Call | Gives | Underneath |
+|---|---|---|
+| `Asterism::Zenoh::Session.open` | a `Session` (portable) | zenoh-c / zenoh-pico |
+| `Asterism::Zenoh.open` | a `Zenoh::Connection` (CRuby) | `c.session` is the `Session` |
+| `Asterism.connect` | `Asterism` itself (portable; one connection per process or VM), or a `Net` to the block (CRuby) | a `Session` of its own |
+| `Asterism::ROS::Node.new(session, ...)` | a `Node` (portable) | the `Session` given |
+| `Asterism::ROS.connect` | a `ROS::Connection` (CRuby) | `ros.zenoh` is the `Zenoh::Connection` |
+
+Units: a time with no unit in its name is seconds (`timeout:`,
+`connect_timeout:`, `check_timeout:`, `node.every(0.5)`, `DEFAULT_TIMEOUT`);
+anything else says its unit (`timeout_ms:`, `every(ms: 500)`, `took_ms`,
+`DEFAULT_TIMEOUT_MS`, `stamp_ns`). Both units are accepted everywhere a
+time is taken, on both APIs and every Ruby; giving one twice raises
+`ArgumentError`.
 
 ## Using it
 
 CRuby (needs CRuby 3.2+ and a C compiler):
 
 ```
-gem install asterism          # also installs asterism-zenoh (~> 0.3.0) and msgpack
+gem install asterism          # also installs asterism-zenoh (~> 0.4.0) and msgpack
 ruby -e 'require "asterism"'
 ```
 
@@ -52,7 +83,7 @@ build but not yet tested. To install from the repositories instead:
 
 ```
 (cd ../asterism-zenoh && rake gem) && rake gem
-gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.3.0.gem pkg/asterism-0.3.0.gem
+gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.0.gem pkg/asterism-0.4.0.gem
 ```
 
 From the working trees, without installing:
@@ -78,13 +109,15 @@ these repositories.
 rake                  # every suite
 rake test:msgs        # generator, type hashes, CDR, bundled types (CRuby only; no Zenoh, no docker)
 rake test:objects     # objects and Asterism::ROS between CRuby sessions over a local peer link
-rake test:api         # the Ruby-like API (blocks, receiving threads, Enumerators)
+rake test:api         # the CRuby API (blocks, receiving threads, Enumerators)
 ASTERISM_TEST_ROUTER=tcp/127.0.0.1:7447 rake test:objects test:api   # the same through a zenohd router
 ```
 
 `test:objects` and `test:api` need asterism-zenoh: built next to this repository
 (`../asterism-zenoh`, its `rake compile`), or `ASTERISM_ZENOH_DIR`, or the
-installed gem.
+installed gem. The tests run with deprecated calls raising
+(`Asterism.deprecations = :raise`); the tests of the old forms switch it
+back around themselves.
 
 ## Examples
 
@@ -102,11 +135,11 @@ ruby examples/ros2_talker.rb --router tcp/192.0.2.2:7447 [--service NAME]
 ruby examples/zenoh.rb --router tcp/192.0.2.2:7447 --name pc1
 ```
 
-## The Ruby-like API (CRuby only)
+## The CRuby API
 
 On CRuby, `require "asterism"` also brings a layer with blocks, a receiving
 thread, Enumerators and pattern matching (`lib/asterism/cruby/`). It is
-built on the polled API below, which stays as it is: code written for a
+built on the portable API below, which stays as it is: code written for a
 board still runs unchanged on CRuby, and code using this layer does not run
 on a board.
 
@@ -124,7 +157,7 @@ Asterism::Zenoh.open("tcp/192.0.2.2:7447") do |s|   # closed when the block ends
   s.run                                               # receive on this thread until Ctrl-C
 end
 
-# asterism-zenoh 0.3.0 (CRuby only)
+# asterism-zenoh 0.3.0 and later (CRuby only)
 Asterism::Zenoh.open("tls/192.0.2.2:7447",
                      config: { "transport/link/tls/root_ca_certificate" => "ca.pem" }) do |s|
   pub = s.publisher("home/pc/temp", encoding: "text/plain", priority: :data_high)
@@ -144,33 +177,32 @@ end
 
 | Call | Notes |
 |---|---|
-| `Asterism::Zenoh.open(locator = nil, mode:, listen:, scouting:, timestamping:, config:, config_file:, interval: 0.002)` | `Session.open` wrapped in a `Connection`. With a block: yields it, closes it after (also on an exception), returns the block's value |
-| `Connection.new(session)` | wraps a session opened with the polled API |
+| `Asterism::Zenoh.open(locator = nil, mode:, listen:, scouting:, timestamping:, config:, config_file:, connect_timeout:, interval: 0.002)` | `Session.open` wrapped in a `Connection`. With a block: yields it, closes it after (also on an exception), returns the block's value |
+| `Connection.new(session)` | wraps a session opened with the portable API |
 | `s.put(key, payload, attachment: nil, **opts)` | a payload that is not a String is sent as `to_s`. opts: `encoding:`, `priority:`, `congestion_control:`, `express:`, `reliability:`, `timestamp:`, `allowed_destination:` (asterism-zenoh's `Session#put`) |
 | `s.delete(key, **opts)` | subscribers get a `Sample` of kind `:delete` |
-| `s.publisher(key, **opts)` | a `Publisher`: `put(payload, attachment:, encoding:, timestamp:)`, `delete`, `matching?`, `on_matching { \|listening\| }` (on the receiving thread), `close` |
+| `s.publisher(key, **opts)` | a `Publisher`: `put(payload, attachment:, encoding:, timestamp:)`, `delete`, `matching?`, `on_matching { \|listening\| }` (on the receiving thread), `close`. With a block: yields it and closes it after |
 | `s.advanced_publisher(key, cache:, sample_miss_detection:, publisher_detection:, **opts)` | the same `Publisher`, keeping the last samples for late subscribers (ROS 2's transient local) |
-| `s.advanced_subscriber(key, depth: 16, history:, recovery:, **opts) { \|sample\| }` | a `Subscription` that also gets the publishers' history; `on_publisher { \|key, alive\| }`, `on_miss { \|miss\| }` |
-| `s.querier(key, timeout: 2.0, **opts)` | a `Querier`: `get(params:, payload:, attachment:, encoding:, errors: false)` like `s.get`, `matching?`, `on_matching`, `close` |
+| `s.advanced_subscriber(key, depth: 16, history:, recovery:, query_timeout:, **opts) { \|sample\| }` | a `Subscription` that also gets the publishers' history; `on_publisher { \|key, alive\| }`, `on_miss { \|miss\| }` |
+| `s.querier(key, timeout: 2.0, **opts)` (or `timeout_ms:`) | a `Querier`: `get(params:, payload:, attachment:, encoding:, errors: false)` like `s.get`, `matching?`, `on_matching`, `close` |
 | `s.on_transport(history: false) { \|ev\| }` / `s.on_link { \|ev\| }` | a `TransportEvent` / `LinkEvent` (`added?` / `removed?`, `zid`, ...) on the receiving thread; returns an `Events` (`close`) |
 | `s.peer_zids`, `router_zids`, `transports`, `links`, `new_timestamp`, `declare_keyexpr(key)` | as in asterism-zenoh |
 | `s.subscribe(key, depth: 16) { \|sample\| }` | the block gets each `Sample` on the receiving thread. Returns a `Subscription` (`close` ends it) |
-| `s.subscribe(key, depth: 16)` | a `Subscription` to take from: `each(timeout: nil)` waits for samples (an Enumerator without a block; Enumerable), `each_pending` gives what is there now as Samples, `pending` / `received` / `dropped` / `closed?` / `close` |
+| `s.subscribe(key, depth: 16)` | a `Subscription` to take from: `each(timeout: nil)` waits for samples (an Enumerator without a block; Enumerable), `each_sample` gives what is there now as Samples (`each_pending`, its old name here, is deprecated: in the portable API `each_pending` gives Arrays), `pending` / `received` / `dropped` / `closed?` / `close` |
 | `s.queryable(key, depth: 16, complete: false) { \|q\| }` | each query on the receiving thread, finished when the block returns. `q.reply(payload)` answers on the queryable's key (when it has no wildcard), `q.reply(key, payload, attachment:)` as before. Without a block, `each(timeout:)` yields the queries |
-| `s.get(key, timeout: 2.0, params:, payload:, attachment:, target:, consolidation:, errors: false, **opts)` | an Enumerator of `Reply`; each iteration sends the get again. With a block: yields each, returns their number. `errors: true` also yields the error replies (`reply.error?`); opts: `encoding:`, `priority:`, `congestion_control:`, `express:`, `accept_replies:` |
-| `s.liveliness(key)` | a token (`close`) |
+| `s.get(key, timeout: 2.0, params:, payload:, attachment:, target:, consolidation:, errors: false, **opts)` | an Enumerator of `Reply`; each iteration sends the get again. With a block: yields each, returns their number. `errors: true` also yields the error replies (`reply.error?`; left out by default, as `each_reply` does: look there when "nobody answers"); `consolidation: :none` keeps every reply (zenoh's own default is `:auto`). opts: `encoding:`, `priority:`, `congestion_control:`, `express:`, `accept_replies:`, `timeout_ms:` |
+| `s.liveliness(key)` | a token (`close`). With a block: withdrawn after the block |
 | `s.liveliness_watch(key) { \|key, alive\| }` | on the receiving thread; the tokens alive now come first. Without a block, `each` yields `Liveliness` (`key`, `alive?`) |
-| `s.liveliness_get(key, timeout: 2.0)` | the keys alive now (an Array) |
+| `s.liveliness_get(key, timeout: 2.0)` | the keys alive now (an Array; waits) |
 | `s.start` / `s.stop` / `s.running?` | receive on a thread of its own |
 | `s.run` | receive on this thread until `stop`, the connection closing, or Ctrl-C (returns nil) |
-| `s.on_error { \|error, where\| }` | what the blocks raise (`StandardError`); without a handler it is printed with `warn`. Receiving goes on |
-| `s.session`, `zid`, `peers`, `poll`, `closed?`, `close` | |
+| `s.on_error { \|error, where\| }` | what the blocks raise (`StandardError`); without a handler it is printed with `warn`. Receiving goes on. `on_error` replaces the handler; every other `on_*` adds one |
+| `s.session`, `zid`, `connection_count`, `poll`, `closed?`, `close` | (`peers` is the deprecated name of `connection_count`) |
 
 `Sample`, `Reply` (`key`, `payload`, `attachment`, and since 0.3.0 `kind`,
 `encoding`, `timestamp` and the rest; `text` is the payload as UTF-8; both
 are asterism-zenoh's) and `Liveliness` are `Data` values, so they work with pattern
-matching: `case sample in {key: %r{/temp\z}, payload:}`. Times are seconds
-here (the polled API counts milliseconds).
+matching: `case sample in {key: %r{/temp\z}, payload:}`.
 
 ### Objects
 
@@ -191,9 +223,9 @@ end
 | `Asterism.connect(...) { \|net\| }` | yields an `Asterism::Net`, `Asterism.close` when the block ends; returns the block's value. Without a block, as before |
 | `Asterism.net` | the `Net` of the connection made without a block (nil when not connected) |
 | `net.expose` / `unexpose` / `exposed` | as `Asterism.expose`. The methods run on the receiving thread, in `run`, or in whatever polls |
-| `net[path, timeout: nil]` | a proxy (`timeout` in seconds) |
-| `net.each(pattern = "**")` | the proxies alive now; an Enumerator without a block |
-| `net.on_join { \|node\| }` / `net.on_leave { \|node\| }` | `Asterism.on_join` / `on_leave` of the polled API (the same blocks, told from `Asterism.poll`), here on the receiving thread; what they raise goes to `on_error` |
+| `net[path, timeout: 2.0]` | a proxy (`timeout` in seconds, or `timeout_ms:`) |
+| `net.each(pattern = "**")` | the proxies alive now; an Enumerator without a block. With a block it returns their number (1.0: `self`, as Ruby's `each` does; `net.count` is the number) |
+| `net.on_join { \|node\| }` / `net.on_leave { \|node\| }` | `Asterism.on_join` / `on_leave` of the portable API (the same blocks, told from `Asterism.poll`), here on the receiving thread; what they raise goes to `on_error`. `net.off_join(proc)` / `off_leave(proc)` remove one |
 | `net.start` / `stop` / `run` / `running?` / `on_error` | as for Zenoh. A method of an exposed object that raises is answered to its caller as a `RemoteError`, as before; `on_error` gets what `on_join` / `on_leave` raise |
 | `net.nodes`, `node_id`, `app`, `connected?`, `lost_reason`, `poll`, `close` | |
 
@@ -242,12 +274,12 @@ end
 | Call | Notes |
 |---|---|
 | `Asterism::ROS.connect(locator = nil, domain: 0, type_path: nil, mode:, listen:)` | opens a session; yields an `Asterism::ROS::Connection` and closes it after. `type_path:` adds directories to `TYPE_PATH` |
-| `ros.node(name, namespace: "/", enclave: "/")` | an `Asterism::ROS::Node` (every method of the polled API) with the calls below |
-| `node.subscribe(topic, type) { \|msg, info\| }` | the polled API's (run from `node.poll`), here on the receiving thread; `info` is the `Attachment` or nil. Without a block: a subscription whose `each(timeout: nil)` waits for `[msg, info]` (Enumerable) |
+| `ros.node(name, namespace: "/", enclave: "/")` | an `Asterism::ROS::Node` (every method of the portable API) with the calls below |
+| `node.subscribe(topic, type) { \|msg, info\| }` | the portable API's (run from `node.poll`), here on the receiving thread; `info` is the `Attachment` or nil. Without a block: a subscription whose `each(timeout: nil)` waits for `[msg, info]` (Enumerable) |
 | `node.topic(topic, type).each` | subscribes for the iteration and withdraws after it (`first(n)`, `break`, the time running out) |
-| `node.every(seconds) { }` | the polled API's timer (run from `node.poll`), here on the receiving thread; returns a `Timer` (`cancel`, `fired`) |
+| `node.every(seconds) { }` / `node.every(ms: 500) { }` | the portable API's timer (run from `node.poll`), here on the receiving thread; returns a `Timer` (`cancel`, `fired`) |
 | `node.service(name, type) { \|req\| response }` | answered while the connection spins (or from `node.poll`). What the block raises goes to `on_error`, and that request gets no answer |
-| `node.call(name, type, request = nil, timeout: 2.0, **fields)` | waits for the response |
+| `node.call(name, type, request = nil, request:, timeout: 2.0, **fields)` | waits for the response. Here `timeout:` is always the time limit (see [Reserved keywords](#reserved-keywords)) |
 | `ros.spin` (`run`) / `start` / `stop` / `running?` / `on_error` / `close` | |
 | `ros.zenoh` | the `Asterism::Zenoh::Connection` underneath (same receiving thread) |
 
@@ -268,7 +300,7 @@ that is not bundled: generate it with `tools/asterism_msggen.rb -o DIR`
   block that takes long delays everything else that connection receives**:
   hand long work to a thread or a Queue of your own.
 - zenoh-c never calls Ruby: it fills the queues, and the receiving thread
-  empties them every 2 ms (`interval:`) with the polled API.
+  empties them every 2 ms (`interval:`) with the portable API.
 - A tick of the receiving thread holds the connection's lock (a `Monitor`;
   for the object layer, which is one connection per process,
   `Asterism::LOCK`). The application's calls into the same layer take it
@@ -283,6 +315,23 @@ that is not bundled: generate it with `tools/asterism_msggen.rb -o DIR`
   thread ends by itself, and waiting calls raise as before.
 - Enumerators (`each`, `get`, `topic`) wait on the thread that iterates
   them.
+- **Do not wait in a block.** On CRuby a block that calls and waits (a
+  proxy call, `node.call`) works, but delays every other block of that
+  connection; on a board it can overflow the stack ([Stack](#stack)).
+
+What may be shared between threads:
+
+| Object | Use from several threads? |
+|---|---|
+| `Asterism::Zenoh::Session` and its subscribers, queryables, gets, publishers, queriers (CRuby) | yes; each queued entry goes to exactly one taker |
+| `Zenoh::Connection` | yes; its blocks run one at a time on the receiving thread |
+| An Enumerator (`Subscription#each`, `Watch#each`, `get`, `topic`) | one thread per iteration |
+| The object layer (`Asterism.*`, `Net`, proxies, `Future`) | yes; serialized by `Asterism::LOCK` (one connection per process) |
+| `ROS::Connection` and the nodes it makes | yes (its runner's lock) |
+| A `ROS::Node` made with `Node.new` (portable API) on CRuby | **no**: one thread, as on the boards |
+| A session opened before `fork` | not in the child: its calls raise `Zenoh::ClosedError`; connect after fork |
+| The boards | one thread (the application's update loop) |
+| Ractors | not supported |
 
 ## License
 
@@ -302,10 +351,10 @@ RubyGems, and on mruby / PicoRuby the Zenoh binding is the separate mrbgem
 
 ---
 
-# The API
+# The portable API
 
-The same on every Ruby (the polled API; CRuby adds the layer described in
-[The Ruby-like API](#the-ruby-like-api-cruby-only)). The examples use PicoRuby's `sleep_ms`; on CRuby
+The same on every Ruby (CRuby adds the layer described in
+[The CRuby API](#the-cruby-api)). The examples use PicoRuby's `sleep_ms`; on CRuby
 write `sleep`. When PicoRuby's `Machine` is there it is used for the clock
 and the short pauses while waiting; otherwise `Time` and `sleep`. Besides
 `Asterism::Zenoh`, the layers need a `MessagePack` module with `pack` /
@@ -324,6 +373,7 @@ apu.play("t120 o4 cdefg")                 # runs there, returns its value
 apu.respond_to?(:play)                    # => true (from the exposed list)
 f = apu.async.play("cde")                 # does not wait
 f.done?; f.value
+Asterism["fmruby-bbbbbb/demo/apu", timeout: 5.0].play("c")   # a longer time limit
 Asterism.each("*/*/apu") { |a| a.stop }   # every apu alive now
 Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 ```
@@ -332,25 +382,104 @@ Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 
 | Call | Returns | Raises / notes |
 |---|---|---|
-| `Asterism.connect(locator, node:, app:, mode: nil, listen: nil, config: nil)` | `Asterism` | `locator`, `mode:`, `listen:` (and `config:` when given, CRuby only: TLS and the rest of zenoh's configuration) go to `Asterism::Zenoh::Session.open` (client of a router by default; `mode: :peer` with or without `listen:` without one). `node:` is this machine's ID, `app:` the application's name (one key chunk each: no `/ * $ ? #`, not starting with `@`; else `ArgumentError`). `Disconnected` when it cannot connect; `Error` when objects of the same `<node>/<app>` are already alive (a second copy of the application), or when already connected. Waits up to about 1.5 s for that check (a router answers at once). |
+| `Asterism.connect(locator, node:, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil, check_timeout: 1.5)` | `Asterism` | `locator`, `mode:`, `listen:` (and `config:` / `connect_timeout:` when given, CRuby only: TLS and the rest of zenoh's configuration; the boards raise `ArgumentError`) go to `Asterism::Zenoh::Session.open` (client of a router by default; `mode: :peer` with or without `listen:` without one). `node:` is this machine's ID, `app:` the application's name (one key chunk each: no `/ * $ ? #`, not starting with `@`; else `ArgumentError`). `Disconnected` when it cannot connect; `Error` when objects of the same `<node>/<app>` are already alive (a second copy of the application), or when already connected. Waits up to `check_timeout:` seconds for that check (a router answers at once; give more over a slow relay). Returns the module itself: on a board the module is the connection (one per application). The default is plain text without authentication; see [Over TLS](#over-tls-a-router-on-the-internet). |
 | `Asterism.expose(name, obj, methods:)` | `"<node>/<app>/<name>"` | `methods:` is an Array of names, or a Hash `name => number of arguments` (checked before the call; `-1` or the Array form: any). `ArgumentError` when `obj` has no such public method. Exposing a name again replaces it. |
 | `Asterism.unexpose(name)` | true / false | |
 | `Asterism.poll` | true / false | Call from the update loop: polls Zenoh, answers the calls that came in, follows who is alive and calls the `on_join` / `on_leave` blocks. `false` once the connection is closed or lost. |
-| `Asterism.on_join { \|node\| }` / `Asterism.on_leave { \|node\| }` | `Asterism` | Another node appeared (its node token or one of its objects) / is gone (no token and no object left). The nodes there already join on the first polls after connecting; when the connection is lost, every node known until then leaves (on the next `Asterism.poll`). The blocks run from `Asterism.poll` only, never from the polling inside a waiting call; what they raise comes out of `Asterism.poll`. `Asterism.close` forgets them (a lost connection does not). |
-| `Asterism[path, timeout_ms = 2000]` | `Proxy` | `path` is `<node>/<app>/<object>` without wildcards (`ArgumentError`). Nothing is sent until a method is called. |
-| `proxy.<method>(*args, **kw)` | the remote return value | Waits for the answer (`timeout_ms`). `RemoteError` when it raised there or could not be called (not exposed: `NoMethodError`; wrong number of arguments: `ArgumentError`; no such object: `NameError`), `Timeout` when no answer came in time (also at once when nobody answers that key), `Disconnected`, `EncodeError` (before anything is sent) for a value MessagePack cannot carry. A block cannot be sent (`ArgumentError`). |
+| `Asterism.on_join { \|node\| }` / `Asterism.on_leave { \|node\| }` | `Asterism` | Another node appeared (its node token or one of its objects) / is gone (no token and no object left). The nodes there already join on the first polls after connecting; when the connection is lost, every node known until then leaves (on the next `Asterism.poll`). The blocks run from `Asterism.poll` only, never from the polling inside a waiting call; what they raise comes out of `Asterism.poll`. Each call adds a block; `Asterism.off_join(proc)` / `off_leave(proc)` remove one; `Asterism.close` forgets them (a lost connection does not). |
+| `Asterism[path, timeout: 2.0]` | `Proxy` | `path` is `<node>/<app>/<object>` without wildcards (`ArgumentError`). `timeout:` (seconds) or `timeout_ms:` is the time limit of its calls. Nothing is sent until a method is called. |
+| `proxy.<method>(*args, **kw)` | the remote return value | Waits for the answer (the proxy's time limit). `RemoteError` when it raised there or could not be called (not exposed: `NoMethodError`; wrong number of arguments: `ArgumentError`; no such object: `NameError`), `TimeoutError` when no answer came in time (also at once when nobody answers that key), `Disconnected`, `EncodeError` (before anything is sent) for a value MessagePack cannot carry. A block cannot be sent (`ArgumentError`). |
 | `proxy.async.<method>(...)` | `Future` | Sends and returns at once. `EncodeError` / `Disconnected` are raised here. |
 | `future.done?` | true / false | Never waits (`Asterism.poll` moves it on). True once the answer came, the time ran out or the connection closed. |
-| `future.value` | the return value | Waits (polling) if not done; raises like a waiting call. `future.took_ms`: time to the answer. |
-| `proxy.respond_to?(name)` / `proxy.methods` | true / false, `[Symbol]` | From the object's meta (fetched once, `proxy.asterism_refresh` forgets it). `respond_to?` is false when the object does not answer; `methods` raises then. |
+| `future.value` | the return value | Waits (polling) if not done; raises like a waiting call. `future.took` (seconds) / `took_ms`: time to the answer. |
+| `proxy.respond_to?(name)` / `proxy.remote_methods` | true / false, `[Symbol]` | From the object's meta (fetched once, `proxy.asterism_refresh` forgets it). `respond_to?` is false when the object does not answer; `remote_methods` raises then. (`proxy.methods` returns the same with a deprecation warning; from 1.0 it is `Object#methods`.) |
 | `proxy.asterism_meta` / `proxy.asterism_path` | Hash, String | `{"methods" => [[name, arity], ...]}` |
-| `Asterism.each(pattern = "**") { \|proxy\| }` | count (Array without a block) | The exposed objects alive now (this application's own included) whose `<node>/<app>/<object>` matches; `*` is one chunk, `**` any number. |
+| `Asterism.each(pattern = "**") { \|proxy\| }` | count (Array without a block) | The exposed objects alive now (this application's own included) whose `<node>/<app>/<object>` matches; `*` is one chunk, `**` any number. 1.0 returns the proxies from the block form instead of their number (Ruby's `each` returns its receiver); write `Asterism.each(pattern).size` for the count. |
 | `Asterism.nodes` | `[String]` | Node IDs alive now, this one first. |
 | `Asterism.connected?` / `node_id` / `app` / `exposed` / `lost_reason` | | |
 | `Asterism.close` | nil | Withdraws every exposed object. Idempotent. |
 
-Errors: `Asterism::Error` (base, a `StandardError`), `EncodeError`, `RemoteError`
-(`remote_class`, `remote_message`), `Timeout`, `Disconnected`.
+## Errors
+
+Every error Asterism raises is an `Asterism::Error` (a `StandardError`):
+
+```
+Asterism::Error                       (the Zenoh bindings define it)
+├── Asterism::Zenoh::Error            (binding failures; #code is zenoh's result code)
+│   └── Asterism::Zenoh::ClosedError  (the session is closed or its connection was lost)
+├── Asterism::Disconnected            (object layer: the connection is closed or lost)
+├── Asterism::TimeoutError            (no answer in time; old name Asterism::Timeout)
+│   └── Asterism::ROS::TimeoutError   (old name Asterism::ROS::Timeout)
+├── Asterism::EncodeError
+├── Asterism::RemoteError             (remote_class, remote_message)
+├── Asterism::ROS::UnknownType
+├── Asterism::CDR::DecodeError
+└── Asterism::DeprecationError        (only with Asterism.deprecations = :raise)
+```
+
+The old names `Asterism::Timeout` and `Asterism::ROS::Timeout` still work
+(they warn once). Inside `module Asterism`, `Timeout` is Ruby's `Timeout`
+module again. The ROS layer raises `Zenoh::ClosedError` when its session
+is closed (1.0: `Disconnected`, as the object layer).
+
+## Defaults
+
+| What | Default | Changed by |
+|---|---|---|
+| A proxy call | 2 s | `Asterism[path, timeout:]` / `timeout_ms:`; `DEFAULT_TIMEOUT` (s), `DEFAULT_TIMEOUT_MS` |
+| A service call | 2 s | `client.call(..., timeout:)` / `timeout_ms:`; `Client::DEFAULT_TIMEOUT` |
+| `get`, `liveliness_get`, a querier | 2 s | `timeout:` / `timeout_ms:` |
+| Connecting | 3 s | `connect_timeout:` (CRuby); `Zenoh::CONNECT_TIMEOUT_MS` (fixed at build time on the boards) |
+| A send that cannot go out | 3 s | `Zenoh::SEND_TIMEOUT_MS` |
+| The duplicate check of `Asterism.connect` | 1.5 s | `check_timeout:`; `CHECK_TIMEOUT` |
+| Queue depth (subscriptions, queryables, watches) | 16 (services 8; the object layer's queryable 32 and watch 64) | `depth:` |
+| A full queue | drops the oldest (counted in `dropped`) | |
+| Pause between polls of a waiting call | 2 ms | `WAIT_STEP_MS`, `Client::WAIT_STEP_MS` |
+| Receiving interval of the CRuby API | 2 ms | `interval:` |
+| Calls waiting inside each other | 4 | `MAX_NESTING` |
+| Encoding depth of a value | 16 | `Codec::MAX_DEPTH` |
+| `get` consolidation | `:none` (every reply; zenoh's own default is `:auto`, but services and the object layer want every reply) | `consolidation:` |
+
+Every `each_*` of the portable API (`each_pending`, `each_reply`,
+`each_result`) takes what is there now, without waiting, and returns an
+Array without a block (it drains the queue; an Enumerator would take only
+when iterated).
+
+## Deprecations and 1.0
+
+0.4.0 adds and deprecates; nothing that worked in 0.3.0 stops working. A
+deprecated call warns once per name (`warn` on CRuby, so it goes to
+`$stderr`; on the boards `warn` or `puts`, once per VM).
+`Asterism.deprecations = :raise` (or the environment variable
+`ASTERISM_DEPRECATIONS=raise`) raises `Asterism::DeprecationError` instead,
+for CI; `:silent` turns them off.
+
+| Deprecated (0.4.0) | Use | In 1.0 |
+|---|---|---|
+| `Asterism[path, 2000]` (the time as a positional argument) | `Asterism[path, timeout: 2.0]` or `timeout_ms: 2000` | removed |
+| A Float there (`Asterism[path, 2.0]` waits 2 ms) | `timeout: 2.0` | removed (warns with its own message now) |
+| `session.get(key, ms, params, payload)`, `session.liveliness_get(key, ms)` | `timeout:` / `timeout_ms:`, `params:`, `payload:` | removed (a positional depth stays) |
+| `session.peers`, `connection.peers` | `connection_count` | removed |
+| `Asterism::Timeout`, `Asterism::ROS::Timeout` | `TimeoutError` | kept as aliases through 1.x |
+| `proxy.methods` (the remote list) | `proxy.remote_methods` | `Object#methods` again |
+| `Connection::Subscription#each_pending` (CRuby API; it gave Samples) | `each_sample` | removed |
+| `q.reply(payload)` where the query's key differs from the queryable's own plain key | `q.reply(key, payload)` | answers on the queryable's key (as the CRuby API does) |
+| `client.call(field: ...)` with a field named `timeout` / `timeout_ms` | `request: { ... }` (or a Hash) | the keyword is the time limit (`ArgumentError` when ambiguous) |
+
+Also changing in 1.0, without a warning now: `Asterism.each { }` and
+`net.each { }` return the proxies / `self` instead of a count; the ROS
+layer raises `Disconnected` when its session is closed; the internal
+methods (marked `@api private` in the source) are hidden.
+
+### Reserved keywords
+
+`client.call` and `node.call` take the request's fields as keywords, next
+to `request:`, `timeout:` and `timeout_ms:`. A request type with a field
+of one of those names cannot be given that field as a keyword without
+ambiguity: give the request as `request: { timeout: 5 }` (or a Hash /
+message as the first argument) and the time limit as `timeout:`. In 0.4.0
+the ambiguous keyword warns; on the portable API a `timeout:` field stays
+a field, as before.
 
 ### When the connection is lost
 
@@ -435,18 +564,21 @@ nested type (`geometry_msgs/msg/Twist`) at start-up took 0.6 KB more.
 - The node token `asterism/<node>` is shared by every application of that
   node; when one of them closes, the others still list the node through
   their objects, but a watcher may see the node token go away.
-- No authentication: a trusted LAN is assumed.
-- Pattern matching on the boards: PicoRuby's compiler as Family mruby
-  vendors it runs `case/in` with `deconstruct_keys`, nested hash patterns,
-  array and find patterns, guards, alternatives and pins of a local of the
-  same scope, but a hash pattern's value is compared the wrong way round:
-  a class or a range there never matches (`in {x: Float}`), and a literal
-  there matches any value of that key (`in {x: 3}`). Inside a block, a
-  pattern does not bind a variable of the enclosing method
-  (`v = nil; list.each { |m| case m in {a: v} ... }` leaves it nil). Match
-  on the key alone and test the value in Ruby, and put the `case` in a
-  method of its own, as in the example above. Upstream PicoRuby has the
-  fixes; the full list of what the boards' Ruby can and cannot do is in
+- No authentication by default (plain TCP): a trusted LAN is assumed, or
+  TLS through a router (CRuby; [Over TLS](#over-tls-a-router-on-the-internet)).
+- One object-layer connection per process (per VM on the boards).
+- Pattern matching on the boards: `case/in` with `deconstruct_keys`, nested
+  hash patterns, classes and ranges as values, array and find patterns,
+  guards, alternatives, pins of a local of the same scope and binding from
+  inside a block work with the compiler of mruby-compiler2 `a2c72afb` or
+  later (PicoRuby master), and in Family mruby, which carries the two fixes
+  on its older PicoRuby. An older PicoRuby compares a hash pattern's value
+  the wrong way round (a class or a range never matches, a literal matches
+  any value) and does not bind an outer variable from inside a block;
+  there, match on the key alone and test the value in Ruby. Still
+  different on Family mruby's PicoRuby: `^x` of an outer local inside a
+  block, `^(expr)`, `Const[...]` and `**rest` next to another key. The full
+  list of what the boards' Ruby can and cannot do is in
   [docs/ruby_profile.md](docs/ruby_profile.md).
 
 ## ROS 2 (rmw_zenoh): `Asterism::ROS` and `Asterism::CDR`
@@ -472,7 +604,7 @@ loop do
 end
 
 # or with blocks, run from node.poll (in the update loop):
-node.every(1) { pub << { data: "tick" } }
+node.every(1) { pub << { data: "tick" } }               # or every(ms: 1000)
 node.subscribe("/cmd_vel", "geometry_msgs/msg/Twist") { |msg, _info| drive(msg) }
 loop { node.poll }
 
@@ -492,7 +624,7 @@ node.service("/fmruby/add_two_ints", add) { |req| { sum: req.a + req.b } }
 cli = node.client("/add_two_ints", add)
 loop do
   node.poll                       # session.poll, then answers the requests
-  res = cli.call(a: 2, b: 3)      # waits (polling), raises Asterism::ROS::Timeout
+  res = cli.call(a: 2, b: 3)      # waits (polling), raises Asterism::ROS::TimeoutError
   puts res.sum
   c = cli.call_async(a: 2, b: 3)  # returns at once
   # ... later updates:
@@ -506,15 +638,15 @@ end
 | `node.publisher(topic, type, qos: DEFAULT_QOS)` | `Publisher` | `topic` absolute, or relative to the namespace. `type` is a generated type or its ROS name (`"geometry_msgs/msg/Twist"`, loaded with `require_type`); the same for subscriptions, services and clients. Declares the publisher token (`ros2 topic list`). |
 | `pub.publish(msg)` / `pub << msg` | nil / `pub` | `msg` is a message of the type or a Hash of its fields. Puts the CDR payload with rmw_zenoh's attachment (sequence number, time, GID). |
 | `node.subscription(topic, type, qos: DEFAULT_QOS, depth: 16)` | `Subscription` | Subscribes and declares the subscription token. |
-| `sub.each_pending { \|msg, info\| }` | count | `info` is an `Attachment` (`sequence`, `stamp_ns`, `gid`) or nil. Samples that are not valid CDR are skipped and counted in `sub.errors`. |
+| `sub.each_pending { \|msg, info\| }` | count | `info` is an `Attachment` (`sequence`, `stamp_ns`, `gid`) or nil. Samples that are not valid CDR are skipped and counted in `sub.errors`. `sub.pending` / `received` / `dropped` count as the Zenoh subscriber's do. |
 | `node.service(name, type, qos: DEFAULT_QOS, depth: 8) { \|req\| response }` | `Service` | Serves `name` (`ros2 service list`). The block gets a `type::Request` and returns a `type::Response` or a Hash of its fields. It runs from `node.poll` (or `service.handle_pending`), never behind the application. A request without rmw_zenoh's attachment, or that does not decode, is counted in `service.errors` and gets no answer. An exception from the block ends that request without an answer and is raised from `node.poll`. `service.handled`: answered so far. |
 | `node.poll(steps = 8)` | true / false | `session.poll(steps)`, then answers the requests waiting for this node's services, then gives what came to the `subscribe` blocks and fires the `every` timers that are due. Returns what `session.poll` returns. A waiting `client.call` polls only the session and the services (`node.pump`), not the blocks. |
-| `node.subscribe(topic, type, qos: DEFAULT_QOS, depth: 16) { \|msg, info\| }` | `Subscription` | `node.subscription` whose messages (decoded, with their `Attachment` or nil) go to the block, from `node.poll`. `sub.close` ends it. Do not wait in the block (see [Stack](#stack)). |
-| `node.every(seconds) { }` | `Timer` | Calls the block every `seconds` (a Float works), the first time one period from now, from `node.poll` (so no more often than the update loop polls). It keeps the period; after a long stall it starts again from now instead of firing the missed times at once. `timer.cancel`, `timer.fired` (count), `timer.period`. Do not wait in the block. |
+| `node.subscribe(topic, type, qos: DEFAULT_QOS, depth: 16) { \|msg, info\| }` | `Subscription` | `node.subscription` whose messages (decoded, with their `Attachment` or nil) go to the block, from `node.poll`. `sub.close` ends it. Do not wait in the block (see [Stack](#stack)). Without a block it is `node.subscription`. |
+| `node.every(seconds) { }` / `node.every(ms: 500) { }` | `Timer` | Calls the block every `seconds` (a Float works) or `ms:` milliseconds, the first time one period from now, from `node.poll` (so no more often than the update loop polls). It keeps the period; after a long stall it starts again from now instead of firing the missed times at once. `timer.cancel`, `timer.fired` (count), `timer.period` (s), `timer.period_ms`. Do not wait in the block. |
 | `node.client(name, type, qos: DEFAULT_QOS)` | `Client` | Declares the client token. |
-| `client.call(request = nil, timeout_ms: 2000, **fields)` | `type::Response` | Sends the request (a `type::Request`, a Hash, or the fields as keywords) and waits, polling the node (its services keep answering). `Asterism::ROS::Timeout` when no response came in time, at once when nobody serves the name; `Asterism::Zenoh::Error` when the session closed. |
-| `client.call_async(request = nil, timeout_ms: 2000, **fields)` | `Call` | Sends and returns at once. `call.done?` never waits (`node.poll` moves it on); `call.value` waits and returns the response or raises like `call`; `call.response` (nil until it came), `call.took_ms`, `call.sequence`. |
-| `node.call(name, type, request = nil, timeout_ms: 2000, **fields)` | `type::Response` | `client.call` through a client made on first use and kept per name. |
+| `client.call(request = nil, request: nil, timeout: 2.0, **fields)` | `type::Response` | Sends the request (a `type::Request` or a Hash, positional or `request:`, or the fields as keywords) and waits, polling the node (its services keep answering). The time limit: `timeout:` (seconds) or `timeout_ms:`. `Asterism::ROS::TimeoutError` when no response came in time, at once when nobody serves the name; `Asterism::Zenoh::ClosedError` when the session closed. See [Reserved keywords](#reserved-keywords). |
+| `client.call_async(...)` | `Call` | The same arguments; sends and returns at once. `call.done?` never waits (`node.poll` moves it on); `call.value` waits and returns the response or raises like `call`; `call.response` (nil until it came), `call.took` (s) / `took_ms`, `call.sequence`. |
+| `node.call(name, type, request = nil, request:, timeout:, **fields)` | `type::Response` | `client.call` through a client made on first use and kept per name. |
 | `node.close` / `pub.close` / `sub.close` / `service.close` / `client.close` | nil | Withdraws the tokens (they also go when the session closes). `node.close` closes everything the node made. |
 | `Asterism::ROS.require_type(name)` | the type | Loads `<pkg>/<msg\|srv>/<Name>.rb` from `Asterism::ROS::TYPE_PATH` (`["/usr/share/asterism/msgs"]`; add directories to it) and returns `Asterism::ROS::<Pkg>::<Name>`. A type already loaded (or defined in Ruby) is returned at once. `UnknownType` when there is no file. |
 | `Asterism::CDR::Writer` / `Reader` | | Plain CDR with the 4-byte header, aligned from the end of the header: `bool int8 uint8 int16 uint16 int32 uint32 int64 uint64 float32 float64 string`, `array(kind, v, fixed, max)`, `bytes`, `structs(type, ...)`. Writes little endian; reads either order. |

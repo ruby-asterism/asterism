@@ -3,7 +3,8 @@
 #   Asterism.connect("tcp/192.0.2.2:7447", node: "fmruby-bbbbbb", app: "demo")
 #   Asterism.expose("apu", apu, methods: [:play, :stop])
 #   p = Asterism["linux/demo/apu"]     # <node>/<app>/<object>
-#   p.play("cde")                      # waits for the answer (2 s by default)
+#   p.play("cde")                      # waits for the answer (2 s by default;
+#                                      # Asterism["...", timeout: 5.0])
 #   Asterism.poll                      # call regularly (answers incoming calls)
 #
 # Keys (doc/ruby_asterism/design.md ch. 4):
@@ -19,13 +20,21 @@
 # that come in, so two machines calling each other do not lock up.
 module Asterism
   ROOT = "asterism"
+  # The time limit of a call (Asterism[path] without timeout:), in seconds
+  # and in milliseconds.
+  DEFAULT_TIMEOUT = 2.0
   DEFAULT_TIMEOUT_MS = 2000
+  # How long Asterism.connect looks for another copy of the same
+  # <node>/<app> (check_timeout:), in seconds.
+  CHECK_TIMEOUT = 1.5
   # Waits that may be open inside each other (a call answered while waiting
   # that itself calls and waits, and so on).
   MAX_NESTING = 4
   # Pause between polls while a call waits (ms).
   WAIT_STEP_MS = 2
 
+  # Every Asterism error is an Asterism::Error (the Zenoh bindings define
+  # it; Asterism::Zenoh::Error and the ROS errors are under it too).
   class Error < StandardError; end
 
   # A value that MessagePack cannot carry (only nil, true, false, Integer,
@@ -33,7 +42,9 @@ module Asterism
   class EncodeError < Error; end
 
   # No answer within the time limit (the object is gone, or slow).
-  class Timeout < Error; end
+  # Asterism::ROS::TimeoutError is one too. (Its old name Asterism::Timeout
+  # still works, with a deprecation warning.)
+  class TimeoutError < Error; end
 
   # The connection is closed or was lost (Asterism::Zenoh::Error inside).
   class Disconnected < Error; end
@@ -48,6 +59,17 @@ module Asterism
       @remote_message = remote_message.to_s
       super("#{@remote_class}: #{@remote_message}")
     end
+  end
+
+  # The old names of renamed constants: Asterism::Timeout (deprecated) is
+  # TimeoutError. A constant alias would shadow Ruby's Timeout module inside
+  # `module Asterism`, and cannot warn.
+  def self.const_missing(name)
+    if name == :Timeout
+      deprecated("Asterism::Timeout", "Asterism::TimeoutError")
+      return TimeoutError
+    end
+    super
   end
 
   # ------------------------------------------------------------ values
@@ -91,6 +113,7 @@ module Asterism
 
   # Milliseconds and a short pause. PicoRuby's Machine when it is there,
   # otherwise Time and sleep.
+  # @api private
   def self.now_ms
     if machine?
       ::Machine.board_millis
@@ -99,6 +122,7 @@ module Asterism
     end
   end
 
+  # @api private
   def self.pause(ms)
     if machine?
       ::Machine.delay_ms(ms)
@@ -107,6 +131,7 @@ module Asterism
     end
   end
 
+  # @api private
   def self.machine?
     @machine = (Object.const_defined?(:Machine) && ::Machine.respond_to?(:delay_ms)) if @machine.nil?
     @machine
@@ -116,6 +141,7 @@ module Asterism
 
   # A node, app or object name: one key chunk, no wildcard or special
   # characters.
+  # @api private
   def self.check_name(what, name)
     s = name.to_s
     bad = s.empty? || s.start_with?("@")
@@ -125,6 +151,7 @@ module Asterism
   end
 
   # "node/app/object" -> [node, app, object]
+  # @api private
   def self.split_path(path)
     parts = path.to_s.split("/")
     raise ArgumentError, "expected <node>/<app>/<object>, got #{path.inspect}" unless parts.size == 3
@@ -135,10 +162,12 @@ module Asterism
   end
 
   # Glob over "/"-separated chunks: * is one chunk, ** any number of them.
+  # @api private
   def self.glob?(pattern, path)
     glob_parts?(pattern.split("/"), 0, path.split("/"), 0)
   end
 
+  # @api private
   def self.glob_parts?(pat, i, parts, j)
     while i < pat.size
       if pat[i] == "**"
@@ -161,33 +190,37 @@ module Asterism
 
   # Opens the connection. locator, mode: and listen: go to
   # Asterism::Zenoh::Session.open (client of a router by default; mode: :peer
-  # with or without listen: for no router), and so does config: when it is
-  # given (a Hash of "key/path" => value or a JSON5 String, e.g. TLS
-  # certificates; CRuby's asterism-zenoh only). node: is this machine's ID and
-  # app: this application's name. Raises Disconnected when it cannot connect,
-  # and Error when the same <node>/<app> is already on the network.
-  def self.connect(locator, node:, app:, mode: nil, listen: nil, config: nil)
+  # with or without listen: for no router), and so do config: (a Hash of
+  # "key/path" => value or a JSON5 String, e.g. TLS certificates) and
+  # connect_timeout: (seconds) when they are given (CRuby's asterism-zenoh
+  # only; the boards raise ArgumentError). node: is this machine's ID and
+  # app: this application's name. check_timeout: how long to look for
+  # another copy of the same <node>/<app> (seconds, CHECK_TIMEOUT). Raises
+  # Disconnected when it cannot connect, and Error when the same
+  # <node>/<app> is already on the network.
+  def self.connect(locator, node:, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil,
+                   check_timeout: nil)
     raise Error, "already connected (Asterism.close first)" if connected?
     release
     node = check_name("node", node)
     app = check_name("app", app)
+    check_ms = time_ms("Asterism.connect check_timeout:", check_timeout, nil, nil, (CHECK_TIMEOUT * 1000).round)
+    opts = { mode: mode, listen: listen }
+    opts[:config] = config unless config.nil?
+    opts[:connect_timeout] = connect_timeout unless connect_timeout.nil?
     begin
-      s = if config.nil?
-            Asterism::Zenoh::Session.open(locator, mode: mode, listen: listen)
-          else
-            Asterism::Zenoh::Session.open(locator, mode: mode, listen: listen, config: config)
-          end
+      s = Asterism::Zenoh::Session.open(locator, **opts)
     rescue Asterism::Zenoh::Error => e
       raise Disconnected, e.message
     end
     begin
-      if already_there?(s, node, app)
+      if already_there?(s, node, app, check_ms)
         s.close
         raise Error, "#{node}/#{app} is already on the network"
       end
       @node_token = s.liveliness("#{ROOT}/#{node}")
-      @queryable = s.queryable("#{ROOT}/#{node}/#{app}/**", 32)
-      @watch = s.liveliness_watch("#{ROOT}/**", 64)
+      @queryable = s.queryable("#{ROOT}/#{node}/#{app}/**", depth: 32)
+      @watch = s.liveliness_watch("#{ROOT}/**", depth: 64)
     rescue Asterism::Zenoh::Error => e
       s.close
       raise Disconnected, e.message
@@ -206,16 +239,18 @@ module Asterism
   end
 
   # Whether objects of node/app are alive already (a second copy of the
-  # same application). Waits for the answer (a router answers at once).
-  def self.already_there?(s, node, app)
-    g = s.liveliness_get("#{ROOT}/#{node}/#{app}/**", 1000)
+  # same application). Waits for the answer (a router answers at once), at
+  # most check_ms. @api private
+  def self.already_there?(s, node, app, check_ms = 1500)
+    get_ms = check_ms > 1000 ? check_ms - 500 : check_ms
+    g = s.liveliness_get("#{ROOT}/#{node}/#{app}/**", timeout_ms: get_ms)
     t0 = now_ms
     found = false
     while true
       s.poll
       ended = g.done? # before taking the replies (see Future#collect)
       found = true if g.each_reply.size > 0
-      break if found || ended || now_ms - t0 > 1500
+      break if found || ended || now_ms - t0 > check_ms
       pause(WAIT_STEP_MS)
     end
     found
@@ -253,6 +288,7 @@ module Asterism
     nil
   end
 
+  # @api private
   def self.release
     s = @session
     @session = nil
@@ -266,6 +302,7 @@ module Asterism
     @watch = nil
   end
 
+  # @api private
   def self.session!
     raise Disconnected, (@lost || "not connected") unless @session
     @session
@@ -273,6 +310,7 @@ module Asterism
 
   # The connection went away: closed, but the next Asterism.poll still tells
   # on_leave about every node known until then.
+  # @api private
   def self.lost(reason)
     @lost = reason
     release
@@ -347,8 +385,22 @@ module Asterism
     self
   end
 
+  # Removes a block given to on_join / on_leave (keep the Proc to remove
+  # it: h = proc { |n| ... }; Asterism.on_join(&h); Asterism.off_join(h)).
+  # on_* adds a block; on_error (CRuby) is the only one that replaces.
+  def self.off_join(blk)
+    @on_join.delete(blk) if @on_join
+    self
+  end
+
+  def self.off_leave(blk)
+    @on_leave.delete(blk) if @on_leave
+    self
+  end
+
   # Compares the nodes alive now with those told before and calls the
   # blocks for the difference.
+  # @api private
   def self.tell_nodes
     known = @known
     return if known.nil?
@@ -366,6 +418,7 @@ module Asterism
 
   # While loops, not each with a block: the blocks are the application's,
   # and nothing else stands between them and the update loop on the stack.
+  # @api private
   def self.tell_each(where, blocks, names)
     return if blocks.nil? || names.empty?
     i = 0
@@ -380,10 +433,12 @@ module Asterism
   end
 
   # One block for one node (CRuby routes what it raises to on_error).
+  # @api private
   def self.tell(_where, blk, node)
     blk.call(node)
   end
 
+  # @api private
   def self.pump
     s = @session
     return false unless s
@@ -400,6 +455,7 @@ module Asterism
   end
 
   # Polls until the block is true. Answers incoming calls meanwhile.
+  # @api private
   def self.wait_until
     raise Error, "calls nested too deep (max #{MAX_NESTING})" if (@depth || 0) >= MAX_NESTING
     @depth = (@depth || 0) + 1
@@ -414,10 +470,12 @@ module Asterism
     end
   end
 
+  # @api private
   def self.depth
     (@depth || 0)
   end
 
+  # @api private
   def self.follow_liveliness
     w = @watch
     return unless w
@@ -460,7 +518,9 @@ module Asterism
 
   # The exposed objects alive now whose <node>/<app>/<object> matches the
   # pattern (* is one chunk, ** any number), this application's own
-  # included. With a block, yields a proxy for each; else returns them.
+  # included. With a block, yields a proxy for each and returns their
+  # number (1.0 will return the proxies instead, as Ruby's each returns
+  # its receiver; use the Array form for the count); else returns them.
   def self.each(pattern = "**")
     paths = []
     if @session
@@ -477,8 +537,12 @@ module Asterism
   end
 
   # A proxy for <node>/<app>/<object>. Nothing is sent until a method is
-  # called on it.
-  def self.[](path, timeout_ms = DEFAULT_TIMEOUT_MS)
+  # called on it. timeout: the time limit of its calls in seconds (2.0), or
+  # timeout_ms:. (Asterism[path, ms], the time as a positional argument, is
+  # deprecated.)
+  def self.[](path, *args, timeout: nil, timeout_ms: nil)
+    raise ArgumentError, "Asterism[]: wrong number of arguments (given #{args.size + 1}, expected 1)" if args.size > 1
+    timeout_ms = time_ms("Asterism[]", timeout, timeout_ms, args[0], DEFAULT_TIMEOUT_MS)
     split_path(path)
     @proxies ||= {}
     key = "#{path}|#{timeout_ms}"
@@ -489,6 +553,7 @@ module Asterism
 
   # Starts a call; returns a Future. Raises EncodeError (before sending)
   # and Disconnected.
+  # @api private
   def self.call_async(path, method, args, kwargs, timeout_ms)
     parts = split_path(path)
     payload = Codec.pack([method.to_s, args, kwargs])
@@ -498,7 +563,7 @@ module Asterism
       return Future.answered(path, method, dispatch(parts[2], payload))
     end
     begin
-      g = session!.get("#{ROOT}/#{path}/call", timeout_ms, nil, payload)
+      g = session!.get("#{ROOT}/#{path}/call", timeout_ms: timeout_ms, payload: payload)
     rescue Asterism::Zenoh::Error => e
       lost(e.message)
       raise Disconnected, e.message
@@ -506,11 +571,13 @@ module Asterism
     Future.new(path, method, g, now_ms + timeout_ms, timeout_ms)
   end
 
+  # @api private
   def self.call(path, method, args, kwargs, timeout_ms)
     call_async(path, method, args, kwargs, timeout_ms).value
   end
 
   # The meta reply of path: {"methods" => [[name, arity], ...]}.
+  # @api private
   def self.meta(path, timeout_ms = DEFAULT_TIMEOUT_MS)
     parts = split_path(path)
     if parts[0] == @node && parts[1] == @app && @session
@@ -519,7 +586,7 @@ module Asterism
       return m
     end
     begin
-      g = session!.get("#{ROOT}/#{path}/meta", timeout_ms)
+      g = session!.get("#{ROOT}/#{path}/meta", timeout_ms: timeout_ms)
     rescue Asterism::Zenoh::Error => e
       lost(e.message)
       raise Disconnected, e.message
@@ -530,6 +597,7 @@ module Asterism
 
   # ------------------------------------------------------------ answering
 
+  # @api private
   def self.answer_calls
     qa = @queryable
     return unless qa
@@ -554,6 +622,7 @@ module Asterism
 
   # asterism/<node>/<app>/<object>/<call|meta>; the node and app may come
   # as wildcards (the query matched this application's queryable).
+  # @api private
   def self.answer(q)
     parts = q.key.split("/")
     return unless parts.size == 5
@@ -571,6 +640,7 @@ module Asterism
     end
   end
 
+  # @api private
   def self.meta_of(name)
     entry = @objects[name]
     return nil unless entry
@@ -580,6 +650,7 @@ module Asterism
   end
 
   # Runs a call on an exposed object; returns the packed reply.
+  # @api private
   def self.dispatch(obj_name, payload)
     req = Codec.unpack(payload)
     unless req.is_a?(Array) && req.size == 3 && req[0].is_a?(String) && req[1].is_a?(Array) && req[2].is_a?(Hash)
@@ -607,6 +678,7 @@ module Asterism
     end
   end
 
+  # @api private
   def self.invoke(obj, name, args, kw)
     if kw.empty?
       obj.public_send(name, *args)
@@ -617,6 +689,7 @@ module Asterism
     end
   end
 
+  # @api private
   def self.error_reply(klass, message)
     ::MessagePack.pack(["error", klass.to_s, message.to_s])
   end

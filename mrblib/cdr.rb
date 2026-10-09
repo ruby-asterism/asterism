@@ -18,9 +18,13 @@
 # String#unpack when the VM has them (mruby-pack, CRuby) and fall back to
 # arithmetic (CDR.f64_bytes and friends) when it does not.
 module Asterism
+  # (asterism.rb and the Zenoh binding define it too; this file is also
+  # loaded on its own by the type tools.)
+  class Error < StandardError; end
+
   module CDR
     # Malformed or truncated CDR.
-    class DecodeError < ::StandardError; end
+    class DecodeError < ::Asterism::Error; end
 
     HEADER_LE = "\x00\x01\x00\x00".freeze
     HEADER_BE = "\x00\x00\x00\x00".freeze

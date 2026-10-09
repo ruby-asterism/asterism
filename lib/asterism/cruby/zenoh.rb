@@ -1,5 +1,5 @@
 # Asterism::Zenoh with blocks, threads and Enumerators (CRuby only). The
-# polled API of asterism-zenoh (Session, each_pending, each_reply) is the
+# portable API of asterism-zenoh (Session, each_pending, each_reply) is the
 # same on the boards and stays as it is; this is a layer on top of it.
 #
 #   Asterism::Zenoh.open("tcp/192.0.2.2:7447") do |s|
@@ -80,10 +80,21 @@ module Asterism
       end
     end
 
-    # Seconds (Float) or nil -> milliseconds for the polled API.
+    # Seconds (Float) or nil -> milliseconds for the portable API.
+    # @api private
     def self.ms(seconds, default_ms)
-      return default_ms if seconds.nil?
-      (seconds * 1000).round
+      ::Asterism.time_ms("timeout:", seconds, nil, nil, default_ms)
+    end
+
+    # Yields obj and closes it after the block (the block's value), or
+    # returns obj without a block. @api private
+    def self.scoped(obj)
+      return obj unless block_given?
+      begin
+        yield obj
+      ensure
+        obj.close
+      end
     end
 
     # Waits on the calling thread until a sample comes into sub (an
@@ -130,30 +141,34 @@ module Asterism
 
       # A declared publisher (Connection::Publisher): put / delete,
       # matching?, on_matching { |listening| }. opts: those of
-      # Session#publisher (encoding:, priority:, ...).
-      def publisher(key, **opts)
-        Publisher.new(self, @session.publisher(key, **opts), key)
+      # Session#publisher (encoding:, priority:, ...). With a block: yields
+      # it and closes it after the block (returns the block's value).
+      def publisher(key, **opts, &blk)
+        Zenoh.scoped(Publisher.new(self, @session.publisher(key, **opts), key), &blk)
       end
 
       # An advanced publisher (cache:, sample_miss_detection:,
       # publisher_detection: and the publisher options): late subscribers
-      # with history get what it kept. Same object as publisher.
-      def advanced_publisher(key, **opts)
-        Publisher.new(self, @session.advanced_publisher(key, **opts), key)
+      # with history get what it kept. Same object as publisher (and the
+      # same block form).
+      def advanced_publisher(key, **opts, &blk)
+        Zenoh.scoped(Publisher.new(self, @session.advanced_publisher(key, **opts), key), &blk)
       end
 
       # An advanced subscriber (history:, recovery:, subscriber_detection:,
-      # query_timeout_ms:): like subscribe, plus on_publisher and on_miss.
+      # query_timeout: in seconds or query_timeout_ms:): like subscribe,
+      # plus on_publisher and on_miss.
       def advanced_subscriber(key, depth: 16, **opts, &blk)
-        sub = AdvancedSubscription.new(self, @session.advanced_subscriber(key, depth, **opts), key)
+        sub = AdvancedSubscription.new(self, @session.advanced_subscriber(key, depth: depth, **opts), key)
         sub.handle(&blk) if blk
         sub
       end
 
       # A declared get (Connection::Querier): get { |reply| }, matching?,
-      # on_matching. timeout in seconds; the rest as Session#querier.
-      def querier(key, timeout: 2.0, **opts)
-        Querier.new(self, @session.querier(key, timeout_ms: Zenoh.ms(timeout, 2000), **opts), key)
+      # on_matching. timeout: in seconds (2.0) or timeout_ms:; the rest as
+      # Session#querier.
+      def querier(key, timeout: nil, **opts)
+        Querier.new(self, @session.querier(key, timeout: timeout, **opts), key)
       end
 
       # on_transport(history: false) { |event| }: a TransportEvent (kind
@@ -161,21 +176,21 @@ module Asterism
       # peer or router connects or goes. Returns an Events (close it).
       def on_transport(history: false, depth: 16, &blk)
         raise ArgumentError, "a block is needed" unless blk
-        Events.new(self, @session.transport_events(depth, history: history), "on_transport", blk)
+        Events.new(self, @session.transport_events(depth: depth, history: history), "on_transport", blk)
       end
 
       # on_link(history: false) { |event| }: a LinkEvent each time a link
       # opens or closes.
       def on_link(history: false, depth: 16, &blk)
         raise ArgumentError, "a block is needed" unless blk
-        Events.new(self, @session.link_events(depth, history: history), "on_link", blk)
+        Events.new(self, @session.link_events(depth: depth, history: history), "on_link", blk)
       end
 
       # With a block: every sample is given to it (as a Sample) on the
       # receiving thread; returns the Subscription (close it to stop).
-      # Without: a Subscription to take from (each, each_pending).
+      # Without: a Subscription to take from (each, each_sample).
       def subscribe(key, depth: 16, &blk)
-        sub = Subscription.new(self, @session.subscribe(key, depth), key)
+        sub = Subscription.new(self, @session.subscribe(key, depth: depth), key)
         sub.handle(&blk) if blk
         sub
       end
@@ -184,45 +199,48 @@ module Asterism
       # finished when it returns (reply in the block with q.reply). Without:
       # a Queryable whose each yields the queries (finished after each).
       def queryable(key, depth: 16, complete: false, &blk)
-        qa = Queryable.new(self, @session.queryable(key, depth, complete: complete), key)
+        qa = Queryable.new(self, @session.queryable(key, depth: depth, complete: complete), key)
         qa.handle(&blk) if blk
         qa
       end
 
       # The replies to a get: yields each Reply until every answer came or
-      # timeout (seconds) ran out, and returns their number. Without a
-      # block, an Enumerator (each iteration sends the get again).
-      # errors: true also yields the error replies (Reply#error?); opts:
-      # encoding:, priority:, congestion_control:, express:,
-      # accept_replies: (Session#get).
-      def get(key, timeout: 2.0, params: nil, payload: nil, attachment: nil, target: :all,
+      # timeout (seconds; or timeout_ms:) ran out, and returns their number
+      # (not named each, so the count stays). Without a block, an Enumerator
+      # (each iteration sends the get again). errors: true also yields the
+      # error replies (Reply#error?); opts: encoding:, priority:,
+      # congestion_control:, express:, accept_replies: (Session#get).
+      def get(key, timeout: nil, timeout_ms: nil, params: nil, payload: nil, attachment: nil, target: :all,
               consolidation: :none, errors: false, **opts, &blk)
+        ms = ::Asterism.time_ms("Connection#get", timeout, timeout_ms, nil, 2000)
         start = lambda do
-          @session.get(key, Zenoh.ms(timeout, 2000), params, payload,
+          @session.get(key, timeout_ms: ms, params: params, payload: payload,
                        attachment: attachment, target: target, consolidation: consolidation, **opts)
         end
         return enum_for(:get_each, start, errors) unless blk
         get_each(start, errors, &blk)
       end
 
-      # A liveliness token (close it to withdraw).
-      def liveliness(key)
-        @session.liveliness(key)
+      # A liveliness token (close it to withdraw). With a block: the token
+      # is withdrawn after the block (returns the block's value).
+      def liveliness(key, &blk)
+        Zenoh.scoped(@session.liveliness(key), &blk)
       end
 
       # With a block: yields key and alive (true when the token appeared) on
       # the receiving thread for each change; the tokens alive now come
       # first. Without: a Watch whose each yields Liveliness values.
       def liveliness_watch(key, depth: 16, &blk)
-        w = Watch.new(self, @session.liveliness_watch(key, depth), key)
+        w = Watch.new(self, @session.liveliness_watch(key, depth: depth), key)
         w.handle(&blk) if blk
         w
       end
 
       # The keys of the liveliness tokens alive now (an Array; waits for
-      # the answers, at most timeout seconds).
-      def liveliness_get(key, timeout: 2.0)
-        g = @session.liveliness_get(key, Zenoh.ms(timeout, 2000))
+      # the answers, at most timeout seconds, or timeout_ms:).
+      def liveliness_get(key, timeout: nil, timeout_ms: nil)
+        g = @session.liveliness_get(key, timeout_ms: ::Asterism.time_ms("Connection#liveliness_get", timeout,
+                                                                       timeout_ms, nil, 2000))
         keys = []
         loop do
           g.each_reply.each { |r| keys << r[0] }
@@ -274,8 +292,15 @@ module Asterism
         @session.zid
       end
 
+      # The routers (client) or peers (peer mode) connected now.
+      def connection_count
+        @session.connection_count
+      end
+
+      # Deprecated: connection_count.
       def peers
-        @session.peers
+        ::Asterism.deprecated("Connection#peers", "Connection#connection_count")
+        @session.connection_count
       end
 
       # The Zenoh IDs of the peers / routers connected now.
@@ -329,7 +354,7 @@ module Asterism
       # A subscription of a Connection. Either its block gets the samples
       # (on the receiving thread), or the application takes them: each (an
       # Enumerator that waits for samples) or each_pending (what is there
-      # now, as the polled API).
+      # now, as the portable API).
       class Subscription
         include Enumerable
 
@@ -364,12 +389,21 @@ module Asterism
           self
         end
 
-        # The samples there now as Samples (an Array), or yields them.
-        def each_pending
+        # The samples there now as Samples (an Array), or yields them and
+        # returns their number. (The portable API's each_sample.)
+        def each_sample
           got = @subscriber.each_sample
           return got unless block_given?
           got.each { |s| yield s }
           got.size
+        end
+
+        # Deprecated: each_sample. In the portable API each_pending gives
+        # [key, payload, attachment] Arrays; here it gave Samples, so one
+        # name had two shapes.
+        def each_pending(&blk)
+          ::Asterism.deprecated("Connection::Subscription#each_pending", "each_sample")
+          each_sample(&blk)
         end
 
         def pending = @subscriber.pending

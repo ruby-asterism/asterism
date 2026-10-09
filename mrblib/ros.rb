@@ -20,6 +20,7 @@
 #     sub.each_pending { |msg, info| puts msg.data }   # info: Attachment or nil
 #   end
 #   cli.call(a: 2, b: 3).sum                      # waits (polling), or
+#   cli.call(request: {a: 2, b: 3}, timeout: 5.0) # the request as a Hash
 #   c = cli.call_async(a: 2, b: 3); c.done?; c.value
 #   node.close
 #
@@ -47,6 +48,11 @@
 # Nothing here depends on the host: it uses an Asterism::Zenoh::Session
 # (put with attachment:, subscribe, liveliness, zid) and Asterism::CDR.
 module Asterism
+  # (asterism.rb defines both; this file is also loaded on its own, with
+  # cdr.rb, by the type tools.)
+  class Error < StandardError; end
+  class TimeoutError < Error; end
+
   module ROS
     LIVELINESS_ROOT = "@ros2_lv"
     # rmw_zenoh's QoS chunk for the default profile (reliable, volatile,
@@ -120,8 +126,20 @@ module Asterism
       out
     end
 
-    # A service call got no answer in time (or nobody serves that name).
-    class Timeout < ::StandardError; end
+    # A service call got no answer in time (or nobody serves that name). An
+    # Asterism::TimeoutError (so an Asterism::Error); its old name
+    # Asterism::ROS::Timeout still works, with a deprecation warning.
+    class TimeoutError < ::Asterism::TimeoutError; end
+
+    # The old name Asterism::ROS::Timeout (deprecated): see
+    # Asterism.const_missing.
+    def self.const_missing(name)
+      if name == :Timeout
+        ::Asterism.deprecated("Asterism::ROS::Timeout", "Asterism::ROS::TimeoutError")
+        return TimeoutError
+      end
+      super
+    end
 
     # Milliseconds from an arbitrary origin (the board's clock when there is
     # one), and a short pause; the same helpers Asterism's calls use.
@@ -180,7 +198,7 @@ module Asterism
     TYPE_PATH = ["/usr/share/asterism/msgs"]
 
     # The type has no generated file in TYPE_PATH.
-    class UnknownType < ::StandardError; end
+    class UnknownType < ::Asterism::Error; end
 
     def self.type_path
       TYPE_PATH
@@ -381,22 +399,26 @@ module Asterism
       # the block, from node.poll. Returns the Subscription (close ends it).
       # The block runs on the update loop's stack: do not wait in it (no
       # service call, no proxy call); start a call_async and look at it
-      # later instead.
+      # later instead. Without a block, the same as subscription: a
+      # Subscription to take from with each_pending.
       def subscribe(topic, type, qos: DEFAULT_QOS, depth: 16, &handler)
-        raise ArgumentError, "subscribe needs a block (or use subscription)" unless handler
+        return subscription(topic, type, qos: qos, depth: depth) unless handler
         e = subscription(topic, type, qos: qos, depth: depth)
         e.handler = handler
         @handled << e
         e
       end
 
-      # Calls the block every `seconds` (the first time one period from now),
-      # from node.poll. Returns a Timer (cancel). It keeps the period; after
-      # a long stall it starts again from now instead of firing the missed
-      # times at once. As for subscribe: do not wait in the block.
-      def every(seconds, &blk)
+      # Calls the block every `seconds` (or every ms: milliseconds; the first
+      # time one period from now), from node.poll. Returns a Timer (cancel).
+      # It keeps the period; after a long stall it starts again from now
+      # instead of firing the missed times at once. As for subscribe: do not
+      # wait in the block.
+      def every(seconds = nil, ms: nil, &blk)
         raise ArgumentError, "every needs a block" unless blk
-        t = ::Asterism::ROS::Timer.new(self, seconds, blk)
+        raise ArgumentError, "every: give the period once (seconds, or ms:)" if !seconds.nil? && !ms.nil?
+        raise ArgumentError, "every: a period is needed (seconds, or ms:)" if seconds.nil? && ms.nil?
+        t = ::Asterism::ROS::Timer.new(self, seconds, blk, ms)
         @timers << t
         t
       end
@@ -407,15 +429,17 @@ module Asterism
       end
 
       # node.call("/add_two_ints", AddTwoInts, a: 1, b: 2) -> response.
-      # A client per service name is made on first use and kept.
-      def call(service, type, request = nil, timeout_ms: ::Asterism::ROS::Client::DEFAULT_TIMEOUT_MS, **fields)
+      # The request as keywords, as a Hash or message (positional or
+      # request:); the time limit as timeout: (seconds) or timeout_ms:. A
+      # client per service name is made on first use and kept.
+      def call(service, type, req = nil, request: nil, timeout: nil, timeout_ms: nil, **fields)
         @clients ||= {}
         c = @clients[service]
         if c.nil? || c.closed?
           c = client(service, type)
           @clients[service] = c
         end
-        c.call(request, timeout_ms: timeout_ms, **fields)
+        c.call(req, request: request, timeout: timeout, timeout_ms: timeout_ms, **fields)
       end
 
       # Polls the session (Asterism::Zenoh::Session#poll), answers the
@@ -432,6 +456,7 @@ module Asterism
 
       # What a waiting service call polls: the session and the services, not
       # the subscribe / every blocks (those run from node.poll only).
+      # @api private
       def pump(steps = 8)
         ok = @session.poll(steps)
         i = 0
@@ -444,7 +469,7 @@ module Asterism
 
       # While loops, not each with a block: the application's blocks are
       # called from here, and nothing else should stand between them and
-      # the update loop on the stack.
+      # the update loop on the stack. @api private
       def deliver
         i = 0
         while i < @handled.size
@@ -463,6 +488,7 @@ module Asterism
         end
       end
 
+      # @api private
       def fire_timers
         return if @timers.empty?
         now = ::Asterism::ROS.now_ms
@@ -480,7 +506,7 @@ module Asterism
       end
 
       # One message for one subscribe block, one timer firing (CRuby routes
-      # what they raise to on_error).
+      # what they raise to on_error). @api private
       def handle(sub, msg, info)
         sub.handler.call(msg, info)
       end
@@ -508,6 +534,7 @@ module Asterism
       end
 
       # For the entities: [data key, liveliness token key] of a topic.
+      # @api private
       def entity_keys(kind, topic, type, qos)
         full = ::Asterism::ROS.resolve(topic, @namespace)
         data = "#{@domain}/#{::Asterism::ROS.strip_slashes(full)}/#{type::TYPE_NAME}/#{type::TYPE_HASH}"
@@ -535,7 +562,7 @@ module Asterism
       # msg: a message of the type, or a Hash of its fields (missing ones
       # take their defaults).
       def publish(msg)
-        raise ::Asterism::Zenoh::Error, "publisher closed" if @token.nil?
+        raise ::Asterism::Zenoh::ClosedError, "publisher closed" if @token.nil?
         # Read once (a second thread may publish meanwhile on CRuby).
         seq = @sequence + 1
         @sequence = seq
@@ -566,7 +593,7 @@ module Asterism
         @type = type
         @topic_key, @token_key = node.entity_keys("MS", topic, type, qos)
         @errors = 0
-        @sub = session.subscribe(@topic_key, depth)
+        @sub = session.subscribe(@topic_key, depth: depth)
         @token = session.liveliness(@token_key)
       end
 
@@ -591,6 +618,16 @@ module Asterism
         out.size
       end
 
+      # Messages waiting / received so far / dropped because the queue was
+      # full (the counters of the Zenoh subscriber underneath).
+      def pending
+        @sub.pending
+      end
+
+      def received
+        @sub.received
+      end
+
       def dropped
         @sub.dropped
       end
@@ -609,14 +646,16 @@ module Asterism
 
     # node.every: a block called every period, from node.poll.
     class Timer
-      # period: seconds as given; fired: how many times it ran.
-      attr_reader :period, :fired
+      # period: seconds (as given, or ms / 1000.0); period_ms: the same in
+      # milliseconds; fired: how many times it ran.
+      attr_reader :period, :period_ms, :fired
 
-      def initialize(node, seconds, blk)
-        @period_ms = (seconds * 1000).to_i
+      # @api private (node.every makes it)
+      def initialize(node, seconds, blk, ms = nil)
+        @period_ms = ms.nil? ? (seconds * 1000).round : ms.round
         raise ArgumentError, "the period must be positive" unless @period_ms > 0
         @node = node
-        @period = seconds
+        @period = ms.nil? ? seconds : ms / 1000.0
         @blk = blk
         @next = ::Asterism::ROS.now_ms + @period_ms
         @fired = 0
@@ -659,7 +698,7 @@ module Asterism
         @service_key, @token_key = node.entity_keys("SS", service, type, qos)
         @handled = 0
         @errors = 0
-        @queryable = session.queryable(@service_key, depth, complete: true)
+        @queryable = session.queryable(@service_key, depth: depth, complete: true)
         @token = session.liveliness(@token_key)
       end
 
@@ -739,6 +778,11 @@ module Asterism
         @nobody = false
       end
 
+      # took_ms in seconds (a Float; nil until done).
+      def took
+        @took_ms.nil? ? nil : @took_ms / 1000.0
+      end
+
       # True once the response came, the time ran out, or no server answered.
       def done?
         collect
@@ -746,19 +790,23 @@ module Asterism
       end
 
       # The response (type::Response); waits until done. Raises
-      # Asterism::ROS::Timeout when there was none.
+      # Asterism::ROS::TimeoutError when there was none, and
+      # Asterism::Zenoh::ClosedError when the session closed (1.0:
+      # Asterism::Disconnected).
       def value
         @client.wait_for(self) unless done?
         if @response.nil?
-          raise ::Asterism::Zenoh::Error, "session is closed" if @client.session_closed?
+          raise ::Asterism::Zenoh::ClosedError, "session is closed" if @client.session_closed?
           if @nobody
-            raise ::Asterism::ROS::Timeout, "no answer from #{@client.service_name} (nobody serves it)"
+            raise ::Asterism::ROS::TimeoutError, "no answer from #{@client.service_name} (nobody serves it)"
           end
-          raise ::Asterism::ROS::Timeout, "no answer from #{@client.service_name} within #{@timeout_ms} ms"
+          raise ::Asterism::ROS::TimeoutError,
+                "no answer from #{@client.service_name} within #{@timeout_ms / 1000.0} s (#{@timeout_ms} ms)"
         end
         @response
       end
 
+      # @api private
       def collect
         return if @finished
         g = @get
@@ -788,6 +836,8 @@ module Asterism
     # The client side of a service (node.client). Sends each request as a
     # get on the service key, plus the SC token.
     class Client
+      # The time limit of a call, in seconds and in milliseconds.
+      DEFAULT_TIMEOUT = 2.0
       DEFAULT_TIMEOUT_MS = 2000
       # Pause between polls while a call waits (ms).
       WAIT_STEP_MS = 2
@@ -805,11 +855,14 @@ module Asterism
         @token = session.liveliness(@token_key)
       end
 
-      # Sends the request and returns a Call at once. request: a
-      # type::Request, a Hash, or the fields as keywords.
-      def call_async(request = nil, timeout_ms: DEFAULT_TIMEOUT_MS, **fields)
-        raise ::Asterism::Zenoh::Error, "client closed" if @token.nil?
-        req = request.nil? ? fields : request
+      # Sends the request and returns a Call at once. The request: a
+      # type::Request or a Hash (positional, or request:), or the fields as
+      # keywords. The time limit: timeout: (seconds) or timeout_ms: (2 s).
+      # A request with a field named timeout or timeout_ms is best given as
+      # request: { ... } (see README, Reserved keywords).
+      def call_async(req = nil, request: nil, timeout: nil, timeout_ms: nil, **fields)
+        raise ::Asterism::Zenoh::ClosedError, "client closed" if @token.nil?
+        req, timeout_ms = request_and_limit("Client#call", req, request, timeout, timeout_ms, fields)
         payload = @type::Request.encode(req)
         # Read once into a local: the request and its Call carry the same
         # number even when another thread (CRuby) calls through this client
@@ -817,20 +870,47 @@ module Asterism
         seq = @sequence + 1
         @sequence = seq
         att = ::Asterism::ROS::Attachment.new(seq, ::Asterism::ROS.now_ns, @gid)
-        g = @session.get(@service_key, timeout_ms, nil, payload, attachment: att.encode,
+        g = @session.get(@service_key, timeout_ms: timeout_ms, payload: payload, attachment: att.encode,
                          target: :all_complete, consolidation: :none)
         ::Asterism::ROS::Call.new(self, g, seq, timeout_ms)
       end
 
       # Sends the request and waits for the response (polling the node, so
       # this node's services keep answering meanwhile). Raises
-      # Asterism::ROS::Timeout when no response came in time.
-      def call(request = nil, timeout_ms: DEFAULT_TIMEOUT_MS, **fields)
-        call_async(request, timeout_ms: timeout_ms, **fields).value
+      # Asterism::ROS::TimeoutError when no response came in time.
+      def call(req = nil, request: nil, timeout: nil, timeout_ms: nil, **fields)
+        call_async(req, request: request, timeout: timeout, timeout_ms: timeout_ms, **fields).value
+      end
+
+      # The request and the time limit (ms) from call's arguments. A
+      # keyword that is also a field of the request type is ambiguous: a
+      # field named timeout stays a field (as before 0.4.0), timeout_ms
+      # stays the time limit, and both warn (request: { ... } says which).
+      # @api private
+      def request_and_limit(where, req, request, timeout, timeout_ms, fields)
+        raise ArgumentError, "#{where}: give the request once (positional or request:)" if !req.nil? && !request.nil?
+        req = request if req.nil?
+        if req.nil?
+          names = @type::Request::FIELDS
+          if !timeout.nil? && names.include?(:timeout)
+            ::Asterism.deprecated("#{where} with a request field named timeout as a keyword",
+                                  "request: { timeout: ... } (timeout: is the time limit in seconds)",
+                                  "it is taken as the field here, as before 0.4.0")
+            fields[:timeout] = timeout
+            timeout = nil
+          end
+          if !timeout_ms.nil? && names.include?(:timeout_ms)
+            ::Asterism.deprecated("#{where} with a request field named timeout_ms as a keyword",
+                                  "request: { timeout_ms: ... } and timeout: for the time limit",
+                                  "timeout_ms: is taken as the time limit here")
+          end
+          req = fields
+        end
+        [req, ::Asterism.time_ms(where, timeout, timeout_ms, nil, DEFAULT_TIMEOUT_MS)]
       end
 
       # Polls the node's session and services (not its subscribe / every
-      # blocks) until the call is done.
+      # blocks) until the call is done. @api private
       def wait_for(c)
         until c.done?
           break unless @node.pump

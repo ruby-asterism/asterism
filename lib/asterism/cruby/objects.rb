@@ -1,6 +1,6 @@
 # The object layer (Asterism.connect / expose / []) with blocks and a
 # receiving thread (CRuby only). Asterism.connect without a block,
-# Asterism.poll and the rest of the polled API work as on the boards.
+# Asterism.poll and the rest of the portable API work as on the boards.
 #
 #   Asterism.connect("tcp/192.0.2.2:7447", node: "mypc", app: "demo") do |net|
 #     net.expose("screen", Screen.new, methods: [:say])
@@ -23,10 +23,10 @@ module Asterism
   # Held by every entry into the object layer (reentrant).
   LOCK = Monitor.new
 
-  # The polled API, entered under LOCK. Prepended to the Asterism module's
+  # The portable API, entered under LOCK. Prepended to the Asterism module's
   # singleton class, so the shared methods themselves are not changed.
   module Locked
-    %i[expose unexpose poll nodes [] call_async meta connected? exposed on_join on_leave].each do |m|
+    %i[expose unexpose poll nodes [] call_async meta connected? exposed on_join on_leave off_join off_leave].each do |m|
       define_method(m) do |*args, **kw, &blk|
         ::Asterism::LOCK.synchronize { super(*args, **kw, &blk) }
       end
@@ -35,9 +35,11 @@ module Asterism
     # With a block: yields an Asterism::Net and closes when the block ends
     # (also on an exception); returns the block's value. Without a block,
     # as before (returns Asterism).
-    def connect(locator, node:, app:, mode: nil, listen: nil, config: nil, &blk)
+    def connect(locator, node:, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil, check_timeout: nil,
+                &blk)
       ::Asterism::LOCK.synchronize do
-        super(locator, node: node, app: app, mode: mode, listen: listen, config: config)
+        super(locator, node: node, app: app, mode: mode, listen: listen, config: config,
+                       connect_timeout: connect_timeout, check_timeout: check_timeout)
         # The Net of a connection that was lost (not closed) belongs to the
         # old session.
         old = @net
@@ -145,15 +147,17 @@ module Asterism
       ::Asterism.unexpose(name)
     end
 
-    # A proxy for <node>/<app>/<object>; timeout in seconds.
-    def [](path, timeout: nil)
-      ::Asterism[path, Zenoh.ms(timeout, ::Asterism::DEFAULT_TIMEOUT_MS)]
+    # A proxy for <node>/<app>/<object>; timeout: in seconds (or
+    # timeout_ms:).
+    def [](path, timeout: nil, timeout_ms: nil)
+      ::Asterism[path, timeout: timeout, timeout_ms: timeout_ms]
     end
     alias proxy []
 
     # The exposed objects alive now matching the pattern, as proxies. With
-    # a block, yields each and returns their number; without, an
-    # Enumerator (net.each("*/demo/info").map(&:status)).
+    # a block, yields each and returns their number (1.0: returns self, as
+    # Ruby's each does; net.count is the number); without, an Enumerator
+    # (net.each("*/demo/info").map(&:status)).
     def each(pattern = "**", &blk)
       return enum_for(:each, pattern) unless blk
       ::Asterism.each(pattern, &blk)
@@ -170,6 +174,17 @@ module Asterism
 
     def on_leave(&blk)
       ::Asterism.on_leave(&blk)
+      self
+    end
+
+    # Removes a block given to on_join / on_leave (keep the Proc).
+    def off_join(blk)
+      ::Asterism.off_join(blk)
+      self
+    end
+
+    def off_leave(blk)
+      ::Asterism.off_leave(blk)
       self
     end
 

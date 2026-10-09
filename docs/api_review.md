@@ -1,8 +1,26 @@
 # API review toward 1.0 (proposal)
 
-Status: **proposal only**. Nothing here has been changed in the code. Every
-API change below is for the maintainer to accept, change or reject; the
-"Decisions" section at the end lists the choices that block the rest.
+Status: **decided; 0.4.0 done**. The maintainer took the recommended option
+of every decision in section 5 (2026-10-09; D3: `connection_count`, removed
+in 1.0; D4: `Disconnected` keeps its name; D9: "portable API" and "CRuby
+API"; D10: 0.4.0 then 1.0, picoruby-asterism-zenoh in lockstep). 0.4.0
+implements section 4.1 (CHANGELOG.md has the list), with these
+differences:
+
+- D7 (one-argument `reply`) changes behaviour, so 0.4.0 only warns where
+  the answer will change; the change itself is in 1.0 with the rest of
+  section 4.2.
+- U6 `connect_timeout:` is CRuby only: zenoh-pico's connect limit is a
+  build-time define, so the boards raise `ArgumentError` for it.
+- T2 detects a forked child for calls and `closed?`; a session's entities
+  are not made fork-safe beyond that.
+- X2 / X3: internals carry `@api private` comments and every time argument
+  says its unit in its comment; a generated YARD reference is still to do.
+- Also fixed (found during the review): a Float as the positional time
+  limit warns (it is milliseconds, truncated), and a request field named
+  `timeout` / `timeout_ms` can be passed through `request:`.
+
+The text below is the proposal as reviewed.
 
 Scope: the public Ruby API of the two gems at version 0.3.0.
 

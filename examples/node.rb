@@ -1,6 +1,6 @@
-# A CRuby Asterism node with the Ruby-like API: exposes objects that boards
+# A CRuby Asterism node with the CRuby API: exposes objects that boards
 # (and other Ruby processes) can call, and calls the objects of a board.
-# examples/node_polled.rb is the same with the polled API of the boards.
+# examples/node_polled.rb is the same with the portable API of the boards.
 #
 #   ruby examples/node.rb --router tcp/192.0.2.2:7447 [--node cruby]
 #        [--peer fmruby-aaaaaa] [--calls 20] [--serve 30] [--relay]
@@ -145,7 +145,7 @@ Asterism.connect(opt[:router], node: opt[:node], app: opt[:app], config: tls.emp
   end
   n, ms = timed { screen.say("hello from CRuby (#{opt[:node]})") }
   log("#{peer} screen.say -> #{n} (#{ms} ms)")
-  log("#{peer} respond_to?(:status)=#{info.respond_to?(:status)} methods=#{info.methods.inspect}")
+  log("#{peer} respond_to?(:status)=#{info.respond_to?(:status)} methods=#{info.remote_methods.inspect}")
   paths = net.each("*/#{opt[:app]}/info").map(&:asterism_path)
   log("every info now: #{paths.inspect}")
 

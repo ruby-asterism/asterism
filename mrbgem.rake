@@ -15,6 +15,7 @@ MRuby::Gem::Specification.new('picoruby-asterism') do |spec|
   spec.license = 'MIT'
   spec.authors = ['Katsuhiko Kageyama']
   spec.summary = 'Asterism: proxies for Ruby objects on other machines, over Zenoh'
+  spec.version = '0.4.0'
   spec.add_dependency 'picoruby-asterism-zenoh'
   spec.test_rbfiles = []
 end

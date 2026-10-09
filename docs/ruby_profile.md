@@ -18,7 +18,7 @@ The table below is generated. The probes, the runner and the tool are in
 | CRuby 4.0 frozen | the same 4.0 with `RUBYOPT=--enable-frozen-string-literal` (the CI leg that checks frozen literals) | `profile/run.rb` |
 | mruby master | `mruby/mruby` master `09dbc5f3` (2026-10-08), default gembox, host build. Uses the same Prism-based compiler as PicoRuby, at a newer commit | `profile/run.rb` |
 | PicoRuby master | `picoruby/picoruby` master `a90afd12` (2026-10-05), default build (mruby VM), host build | `profile/run.rb` |
-| app VM std | Family mruby's application VM in the Linux simulation, standard build (Spinel kernel and editor; the applications are mruby). PicoRuby `c932f70b` with its compiler `mruby-compiler2` `10408c3` (both 2026-07-11) | the test app `/app/test/ruby_profile.app.rb`, read from the log |
+| app VM std | Family mruby's application VM in the Linux simulation, standard build (Spinel kernel and editor; the applications are mruby). PicoRuby `c932f70b` with its compiler `mruby-compiler2` `10408c3` (both 2026-07-11), plus the two upstream case/in fixes (mruby `0e6bac0e5a7e`, `680084ac1275`) that Family mruby carries since its C8 | the test app `/app/test/ruby_profile.app.rb`, read from the log |
 | app VM compat | the same, compatibility build (`FMRB_KERNEL_ENGINE=mruby FMRB_APP_ENGINE_DESKTOP=mruby FMRB_APP_ENGINE_EDITOR=mruby`) | the same |
 
 The two application-VM columns are the boards' Ruby: the ESP32-S3 and
@@ -115,29 +115,32 @@ are one column for what follows.
 
 **Different answers in the application VM** (differs: no exception):
 
-- **Hash patterns compare a value the wrong way round.** `in {x: Integer}`,
-  `in {x: Integer => a}` and `in {x: 0..2}` never match, and a literal
-  value matches anything: `case {x: 4} in {x: 3}` takes that branch, and
-  `{x: 7} in {x: 8}` is `true`.
-- **A pattern inside a block does not bind a local of the enclosing
-  method** (`in {a: pre}`, `x => [a]`), and `^x` of such a local does not
-  match. A name new to the block is bound.
-- `^(expr)` never matches, `Const[...]` ignores the constant, and
+- `^x` of a local of the enclosing method inside a block does not match,
+  `^(expr)` never matches, `Const[...]` ignores the constant, and
   `in {a:, **rest} then [a, rest]` answers `rest` alone.
-- `protected` methods cannot be called from another instance of the same
-  class (`NoMethodError`), and `$!` is nil in a `rescue` modifier.
 - The `# frozen_string_literal: true` comment is ignored (literals stay
   mutable, as on mruby and PicoRuby master); `"\u0001".inspect` is
   `"\x01"`.
 
-All of the pattern-matching, `protected` and `$!` differences are compiler
-or VM bugs of the vendored PicoRuby that PicoRuby master no longer has
-(PicoRuby master passes every pattern probe). The pattern-matching ones and
-their upstream fixes are written up in Family mruby's
-`doc/ruby_asterism/upstream/picoruby_case_in.md`. Until the vendored
-PicoRuby moves, the shared layer and the boards' applications must not put
-a class, a range or a literal as a hash pattern's value, and must not bind
-from a pattern inside a block (the README's Limits).
+Fixed in the application VM since the first run of this table (2026-10-09,
+Family mruby C8): a hash pattern's value was compared the wrong way round
+(`in {x: Integer}`, `in {x: 0..2}` never matched, a literal value matched
+anything) and a pattern inside a block did not bind a local of the
+enclosing method. Seven probes went from differs to ok. Both fixes are
+upstream (mruby `0e6bac0e5a7e`, `680084ac1275`; in PicoRuby master), and
+Family mruby carries them on its older PicoRuby.
+
+Also wrong there, though they raise rather than answer differently (ng in
+the table): `protected` methods cannot be called from another instance of
+the same class (`NoMethodError`), and `$!` is nil in a `rescue` modifier
+(both fixed in PicoRuby master).
+
+All of these remaining differences are compiler or VM bugs of the vendored
+PicoRuby that PicoRuby master no longer has (PicoRuby master passes every
+pattern probe). They and their upstream fixes are written up in Family
+mruby's `doc/ruby_asterism/upstream/picoruby_case_in.md`. Until the vendored
+PicoRuby moves, the shared layer and the boards' applications avoid them
+(the README's Limits).
 
 **Ruby 4 and frozen literals.** CRuby 4.0 still lets a literal be appended
 to (it warns under `-W:deprecated`), but with
@@ -190,10 +193,10 @@ their update callback or with `async`.
 | `begin_end_while` begin ... end while (runs once) | syntax | ok | ok | ok | ok | ok | ok | ok | ok |  |
 | `flip_case_when` case/when with ranges, classes, splat | syntax | ok | ok | ok | ok | ok | ok | ok | ok |  |
 | `pattern_hash_bind` in {x:} binds x | pattern | ok | ok | ok | ok | ok | ok | ok | ok | uses (deconstruct_keys) |
-| `pattern_hash_literal` in {x: 3} with a literal value | pattern | ok | ok | ok | ok | ok | ok | **differs** | **differs** |  |
-| `pattern_hash_class` in {x: Integer} | pattern | ok | ok | ok | ok | ok | ok | **differs** | **differs** |  |
-| `pattern_hash_class_capture` in {x: Integer => a} | pattern | ok | ok | ok | ok | ok | ok | **differs** | **differs** |  |
-| `pattern_hash_range` in {x: 0..2} | pattern | ok | ok | ok | ok | ok | ok | **differs** | **differs** |  |
+| `pattern_hash_literal` in {x: 3} with a literal value | pattern | ok | ok | ok | ok | ok | ok | ok | ok |  |
+| `pattern_hash_class` in {x: Integer} | pattern | ok | ok | ok | ok | ok | ok | ok | ok |  |
+| `pattern_hash_class_capture` in {x: Integer => a} | pattern | ok | ok | ok | ok | ok | ok | ok | ok |  |
+| `pattern_hash_range` in {x: 0..2} | pattern | ok | ok | ok | ok | ok | ok | ok | ok |  |
 | `pattern_hash_nested` in {a: {b:}} | pattern | ok | ok | ok | ok | ok | ok | ok | ok |  |
 | `pattern_hash_rest` in {a:, **rest} | pattern | ok | ok | ok | ok | ok | ok | **differs** | **differs** |  |
 | `pattern_second_clause` the second in clause after a missing key | pattern | ok | ok | ok | ok | ok | ok | ok | ok |  |
@@ -204,12 +207,12 @@ their update callback or with `async`.
 | `pattern_pin_local` ^pin of a local in the same scope | pattern | ok | ok | ok | ok | ok | ok | ok | ok |  |
 | `pattern_pin_block` ^pin of an outer local inside a block | pattern | ok | ok | ok | ok | ok | ok | **differs** | **differs** |  |
 | `pattern_pin_expr` ^(expression) | pattern | ok | ok | ok | ok | ok | ok | **differs** | **differs** |  |
-| `pattern_bind_in_block` binding an outer local inside a block | pattern | ok | ok | ok | ok | ok | ok | **differs** | **differs** |  |
-| `pattern_rightward_in_block` x => [a] inside a block, a outer | pattern | ok | ok | ok | ok | ok | ok | **differs** | **differs** |  |
+| `pattern_bind_in_block` binding an outer local inside a block | pattern | ok | ok | ok | ok | ok | ok | ok | ok |  |
+| `pattern_rightward_in_block` x => [a] inside a block, a outer | pattern | ok | ok | ok | ok | ok | ok | ok | ok |  |
 | `pattern_block_local` binding a new name inside a block | pattern | ok | ok | ok | ok | ok | ok | ok | ok |  |
 | `pattern_const_pattern` Const[...] checks the constant | pattern | ok | ok | ok | ok | ok | ok | **differs** | **differs** |  |
 | `pattern_no_match` NoMatchingPatternError | pattern | ok | ok | ok | ok | ok | ok | ok | ok |  |
-| `pattern_one_line_in` expr in pattern (boolean) | pattern | ok | ok | ok | ok | ok | ok | **differs** | **differs** |  |
+| `pattern_one_line_in` expr in pattern (boolean) | pattern | ok | ok | ok | ok | ok | ok | ok | ok |  |
 | `const_top_from_class` a top-level constant from a method of a class | const | ok | ok | ok | ok | ok | ok | ok | ok |  |
 | `const_builtin_from_class` a built-in class (Hash) from a method of a class | const | ok | ok | ok | ok | ok | ok | ok | ok |  |
 | `const_lexical_nested` a constant of the enclosing module | const | ok | ok | ok | ok | ok | ok | ok | ok |  |
@@ -343,8 +346,8 @@ their update callback or with `async`.
 
 | Totals | CRuby 3.2 | CRuby 3.4 | CRuby 4.0 | CRuby 4.0 frozen | mruby master | PicoRuby master | app VM std | app VM compat |
 |---|---|---|---|---|---|---|---|---|
-| ok | 171 | 172 | 172 | 170 | 162 | 131 | 100 | 100 |
-| differs | 0 | 0 | 0 | 1 | 3 | 3 | 13 | 13 |
+| ok | 171 | 172 | 172 | 170 | 162 | 131 | 107 | 107 |
+| differs | 0 | 0 | 0 | 1 | 3 | 3 | 6 | 6 |
 | ng | 1 | 0 | 0 | 1 | 7 | 38 | 59 | 59 |
 
 Measurements, not judged (recursion_limit is a depth; the others are microseconds per operation on one x86-64 machine, so compare rows within a column rather than across machines):
@@ -352,27 +355,20 @@ Measurements, not judged (recursion_limit is a depth; the others are microsecond
 | Operation | CRuby 3.2 | CRuby 3.4 | CRuby 4.0 | CRuby 4.0 frozen | mruby master | PicoRuby master | app VM std | app VM compat |
 |---|---|---|---|---|---|---|---|---|
 | `recursion_limit` Ruby recursion depth before SystemStackError (capped at 100000) | 10073.0 | 10913.0 | 10913.0 | 10913.0 | 506.0 | 506.0 | 501.0 | 501.0 |
-| `measure_while` one while iteration (us) | 0.0039 | 0.01 | 0.0044 | 0.0076 | 0.021 | 0.0283 | 0.0251 | 0.0247 |
-| `measure_method_call` one method call (us) | 0.0138 | 0.0192 | 0.0147 | 0.0148 | 0.032 | 0.0464 | 0.0415 | 0.0417 |
-| `measure_block_call` one call with a literal block that yields once (us) | 0.0196 | 0.023 | 0.0202 | 0.0212 | 0.0748 | 0.0996 | 0.1084 | 0.1064 |
-| `measure_each` one Array#each iteration (us) | 0.016 | 0.018 | 0.0183 | 0.0196 | 0.0463 | 0.0601 | 0.0642 | 0.0623 |
+| `measure_while` one while iteration (us) | 0.0039 | 0.01 | 0.0044 | 0.0076 | 0.021 | 0.0283 | 0.0249 | 0.0266 |
+| `measure_method_call` one method call (us) | 0.0138 | 0.0192 | 0.0147 | 0.0148 | 0.032 | 0.0464 | 0.0425 | 0.0413 |
+| `measure_block_call` one call with a literal block that yields once (us) | 0.0196 | 0.023 | 0.0202 | 0.0212 | 0.0748 | 0.0996 | 0.1074 | 0.1123 |
+| `measure_each` one Array#each iteration (us) | 0.016 | 0.018 | 0.0183 | 0.0196 | 0.0463 | 0.0601 | 0.0601 | 0.0623 |
 
 What the cells that are not ok answered:
 
 - `regexp_literal` on app VM std, app VM compat: NameError: uninitialized constant Regexp
 - `regexp_class` on app VM std, app VM compat: NameError: uninitialized constant RubyProfile::Runner::Regexp
 - `it_param` on CRuby 3.2: NameError: undefined local variable or method 'it' for #<RubyProfile::Ru...
-- `pattern_hash_literal` on app VM std, app VM compat: [:three, :three]
-- `pattern_hash_class` on app VM std, app VM compat: :no
-- `pattern_hash_class_capture` on app VM std, app VM compat: :no
-- `pattern_hash_range` on app VM std, app VM compat: :no
 - `pattern_hash_rest` on app VM std, app VM compat: {b: 2}
 - `pattern_pin_block` on app VM std, app VM compat: [false]
 - `pattern_pin_expr` on app VM std, app VM compat: false
-- `pattern_bind_in_block` on app VM std, app VM compat: nil
-- `pattern_rightward_in_block` on app VM std, app VM compat: nil
 - `pattern_const_pattern` on app VM std, app VM compat: true
-- `pattern_one_line_in` on app VM std, app VM compat: [true, true]
 - `module_name` on PicoRuby master, app VM std, app VM compat: NoMethodError: undefined method 'name' for Class
 - `struct` on PicoRuby master, app VM std, app VM compat: NameError: uninitialized constant RubyProfile::Runner::Struct
 - `data_define` on PicoRuby master: {a: 1}

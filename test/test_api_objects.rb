@@ -102,7 +102,7 @@ class TestApiObjects < Minitest::Test
       assert_equal ["child/t/calc"], net.each("child/*/*").map(&:asterism_path)
       assert_equal [5], net.each("*/t/calc").map { _1.add(2, 3) }
       assert_equal %w[parent child], net.nodes
-      e = assert_raises(Asterism::Timeout) { net["child/other/x", timeout: 0.5].anything }
+      e = assert_raises(Asterism::TimeoutError) { net["child/other/x", timeout: 0.5].anything }
       assert_match(/nobody answers/, e.message)
 
       end_child

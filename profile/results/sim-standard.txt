@@ -21,10 +21,10 @@ RPROF|string_interp|ok|
 RPROF|begin_end_while|ok|
 RPROF|flip_case_when|ok|
 RPROF|pattern_hash_bind|ok|
-RPROF|pattern_hash_literal|differs|[:three, :three]
-RPROF|pattern_hash_class|differs|:no
-RPROF|pattern_hash_class_capture|differs|:no
-RPROF|pattern_hash_range|differs|:no
+RPROF|pattern_hash_literal|ok|
+RPROF|pattern_hash_class|ok|
+RPROF|pattern_hash_class_capture|ok|
+RPROF|pattern_hash_range|ok|
 RPROF|pattern_hash_nested|ok|
 RPROF|pattern_hash_rest|differs|{b: 2}
 RPROF|pattern_second_clause|ok|
@@ -35,12 +35,12 @@ RPROF|pattern_guard_alt|ok|
 RPROF|pattern_pin_local|ok|
 RPROF|pattern_pin_block|differs|[false]
 RPROF|pattern_pin_expr|differs|false
-RPROF|pattern_bind_in_block|differs|nil
-RPROF|pattern_rightward_in_block|differs|nil
+RPROF|pattern_bind_in_block|ok|
+RPROF|pattern_rightward_in_block|ok|
 RPROF|pattern_block_local|ok|
 RPROF|pattern_const_pattern|differs|true
 RPROF|pattern_no_match|ok|
-RPROF|pattern_one_line_in|differs|[true, true]
+RPROF|pattern_one_line_in|ok|
 RPROF|const_top_from_class|ok|
 RPROF|const_builtin_from_class|ok|
 RPROF|const_lexical_nested|ok|
@@ -172,8 +172,8 @@ RPROF|method_name|ok|
 RPROF|recursion_1000|ng|SystemStackError: SystemStackError
 RPROF|recursion_via_block_100|ok|
 RPROF|recursion_limit|value|501.0
-RPROF|measure_while|value|0.0251
-RPROF|measure_method_call|value|0.0415
-RPROF|measure_block_call|value|0.1084
-RPROF|measure_each|value|0.0642
-RPROF-END|app-vm|ok=100|differs=13|ng=59|value=5
+RPROF|measure_while|value|0.0249
+RPROF|measure_method_call|value|0.0425
+RPROF|measure_block_call|value|0.1074
+RPROF|measure_each|value|0.0601
+RPROF-END|app-vm|ok=107|differs=6|ng=59|value=5

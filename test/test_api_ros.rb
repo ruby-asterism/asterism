@@ -75,7 +75,7 @@ class TestApiROS < Minitest::Test
     nb.service("/c5/back", "example_interfaces/srv/AddTwoInts") { |req| { sum: req.a + req.b } }
     settle
     assert_equal 14, nb.call("/c5/twice", "example_interfaces/srv/AddTwoInts", a: 3, b: 4, timeout: 3).sum
-    e = assert_raises(Asterism::ROS::Timeout) { nb.call("/c5/nobody", "example_interfaces/srv/AddTwoInts", a: 1, b: 1) }
+    e = assert_raises(Asterism::ROS::TimeoutError) { nb.call("/c5/nobody", "example_interfaces/srv/AddTwoInts", a: 1, b: 1) }
     assert_match(/nobody serves it/, e.message)
   end
 
@@ -88,7 +88,7 @@ class TestApiROS < Minitest::Test
     @ra.start
     @rb.start
     settle
-    assert_raises(Asterism::ROS::Timeout) { nb.call("/c5/div", "example_interfaces/srv/AddTwoInts", a: 1, b: 0, timeout: 0.5) }
+    assert_raises(Asterism::ROS::TimeoutError) { nb.call("/c5/div", "example_interfaces/srv/AddTwoInts", a: 1, b: 0, timeout: 0.5) }
     assert_equal ["divided by 0", "service /c5/div"], errors.pop(timeout: 1)
     assert @ra.running?
     assert_equal 3, nb.call("/c5/div", "example_interfaces/srv/AddTwoInts", a: 6, b: 2).sum

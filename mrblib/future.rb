@@ -5,6 +5,7 @@ module Asterism
   class Future
     attr_reader :path, :method_name
 
+    # @api private
     def self.answered(path, method, reply)
       f = new(path, method, nil, 0, 0)
       f.set_reply(reply)
@@ -23,6 +24,7 @@ module Asterism
       @took = nil
     end
 
+    # @api private
     def set_reply(reply)
       @reply = reply
       @finished = true
@@ -32,6 +34,11 @@ module Asterism
     # Milliseconds from the call to its answer (nil until done).
     def took_ms
       @took
+    end
+
+    # The same in seconds (a Float; nil until done).
+    def took
+      @took.nil? ? nil : @took / 1000.0
     end
 
     # True once the answer came, the time ran out or the connection closed.
@@ -58,15 +65,17 @@ module Asterism
         if @took && @took < @timeout_ms
           # Finished early without a reply: nobody answers that key (the
           # object is not exposed, or its application is gone).
-          raise ::Asterism::Timeout, "no answer from #{@path} #{@method_name} (nobody answers)"
+          raise ::Asterism::TimeoutError, "no answer from #{@path} #{@method_name} (nobody answers)"
         end
-        raise ::Asterism::Timeout, "no answer from #{@path} #{@method_name} within #{@timeout_ms} ms"
+        raise ::Asterism::TimeoutError,
+              "no answer from #{@path} #{@method_name} within #{@timeout_ms / 1000.0} s (#{@timeout_ms} ms)"
       end
       raw = ::Asterism::Codec.unpack(@reply)
       raise ::Asterism::Error, "malformed answer from #{@path}" if raw.nil?
       raw
     end
 
+    # @api private
     def collect
       return if @finished
       g = @get

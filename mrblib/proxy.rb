@@ -1,10 +1,11 @@
 module Asterism
   # A stand-in for an object on another machine (Asterism["node/app/obj"]).
   # Any method it does not have itself becomes a call that waits for the
-  # answer. respond_to? and methods come from the object's meta.
+  # answer. respond_to? and remote_methods come from the object's meta.
   #
   # Its own methods (not forwarded): async, asterism_path, asterism_meta,
-  # asterism_refresh, respond_to?, methods, inspect, to_s and those of Object.
+  # asterism_refresh, remote_methods, respond_to?, methods, inspect, to_s
+  # and those of Object.
   class Proxy
     # Conversions Ruby asks for implicitly (puts, Array#flatten, ...): never
     # forwarded.
@@ -39,8 +40,16 @@ module Asterism
 
     # The exposed methods (Symbols), from the meta. Raises when the object
     # does not answer.
-    def methods(*_args)
+    def remote_methods
       remote_names.map { |n| n.to_sym }
+    end
+
+    # Deprecated: returns remote_methods. From 1.0 it is Object#methods
+    # again (irb, pp and test doubles rely on it), and remote_methods is the
+    # way to list the remote ones.
+    def methods(*_args)
+      ::Asterism.deprecated("Asterism::Proxy#methods", "Asterism::Proxy#remote_methods")
+      remote_methods
     end
 
     # The meta reply, fetched once: {"methods" => [[name, arity], ...]}.
@@ -54,6 +63,7 @@ module Asterism
       self
     end
 
+    # @api private
     def remote_names
       list = asterism_meta["methods"]
       return [] unless list.is_a?(Array)

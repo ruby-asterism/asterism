@@ -22,8 +22,8 @@ Gem::Specification.new do |s|
   s.licenses = ["MIT", "Apache-2.0"]
   s.required_ruby_version = ">= 3.2"
   s.files = Dir["lib/**/*.rb", "mrblib/*.rb", "data/msgs/**/*", "tools/asterism_msggen.rb",
-                "README.md", "LICENSE", "NOTICE"]
+                "README.md", "CHANGELOG.md", "LICENSE", "NOTICE"]
   s.require_paths = ["lib"]
-  s.add_dependency "asterism-zenoh", "~> 0.3.0"
+  s.add_dependency "asterism-zenoh", "~> 0.4.0"
   s.add_dependency "msgpack", "~> 1.7"
 end
