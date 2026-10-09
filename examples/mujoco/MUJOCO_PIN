@@ -1,0 +1,16 @@
+# Pinned MuJoCo (google-deepmind/mujoco, Apache-2.0) for examples/mujoco.
+# fetch.rb downloads the official prebuilt release for Linux x86_64 from
+# <repo>/releases/download/<tag>/<asset>, checks its sha256 and unpacks it
+# into vendor/ (gitignored). Nothing is built.
+# - lib/mujoco/layout_<version>.rb holds the struct offsets this example
+#   reads, made from this release's headers by layout_gen.rb. The wrapper
+#   refuses a library whose mj_version() is not <header_version>.
+# - The sha256 is that of the downloaded archive and agrees with the digest
+#   GitHub lists for the release asset.
+# - To update: bump tag, asset, sha256, header_version, run fetch.rb and
+#   layout_gen.rb, and check the example runs (README "Updating MuJoCo").
+repo: https://github.com/google-deepmind/mujoco
+tag: 3.15.0
+header_version: 3015000
+asset.x86_64-linux: mujoco-3.15.0-linux-x86_64.tar.gz
+sha256.x86_64-linux: 319943b332fd84c968f655f695d8f4b03cc6a68f658bacd0591f0a552744e497
