@@ -13,6 +13,11 @@ class ::Asterism::ROS::SensorMsgs::Illuminance < ::Asterism::ROS::Message
   TYPE_NAME = "sensor_msgs::msg::dds_::Illuminance_"
   TYPE_HASH = "RIHS01_b954b25f452fcf81a91c9c2a7e3b3fd85c4c873d452aecb3cfd8fd1da732a22d"
   FIELDS = [:header, :illuminance, :variance]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["illuminance", "float64", "scalar", nil, nil, nil],
+    ["variance", "float64", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :header, :illuminance, :variance
 

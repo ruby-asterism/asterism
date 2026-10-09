@@ -14,6 +14,10 @@ class ::Asterism::ROS::GeometryMsgs::PoseStamped < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::PoseStamped_"
   TYPE_HASH = "RIHS01_10f3786d7d40fd2b54367835614bff85d4ad3b5dab62bf8bca0cc232d73b4cd8"
   FIELDS = [:header, :pose]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["pose", "geometry_msgs/msg/Pose", "scalar", "geometry_msgs/msg/Pose", nil, nil]
+  ]
 
   attr_accessor :header, :pose
 

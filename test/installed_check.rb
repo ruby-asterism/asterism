@@ -25,6 +25,9 @@ check(Asterism::Zenoh::C_VERSION == "1.10.1", "zenoh-c #{Asterism::Zenoh::C_VERS
 
 twist = Asterism::ROS.require_type("geometry_msgs/msg/Twist")
 check(twist, "bundled type geometry_msgs/msg/Twist")
+odom = Asterism::ROS.field_types("nav_msgs/msg/Odometry")
+check(odom["nav_msgs/msg/Odometry"] && odom.key?("geometry_msgs/msg/PoseWithCovariance"),
+      "bundled type nav_msgs/msg/Odometry and its field types")
 
 srv = TCPServer.new("127.0.0.1", 0)
 port = srv.addr[1]

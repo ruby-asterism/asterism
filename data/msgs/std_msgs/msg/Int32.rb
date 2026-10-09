@@ -11,6 +11,9 @@ class ::Asterism::ROS::StdMsgs::Int32 < ::Asterism::ROS::Message
   TYPE_NAME = "std_msgs::msg::dds_::Int32_"
   TYPE_HASH = "RIHS01_b6578ded3c58c626cfe8d1a6fb6e04f706f97e9f03d2727c9ff4e74b1cef0deb"
   FIELDS = [:data]
+  FIELD_TYPES = [
+    ["data", "int32", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :data
 

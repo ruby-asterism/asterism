@@ -13,6 +13,10 @@ class ::Asterism::ROS::StdMsgs::MultiArrayLayout < ::Asterism::ROS::Message
   TYPE_NAME = "std_msgs::msg::dds_::MultiArrayLayout_"
   TYPE_HASH = "RIHS01_4c66e6f78e740ac103a94cf63259f968e48c617e7699e829b63c21a5cb50dac6"
   FIELDS = [:dim, :data_offset]
+  FIELD_TYPES = [
+    ["dim", "std_msgs/msg/MultiArrayDimension", "sequence", "std_msgs/msg/MultiArrayDimension", nil, nil],
+    ["data_offset", "uint32", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :dim, :data_offset
 

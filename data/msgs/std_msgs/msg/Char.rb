@@ -11,6 +11,9 @@ class ::Asterism::ROS::StdMsgs::Char < ::Asterism::ROS::Message
   TYPE_NAME = "std_msgs::msg::dds_::Char_"
   TYPE_HASH = "RIHS01_3ad2d04dd29ba19d04b16659afa3ccaedd691914b02a64e82e252f2fa6a586a9"
   FIELDS = [:data]
+  FIELD_TYPES = [
+    ["data", "char", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :data
 

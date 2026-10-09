@@ -14,6 +14,11 @@ class ::Asterism::ROS::GeometryMsgs::TransformStamped < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::TransformStamped_"
   TYPE_HASH = "RIHS01_0a241f87d04668d94099cbb5ba11691d5ad32c2f29682e4eb5653424bd275206"
   FIELDS = [:header, :child_frame_id, :transform]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["child_frame_id", "string", "scalar", nil, nil, nil],
+    ["transform", "geometry_msgs/msg/Transform", "scalar", "geometry_msgs/msg/Transform", nil, nil]
+  ]
 
   attr_accessor :header, :child_frame_id, :transform
 

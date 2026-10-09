@@ -14,6 +14,10 @@ class ::Asterism::ROS::GeometryMsgs::QuaternionStamped < ::Asterism::ROS::Messag
   TYPE_NAME = "geometry_msgs::msg::dds_::QuaternionStamped_"
   TYPE_HASH = "RIHS01_381add86c6c3160644d228ca342182c7fd6c7fab11c7a85ad817a9cc22dbac6e"
   FIELDS = [:header, :quaternion]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["quaternion", "geometry_msgs/msg/Quaternion", "scalar", "geometry_msgs/msg/Quaternion", nil, nil]
+  ]
 
   attr_accessor :header, :quaternion
 

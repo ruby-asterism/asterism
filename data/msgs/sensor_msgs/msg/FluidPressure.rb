@@ -13,6 +13,11 @@ class ::Asterism::ROS::SensorMsgs::FluidPressure < ::Asterism::ROS::Message
   TYPE_NAME = "sensor_msgs::msg::dds_::FluidPressure_"
   TYPE_HASH = "RIHS01_22dfb2b145a0bd5a31a1ac3882a1b32148b51d9b2f3bab250290d66f3595bc32"
   FIELDS = [:header, :fluid_pressure, :variance]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["fluid_pressure", "float64", "scalar", nil, nil, nil],
+    ["variance", "float64", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :header, :fluid_pressure, :variance
 

@@ -11,6 +11,10 @@ class ::Asterism::ROS::SensorMsgs::NavSatStatus < ::Asterism::ROS::Message
   TYPE_NAME = "sensor_msgs::msg::dds_::NavSatStatus_"
   TYPE_HASH = "RIHS01_d1ed3befa628e09571bd273b888ba1c1fd187c9a5e0006b385d7e5e9095a3204"
   FIELDS = [:status, :service]
+  FIELD_TYPES = [
+    ["status", "int8", "scalar", nil, nil, nil],
+    ["service", "uint16", "scalar", nil, nil, nil]
+  ]
   STATUS_UNKNOWN = -2
   STATUS_NO_FIX = -1
   STATUS_FIX = 0

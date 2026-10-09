@@ -13,6 +13,11 @@ class ::Asterism::ROS::SensorMsgs::RelativeHumidity < ::Asterism::ROS::Message
   TYPE_NAME = "sensor_msgs::msg::dds_::RelativeHumidity_"
   TYPE_HASH = "RIHS01_8687c99b4fb393cb2e545e407b5ea7fd0b5d8960bcd849a0f86c544740138839"
   FIELDS = [:header, :relative_humidity, :variance]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["relative_humidity", "float64", "scalar", nil, nil, nil],
+    ["variance", "float64", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :header, :relative_humidity, :variance
 

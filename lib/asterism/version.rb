@@ -1,5 +1,5 @@
 module Asterism
   # The gem's version (the CRuby gem asterism; it depends on asterism-zenoh
   # of the same version).
-  VERSION = "0.4.0"
+  VERSION = "0.4.1"
 end

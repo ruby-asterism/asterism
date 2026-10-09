@@ -14,6 +14,10 @@ class ::Asterism::ROS::GeometryMsgs::AccelStamped < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::AccelStamped_"
   TYPE_HASH = "RIHS01_ef1df9eabae0a708cc049a061ebcddc4e2a5f745730100ba680e086a9698b165"
   FIELDS = [:header, :accel]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["accel", "geometry_msgs/msg/Accel", "scalar", "geometry_msgs/msg/Accel", nil, nil]
+  ]
 
   attr_accessor :header, :accel
 

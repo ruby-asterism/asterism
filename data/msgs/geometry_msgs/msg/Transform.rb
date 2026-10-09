@@ -14,6 +14,10 @@ class ::Asterism::ROS::GeometryMsgs::Transform < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::Transform_"
   TYPE_HASH = "RIHS01_beb83fbe698636351461f6f35d1abb20010c43d55374d81bd041f1ba2581fddc"
   FIELDS = [:translation, :rotation]
+  FIELD_TYPES = [
+    ["translation", "geometry_msgs/msg/Vector3", "scalar", "geometry_msgs/msg/Vector3", nil, nil],
+    ["rotation", "geometry_msgs/msg/Quaternion", "scalar", "geometry_msgs/msg/Quaternion", nil, nil]
+  ]
 
   attr_accessor :translation, :rotation
 

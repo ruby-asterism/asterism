@@ -53,7 +53,8 @@ end.parse!
 abort "no image: pass --image or set ASTERISM_ROS2_IMAGE" if opts[:image].to_s.empty?
 
 IMAGE = opts[:image]
-PACKAGES = %w[std_msgs builtin_interfaces geometry_msgs sensor_msgs example_interfaces service_msgs].freeze
+PACKAGES = %w[std_msgs builtin_interfaces geometry_msgs sensor_msgs example_interfaces service_msgs
+              nav_msgs diagnostic_msgs tf2_msgs visualization_msgs rcl_interfaces].freeze
 VENDOR = File.join(TOOLS, "ros2_jazzy")
 OUT = File.join(ROOT, "data/msgs")
 LIST = File.join(TOOLS, "bundled_types.txt")

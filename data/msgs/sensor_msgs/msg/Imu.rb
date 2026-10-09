@@ -15,6 +15,15 @@ class ::Asterism::ROS::SensorMsgs::Imu < ::Asterism::ROS::Message
   TYPE_NAME = "sensor_msgs::msg::dds_::Imu_"
   TYPE_HASH = "RIHS01_7d9a00ff131080897a5ec7e26e315954b8eae3353c3f995c55faf71574000b5b"
   FIELDS = [:header, :orientation, :orientation_covariance, :angular_velocity, :angular_velocity_covariance, :linear_acceleration, :linear_acceleration_covariance]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["orientation", "geometry_msgs/msg/Quaternion", "scalar", "geometry_msgs/msg/Quaternion", nil, nil],
+    ["orientation_covariance", "float64", "array", nil, 9, nil],
+    ["angular_velocity", "geometry_msgs/msg/Vector3", "scalar", "geometry_msgs/msg/Vector3", nil, nil],
+    ["angular_velocity_covariance", "float64", "array", nil, 9, nil],
+    ["linear_acceleration", "geometry_msgs/msg/Vector3", "scalar", "geometry_msgs/msg/Vector3", nil, nil],
+    ["linear_acceleration_covariance", "float64", "array", nil, 9, nil]
+  ]
 
   attr_accessor :header, :orientation, :orientation_covariance, :angular_velocity, :angular_velocity_covariance, :linear_acceleration, :linear_acceleration_covariance
 

@@ -13,6 +13,10 @@ class ::Asterism::ROS::GeometryMsgs::Accel < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::Accel_"
   TYPE_HASH = "RIHS01_dc448243ded9b1fcbcca24aba0c22f013dae06c354ba2d849571c0a2a3f57ca0"
   FIELDS = [:linear, :angular]
+  FIELD_TYPES = [
+    ["linear", "geometry_msgs/msg/Vector3", "scalar", "geometry_msgs/msg/Vector3", nil, nil],
+    ["angular", "geometry_msgs/msg/Vector3", "scalar", "geometry_msgs/msg/Vector3", nil, nil]
+  ]
 
   attr_accessor :linear, :angular
 

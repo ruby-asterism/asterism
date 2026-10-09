@@ -11,6 +11,10 @@ class ::Asterism::ROS::BuiltinInterfaces::Duration < ::Asterism::ROS::Message
   TYPE_NAME = "builtin_interfaces::msg::dds_::Duration_"
   TYPE_HASH = "RIHS01_e8d009f659816f758b75334ee1a9ca5b5c0b859843261f14c7f937349599d93b"
   FIELDS = [:sec, :nanosec]
+  FIELD_TYPES = [
+    ["sec", "int32", "scalar", nil, nil, nil],
+    ["nanosec", "uint32", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :sec, :nanosec
 

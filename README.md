@@ -10,7 +10,7 @@ repository holds the pure Ruby layers, written once for every Ruby:
 | `mrblib/` | The layers: remote objects (`Asterism`), `Asterism::CDR`, `Asterism::ROS`. The source of truth for both forms below |
 | `mrbgem.rake` | The mrbgem `picoruby-asterism` (mruby / PicoRuby): compiles `mrblib/` |
 | `asterism.gemspec`, `lib/` | The CRuby gem `asterism`: `lib/asterism.rb` loads `mrblib/` as it is, `lib/asterism/cruby.rb` adds what CRuby needs, `lib/asterism/cruby/` the CRuby API (CRuby only) |
-| `data/msgs/` | ROS 2 message types generated from ROS 2 Jazzy's definitions (Apache-2.0, see NOTICE) |
+| `data/msgs/` | ROS 2 message types generated from ROS 2 Jazzy's definitions (Apache-2.0; tf2_msgs BSD-3-Clause; see NOTICE) |
 | `tools/` | The type generator `asterism_msggen.rb`, the Jazzy definitions it reads, `ros2_types.rb` (refreshes them from a ROS 2 image) |
 | `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_api_*.rb` (the CRuby API) |
 | `examples/` | CRuby: `node.rb` (objects with a board), `node_polled.rb` (the same with the portable API of the boards), `ros2_talker.rb` (topics, a timer, services with ROS 2), `zenoh.rb` (plain Zenoh) |
@@ -339,9 +339,11 @@ MIT (LICENSE) for Asterism's code. The ROS 2 definitions in
 `tools/ros2_jazzy/` (with the package.xml of their packages), the types
 generated from them in `data/msgs/` and the fixtures computed by ROS 2's
 tools in `test/msgs/` are under the Apache License 2.0 (NOTICE,
-`data/msgs/NOTICE`, `data/msgs/LICENSE-Apache-2.0.txt`). Each generated
-type names its package and license at its top. The gem `asterism` is
-therefore `MIT` and `Apache-2.0`, each for its own files.
+`data/msgs/NOTICE`, `data/msgs/LICENSE-Apache-2.0.txt`), except those of
+tf2_msgs, which are under the BSD 3-Clause License
+(`data/msgs/LICENSE-BSD-3-Clause-tf2_msgs.txt`). Each generated type names
+its package and license at its top. The gem `asterism` is therefore `MIT`,
+`Apache-2.0` and `BSD-3-Clause`, each for its own files.
 
 Not in this repository: the gems Asterism depends on are not bundled.
 `msgpack` (CRuby) and `asterism-zenoh` (the CRuby Zenoh binding, which in
@@ -738,11 +740,51 @@ std_msgs (Bool, Byte, Char, String, Empty, the integer and float types,
 Header, ColorRGBA, MultiArrayDimension / Layout and every *MultiArray),
 builtin_interfaces (Time, Duration), geometry_msgs (Vector3, Point, Point32,
 Quaternion, Pose, Pose2D, Twist, Accel, Transform, Wrench and their
-*Stamped), sensor_msgs (Imu, BatteryState, Temperature, Range,
-MagneticField, Illuminance, FluidPressure, RelativeHumidity, JointState,
-NavSatStatus, NavSatFix), example_interfaces/srv/AddTwoInts. The list is
-`tools/bundled_types.txt`. Nothing of them is compiled into the mrbgem: an
-application loads what it uses, and each file loads the types it is made of.
+*Stamped, PoseWithCovariance, TwistWithCovariance), sensor_msgs (Imu,
+BatteryState, Temperature, Range, MagneticField, Illuminance,
+FluidPressure, RelativeHumidity, JointState, NavSatStatus, NavSatFix,
+LaserScan, PointField, PointCloud2, CompressedImage), nav_msgs (Odometry,
+Path, MapMetaData, OccupancyGrid), diagnostic_msgs (DiagnosticArray,
+DiagnosticStatus, KeyValue), tf2_msgs/TFMessage, visualization_msgs
+(Marker, MarkerArray, MeshFile, UVCoordinate), rcl_interfaces (Log for
+`/rosout`, ParameterEvent, Parameter, ParameterValue),
+example_interfaces/srv/AddTwoInts. The list is `tools/bundled_types.txt`
+(84 files, 0.23 MB). Nothing of them is compiled into the mrbgem: an
+application loads what it uses, and each file loads the types it is made
+of.
+
+### Field types
+
+Each generated message has `FIELD_TYPES` next to `FIELDS`: what each field
+is, as plain Arrays, Strings, Integers and nil (the same on the boards),
+one `[name, base, kind, nested, capacity, string_capacity]` per field:
+
+| Element | Value |
+|---|---|
+| `name` | the field name (a String) |
+| `base` | the .msg type: `"float64"`, `"string"`, `"uint8"`, ..., or the full name of a message (`"std_msgs/msg/Header"`) |
+| `kind` | `"scalar"`, `"array"` (`T[N]`), `"bounded_sequence"` (`T[<=N]`) or `"sequence"` (`T[]`) |
+| `nested` | the full name of the message type, or nil |
+| `capacity` | N of an array or a bounded sequence, else nil |
+| `string_capacity` | N of `string<=N`, else nil |
+
+```ruby
+Asterism::ROS::SensorMsgs::JointState::FIELD_TYPES
+# => [["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+#     ["name", "string", "sequence", nil, nil, nil],
+#     ["position", "float64", "sequence", nil, nil, nil], ...]
+Asterism::ROS.field_types("sensor_msgs/msg/Imu")
+# => {"sensor_msgs/msg/Imu" => [...], "std_msgs/msg/Header" => [...],
+#     "geometry_msgs/msg/Quaternion" => [...], "geometry_msgs/msg/Vector3" => [...],
+#     "builtin_interfaces/msg/Time" => [...]}
+```
+
+`Asterism::ROS.field_types(type)` takes a type or its name, loads the
+types it is made of and gives the `FIELD_TYPES` of each, the type first
+(for a service, its Request and Response). A byte array or sequence
+(`uint8`, `byte`, `char`) is a binary String in Ruby (see the table
+above). Types generated before 0.4.1 have no `FIELD_TYPES`; regenerate
+them (`field_types` raises `Asterism::ROS::UnknownType` for them).
 
 ### Making types: `tools/asterism_msggen.rb`
 
@@ -783,8 +825,9 @@ the hashes from Jazzy's JSON (`type_hashes.txt`) that the tests
 (`rake test:msgs`) compare with. `tools/ros2_types.rb` refreshes both, and
 `data/msgs`, from a ROS 2 Jazzy docker image (`rake types:refresh` with
 `ASTERISM_ROS2_IMAGE`; `rake types:check` only compares). The definitions
-are from ros2/common_interfaces, ros2/rcl_interfaces and
-ros2/example_interfaces (Apache License 2.0, see NOTICE).
+are from ros2/common_interfaces, ros2/rcl_interfaces,
+ros2/example_interfaces (Apache License 2.0) and ros2/geometry2 (tf2_msgs,
+BSD 3-Clause License); see NOTICE.
 
 ### Loading
 
@@ -797,3 +840,9 @@ Time and Quaternion 32.8 KB more, std_msgs/Float32MultiArray with its
 layout types 20.0 KB more (68 KB for nine files, 340 ms). Evaluating a file
 compiles it on the caller's stack (about 2.5 KB deeper than the update
 loop); load the types in `on_create`, not in a deep call chain.
+
+A type name may come from the network, so `require_type` checks it before
+it builds a path: `pkg/msg/Name` or `pkg/srv/Name`, the package
+`[a-z][a-z0-9_]*`, the name `[A-Z][A-Za-z0-9]*` (ROS 2's rules for
+interface names). Anything else (`../msg/Foo`, an empty part, an upper-case
+package, more slashes, NUL) raises `ArgumentError`.

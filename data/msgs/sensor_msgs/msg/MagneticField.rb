@@ -14,6 +14,11 @@ class ::Asterism::ROS::SensorMsgs::MagneticField < ::Asterism::ROS::Message
   TYPE_NAME = "sensor_msgs::msg::dds_::MagneticField_"
   TYPE_HASH = "RIHS01_e80f32f56a20486c9923008fc1a1db07bbb273cbbf6a5b3bfa00835ee00e4dff"
   FIELDS = [:header, :magnetic_field, :magnetic_field_covariance]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["magnetic_field", "geometry_msgs/msg/Vector3", "scalar", "geometry_msgs/msg/Vector3", nil, nil],
+    ["magnetic_field_covariance", "float64", "array", nil, 9, nil]
+  ]
 
   attr_accessor :header, :magnetic_field, :magnetic_field_covariance
 

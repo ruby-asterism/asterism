@@ -14,6 +14,10 @@ class ::Asterism::ROS::GeometryMsgs::TwistStamped < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::TwistStamped_"
   TYPE_HASH = "RIHS01_5f0fcd4f81d5d06ad9b4c4c63e3ea51b82d6ae4d0558f1d475229b1121db6f64"
   FIELDS = [:header, :twist]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["twist", "geometry_msgs/msg/Twist", "scalar", "geometry_msgs/msg/Twist", nil, nil]
+  ]
 
   attr_accessor :header, :twist
 

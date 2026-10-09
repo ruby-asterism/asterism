@@ -13,6 +13,24 @@ class ::Asterism::ROS::SensorMsgs::BatteryState < ::Asterism::ROS::Message
   TYPE_NAME = "sensor_msgs::msg::dds_::BatteryState_"
   TYPE_HASH = "RIHS01_4bee5dfce981c98faa6828b868307a0a73f992ed0789f374ee96c8f840e69741"
   FIELDS = [:header, :voltage, :temperature, :current, :charge, :capacity, :design_capacity, :percentage, :power_supply_status, :power_supply_health, :power_supply_technology, :present, :cell_voltage, :cell_temperature, :location, :serial_number]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["voltage", "float32", "scalar", nil, nil, nil],
+    ["temperature", "float32", "scalar", nil, nil, nil],
+    ["current", "float32", "scalar", nil, nil, nil],
+    ["charge", "float32", "scalar", nil, nil, nil],
+    ["capacity", "float32", "scalar", nil, nil, nil],
+    ["design_capacity", "float32", "scalar", nil, nil, nil],
+    ["percentage", "float32", "scalar", nil, nil, nil],
+    ["power_supply_status", "uint8", "scalar", nil, nil, nil],
+    ["power_supply_health", "uint8", "scalar", nil, nil, nil],
+    ["power_supply_technology", "uint8", "scalar", nil, nil, nil],
+    ["present", "bool", "scalar", nil, nil, nil],
+    ["cell_voltage", "float32", "sequence", nil, nil, nil],
+    ["cell_temperature", "float32", "sequence", nil, nil, nil],
+    ["location", "string", "scalar", nil, nil, nil],
+    ["serial_number", "string", "scalar", nil, nil, nil]
+  ]
   POWER_SUPPLY_STATUS_UNKNOWN = 0
   POWER_SUPPLY_STATUS_CHARGING = 1
   POWER_SUPPLY_STATUS_DISCHARGING = 2

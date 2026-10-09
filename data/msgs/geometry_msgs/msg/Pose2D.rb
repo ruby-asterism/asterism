@@ -11,6 +11,11 @@ class ::Asterism::ROS::GeometryMsgs::Pose2D < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::Pose2D_"
   TYPE_HASH = "RIHS01_d68efa5b46e70f7b16ca23085474fdac5a44b638783ec42f661da64da4724ccc"
   FIELDS = [:x, :y, :theta]
+  FIELD_TYPES = [
+    ["x", "float64", "scalar", nil, nil, nil],
+    ["y", "float64", "scalar", nil, nil, nil],
+    ["theta", "float64", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :x, :y, :theta
 

@@ -11,6 +11,9 @@ class ::Asterism::ROS::StdMsgs::Float32 < ::Asterism::ROS::Message
   TYPE_NAME = "std_msgs::msg::dds_::Float32_"
   TYPE_HASH = "RIHS01_7170d3d8f841f7be3172ce5f4f59f3a4d7f63b0447e8b33327601ad64d83d6e2"
   FIELDS = [:data]
+  FIELD_TYPES = [
+    ["data", "float32", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :data
 

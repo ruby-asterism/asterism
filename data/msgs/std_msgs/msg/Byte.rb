@@ -11,6 +11,9 @@ class ::Asterism::ROS::StdMsgs::Byte < ::Asterism::ROS::Message
   TYPE_NAME = "std_msgs::msg::dds_::Byte_"
   TYPE_HASH = "RIHS01_41e1a3345f73fe93ede006da826a6ee274af23dd4653976ff249b0f44e3e798f"
   FIELDS = [:data]
+  FIELD_TYPES = [
+    ["data", "byte", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :data
 

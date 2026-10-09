@@ -19,6 +19,10 @@ class ::Asterism::ROS::ExampleInterfaces::AddTwoInts::Request < ::Asterism::ROS:
   TYPE_NAME = "example_interfaces::srv::dds_::AddTwoInts_Request_"
   TYPE_HASH = "RIHS01_000c5fd92d6b2e1a05949348f584d6d652adea1e92d691792011ac2273508302"
   FIELDS = [:a, :b]
+  FIELD_TYPES = [
+    ["a", "int64", "scalar", nil, nil, nil],
+    ["b", "int64", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :a, :b
 
@@ -45,6 +49,9 @@ class ::Asterism::ROS::ExampleInterfaces::AddTwoInts::Response < ::Asterism::ROS
   TYPE_NAME = "example_interfaces::srv::dds_::AddTwoInts_Response_"
   TYPE_HASH = "RIHS01_de5c030d4af33cba2749310b249737b631594703f9300495f48bffb2b44dcc2f"
   FIELDS = [:sum]
+  FIELD_TYPES = [
+    ["sum", "int64", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :sum
 

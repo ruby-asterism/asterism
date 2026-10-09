@@ -209,11 +209,14 @@ module Asterism
     # returns it (Asterism::ROS::GeometryMsgs::Twist). The file loads the
     # types it is made of first. A type already defined (loaded before, or
     # written in Ruby by the application) is returned without a file.
+    #
+    # The name is checked before it reaches the file system (it may come
+    # from the network): pkg/msg/Name or pkg/srv/Name, the package of
+    # a-z, 0-9 and _ starting with a letter, the type of letters and digits
+    # starting with a capital (the rules of ROS 2's interface names).
+    # Anything else raises ArgumentError.
     def self.require_type(name)
-      parts = name.to_s.split("/")
-      if parts.size != 3 || (parts[1] != "msg" && parts[1] != "srv")
-        raise ArgumentError, "bad type name #{name.inspect} (want pkg/msg/Name or pkg/srv/Name)"
-      end
+      parts = check_type_name(name)
       t = type_constant(parts[0], parts[2])
       return t if t
       found = nil
@@ -225,6 +228,68 @@ module Asterism
       t = type_constant(parts[0], parts[2])
       raise UnknownType, "no generated type #{name} in #{TYPE_PATH.join(', ')}" if t.nil?
       t
+    end
+
+    # "pkg/msg/Name" -> ["pkg", "msg", "Name"], or ArgumentError. By hand,
+    # byte by byte: the boards have no Regexp.
+    # @api private
+    def self.check_type_name(name)
+      s = name.to_s
+      parts = s.split("/")
+      # (split drops a trailing "/": the parts must give the name back)
+      ok = parts.size == 3 && parts.join("/") == s && (parts[1] == "msg" || parts[1] == "srv") &&
+           ros_name_part?(parts[0], false) && ros_name_part?(parts[2], true)
+      raise ArgumentError, "bad type name #{name.inspect} (want pkg/msg/Name or pkg/srv/Name)" unless ok
+      parts
+    end
+
+    # A package name ([a-z][a-z0-9_]*) or, with type true, a type name
+    # ([A-Z][A-Za-z0-9]*).
+    # @api private
+    def self.ros_name_part?(s, type)
+      n = s.bytesize
+      return false if n == 0
+      c = s.getbyte(0)
+      return false unless type ? (c >= 65 && c <= 90) : (c >= 97 && c <= 122)
+      i = 1
+      while i < n
+        c = s.getbyte(i)
+        ok = (c >= 97 && c <= 122) || (c >= 48 && c <= 57) ||
+             (type ? (c >= 65 && c <= 90) : c == 95)
+        return false unless ok
+        i += 1
+      end
+      true
+    end
+
+    # What the fields of a type and of every message type it is made of
+    # are: {ROS name => FIELD_TYPES}, the type first, each type once. The
+    # type is a generated type or its ROS name (the types are loaded with
+    # require_type); for a service, its Request and Response. Each entry of
+    # FIELD_TYPES is [name, base, kind, nested, capacity, string_capacity]
+    # (plain Strings, Integers and nil; see tools/asterism_msggen.rb):
+    #   Asterism::ROS.field_types("sensor_msgs/msg/JointState")
+    #   # => {"sensor_msgs/msg/JointState" => [["header", "std_msgs/msg/Header",
+    #   #      "scalar", "std_msgs/msg/Header", nil, nil],
+    #   #      ["name", "string", "sequence", nil, nil, nil], ...],
+    #   #     "std_msgs/msg/Header" => [...], "builtin_interfaces/msg/Time" => [...]}
+    # A type without FIELD_TYPES (written by hand, or generated before
+    # 0.4.1) raises UnknownType.
+    def self.field_types(type)
+      t = type_of(type)
+      queue = t.is_a?(::Class) ? [t] : [t::Request, t::Response]
+      out = {}
+      until queue.empty?
+        c = queue.shift
+        next if out.key?(c::ROS_NAME)
+        unless c.const_defined?(:FIELD_TYPES, false)
+          raise UnknownType, "#{c::ROS_NAME} has no FIELD_TYPES (generate it with asterism_msggen.rb of 0.4.1 or later)"
+        end
+        fts = c::FIELD_TYPES
+        out[c::ROS_NAME] = fts
+        fts.each { |f| queue << require_type(f[3]) if f[3] }
+      end
+      out
     end
 
     # On mruby the file is evaluated in this VM (Kernel#eval): unlike
@@ -270,8 +335,8 @@ module Asterism
     end
 
     # The base of the generated message types (Request / Response of a
-    # service too). A type adds ROS_NAME, TYPE_NAME, TYPE_HASH, FIELDS, an
-    # accessor per field, initialize(**fields) and the CDR steps
+    # service too). A type adds ROS_NAME, TYPE_NAME, TYPE_HASH, FIELDS,
+    # FIELD_TYPES (0.4.1 and later), an accessor per field, initialize(**fields) and the CDR steps
     # write(w, msg) / read(r); the rest is here.
     class Message
       # A message from nil (all defaults), a Hash of fields (Symbol or

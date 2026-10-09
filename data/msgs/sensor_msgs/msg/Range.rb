@@ -13,6 +13,15 @@ class ::Asterism::ROS::SensorMsgs::Range < ::Asterism::ROS::Message
   TYPE_NAME = "sensor_msgs::msg::dds_::Range_"
   TYPE_HASH = "RIHS01_b42b62562e93cbfe9d42b82fe5994dfa3d63d7d5c90a317981703f7388adff3a"
   FIELDS = [:header, :radiation_type, :field_of_view, :min_range, :max_range, :range, :variance]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["radiation_type", "uint8", "scalar", nil, nil, nil],
+    ["field_of_view", "float32", "scalar", nil, nil, nil],
+    ["min_range", "float32", "scalar", nil, nil, nil],
+    ["max_range", "float32", "scalar", nil, nil, nil],
+    ["range", "float32", "scalar", nil, nil, nil],
+    ["variance", "float32", "scalar", nil, nil, nil]
+  ]
   ULTRASOUND = 0
   INFRARED = 1
 

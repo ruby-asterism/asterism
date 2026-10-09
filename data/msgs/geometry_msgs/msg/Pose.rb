@@ -14,6 +14,10 @@ class ::Asterism::ROS::GeometryMsgs::Pose < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::Pose_"
   TYPE_HASH = "RIHS01_d501954e9476cea2996984e812054b68026ae0bfae789d9a10b23daf35cc90fa"
   FIELDS = [:position, :orientation]
+  FIELD_TYPES = [
+    ["position", "geometry_msgs/msg/Point", "scalar", "geometry_msgs/msg/Point", nil, nil],
+    ["orientation", "geometry_msgs/msg/Quaternion", "scalar", "geometry_msgs/msg/Quaternion", nil, nil]
+  ]
 
   attr_accessor :position, :orientation
 

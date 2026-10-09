@@ -13,6 +13,11 @@ class ::Asterism::ROS::SensorMsgs::Temperature < ::Asterism::ROS::Message
   TYPE_NAME = "sensor_msgs::msg::dds_::Temperature_"
   TYPE_HASH = "RIHS01_72514a14126ab9f8a9abec974c78e5610a367b59db5da355ff1fb982d5bad4b8"
   FIELDS = [:header, :temperature, :variance]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["temperature", "float64", "scalar", nil, nil, nil],
+    ["variance", "float64", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :header, :temperature, :variance
 

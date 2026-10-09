@@ -4,7 +4,8 @@ Asterism's own code is under the MIT License (LICENSE).
 
 This repository also contains material made from ROS 2 message and service
 definitions, which are licensed under the Apache License, Version 2.0
-(data/msgs/LICENSE-Apache-2.0.txt):
+(data/msgs/LICENSE-Apache-2.0.txt), except tf2_msgs, which is under the BSD
+3-Clause License (data/msgs/LICENSE-BSD-3-Clause-tf2_msgs.txt):
 
 - tools/ros2_jazzy/: the .msg / .srv definitions and the package.xml of
   their packages as distributed with ROS 2 Jazzy
@@ -16,12 +17,16 @@ definitions, which are licensed under the Apache License, Version 2.0
 - test/msgs/golden_cdr.tsv and test/msgs/test_type_hashes.txt: values
   computed by ROS 2's tools (rclpy, rosidl) in a ROS 2 Jazzy image.
 
-The ROS 2 packages these come from, all "Apache License 2.0" in their
-package.xml:
+The ROS 2 packages these come from, with the license in their package.xml:
 
-- std_msgs, geometry_msgs, sensor_msgs (ros2/common_interfaces)
-- builtin_interfaces, service_msgs (ros2/rcl_interfaces)
-- example_interfaces (ros2/example_interfaces)
+- std_msgs, geometry_msgs, sensor_msgs, nav_msgs, diagnostic_msgs,
+  visualization_msgs (ros2/common_interfaces): "Apache License 2.0"
+- builtin_interfaces, service_msgs, rcl_interfaces (ros2/rcl_interfaces):
+  "Apache License 2.0"
+- example_interfaces (ros2/example_interfaces): "Apache License 2.0"
+- tf2_msgs (ros2/geometry2): "BSD" (the BSD 3-Clause License of that
+  repository; Copyright (c) 2008, Willow Garage, Inc.)
 
 Copyright in the definitions belongs to their authors (Open Source Robotics
-Foundation, Inc. and the ROS 2 contributors); see those repositories.
+Foundation, Inc., Willow Garage, Inc. and the ROS 2 contributors); see those
+repositories.

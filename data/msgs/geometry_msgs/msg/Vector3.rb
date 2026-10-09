@@ -11,6 +11,11 @@ class ::Asterism::ROS::GeometryMsgs::Vector3 < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::Vector3_"
   TYPE_HASH = "RIHS01_cc12fe83e4c02719f1ce8070bfd14aecd40f75a96696a67a2a1f37f7dbb0765d"
   FIELDS = [:x, :y, :z]
+  FIELD_TYPES = [
+    ["x", "float64", "scalar", nil, nil, nil],
+    ["y", "float64", "scalar", nil, nil, nil],
+    ["z", "float64", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :x, :y, :z
 

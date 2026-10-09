@@ -11,6 +11,12 @@ class ::Asterism::ROS::StdMsgs::ColorRGBA < ::Asterism::ROS::Message
   TYPE_NAME = "std_msgs::msg::dds_::ColorRGBA_"
   TYPE_HASH = "RIHS01_77a7a5b9ae477306097665106e0413ba74440245b1f3d0c6d6405fe5c7813fe8"
   FIELDS = [:r, :g, :b, :a]
+  FIELD_TYPES = [
+    ["r", "float32", "scalar", nil, nil, nil],
+    ["g", "float32", "scalar", nil, nil, nil],
+    ["b", "float32", "scalar", nil, nil, nil],
+    ["a", "float32", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :r, :g, :b, :a
 

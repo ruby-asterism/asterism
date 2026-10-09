@@ -11,6 +11,9 @@ class ::Asterism::ROS::StdMsgs::Bool < ::Asterism::ROS::Message
   TYPE_NAME = "std_msgs::msg::dds_::Bool_"
   TYPE_HASH = "RIHS01_feb91e995ff9ebd09c0cb3d2aed18b11077585839fb5db80193b62d74528f6c9"
   FIELDS = [:data]
+  FIELD_TYPES = [
+    ["data", "bool", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :data
 

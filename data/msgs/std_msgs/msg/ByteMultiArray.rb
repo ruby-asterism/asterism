@@ -13,6 +13,10 @@ class ::Asterism::ROS::StdMsgs::ByteMultiArray < ::Asterism::ROS::Message
   TYPE_NAME = "std_msgs::msg::dds_::ByteMultiArray_"
   TYPE_HASH = "RIHS01_972fec7f50ab3c1d06783c228e79e8a9a509021708c511c059926261ada901d4"
   FIELDS = [:layout, :data]
+  FIELD_TYPES = [
+    ["layout", "std_msgs/msg/MultiArrayLayout", "scalar", "std_msgs/msg/MultiArrayLayout", nil, nil],
+    ["data", "byte", "sequence", nil, nil, nil]
+  ]
 
   attr_accessor :layout, :data
 

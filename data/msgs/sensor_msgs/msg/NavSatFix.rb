@@ -14,6 +14,15 @@ class ::Asterism::ROS::SensorMsgs::NavSatFix < ::Asterism::ROS::Message
   TYPE_NAME = "sensor_msgs::msg::dds_::NavSatFix_"
   TYPE_HASH = "RIHS01_62223ab3fe210a15976021da7afddc9e200dc9ec75231c1b6a557fc598a65404"
   FIELDS = [:header, :status, :latitude, :longitude, :altitude, :position_covariance, :position_covariance_type]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["status", "sensor_msgs/msg/NavSatStatus", "scalar", "sensor_msgs/msg/NavSatStatus", nil, nil],
+    ["latitude", "float64", "scalar", nil, nil, nil],
+    ["longitude", "float64", "scalar", nil, nil, nil],
+    ["altitude", "float64", "scalar", nil, nil, nil],
+    ["position_covariance", "float64", "array", nil, 9, nil],
+    ["position_covariance_type", "uint8", "scalar", nil, nil, nil]
+  ]
   COVARIANCE_TYPE_UNKNOWN = 0
   COVARIANCE_TYPE_APPROXIMATED = 1
   COVARIANCE_TYPE_DIAGONAL_KNOWN = 2

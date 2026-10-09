@@ -13,6 +13,10 @@ class ::Asterism::ROS::GeometryMsgs::Wrench < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::Wrench_"
   TYPE_HASH = "RIHS01_018e8519d57c16adbe97c9fe1460ef21fec7e31bc541de3d653a35895677ce52"
   FIELDS = [:force, :torque]
+  FIELD_TYPES = [
+    ["force", "geometry_msgs/msg/Vector3", "scalar", "geometry_msgs/msg/Vector3", nil, nil],
+    ["torque", "geometry_msgs/msg/Vector3", "scalar", "geometry_msgs/msg/Vector3", nil, nil]
+  ]
 
   attr_accessor :force, :torque
 

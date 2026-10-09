@@ -14,6 +14,10 @@ class ::Asterism::ROS::GeometryMsgs::Vector3Stamped < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::Vector3Stamped_"
   TYPE_HASH = "RIHS01_d4829622288cbb443886e7ea94ea5671a3b1be6bab4ad04224432a65f7d7887a"
   FIELDS = [:header, :vector]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["vector", "geometry_msgs/msg/Vector3", "scalar", "geometry_msgs/msg/Vector3", nil, nil]
+  ]
 
   attr_accessor :header, :vector
 

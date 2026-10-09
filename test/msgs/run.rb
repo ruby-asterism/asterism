@@ -123,10 +123,82 @@ Dir.mktmpdir("asterism_msgs") do |tmp|
   TEST_TYPES.each { |n| Asterism::ROS.require_type(n) }
   check(Asterism::ROS::GeometryMsgs::Vector3.is_a?(Class), "Twist loaded Vector3 with it")
   check(Asterism::ROS.require_type("geometry_msgs/msg/Twist").equal?(types["geometry_msgs/msg/Twist"]), "second require_type")
-  raises(Asterism::ROS::UnknownType, "unknown type") { Asterism::ROS.require_type("nav_msgs/msg/Odometry") }
+  raises(Asterism::ROS::UnknownType, "unknown type") { Asterism::ROS.require_type("sensor_msgs/msg/Image") }
   raises(ArgumentError, "bad name") { Asterism::ROS.require_type("Twist") }
   check(Asterism::ROS.type_of("std_msgs/msg/String") == Asterism::ROS::StdMsgs::String, "type_of by name")
   puts "loading: #{types.size} bundled types with require_type"
+
+  # ---- 3b. type names are checked before the file system -------------------
+
+  bad_names = ["../msg/Foo", "std_msgs/../Foo", "std_msgs/msg/../Foo", "std_msgs/msg/..", "../../etc/msg/Passwd",
+               "/std_msgs/msg/String", "std_msgs/msg/String/", "std_msgs//String", "std_msgs/msg/", "/msg/String",
+               "", "//", "std_msgs/msg", "a/b/msg/C", "Std_msgs/msg/String", "STD/msg/String", "std_msgs/Msg/String",
+               "std_msgs/action/Foo", "1std/msg/String", "_std/msg/String", "std-msgs/msg/String",
+               "std_msgs/msg/string", "std_msgs/msg/Str_ing", "std_msgs/msg/Str.rb", "std_msgs/msg/Str ing",
+               "std_msgs/msg/String\0", "std\0msgs/msg/String", "std_msgs/msg/St\nring", "std_msgs\\msg\\String",
+               "std_msgs/msg/Strïng", "std_msgs/msg/1String", nil]
+  bad_names.each { |n| raises(ArgumentError, "require_type(#{n.inspect})") { Asterism::ROS.require_type(n) } }
+  check(Asterism::ROS.require_type(:"std_msgs/msg/String") == Asterism::ROS::StdMsgs::String, "a Symbol name")
+  check(Asterism::ROS.check_type_name("a_1/srv/B2c") == %w[a_1 srv B2c], "good name parts")
+  begin
+    Asterism::ROS.require_type("../msg/Foo")
+  rescue ArgumentError => e
+    check(e.message.include?('"../msg/Foo"') && e.message.include?("pkg/msg/Name"), "bad name message: #{e.message}")
+  end
+  puts "type names: #{bad_names.size} bad names refused"
+
+  # ---- 3c. field types ------------------------------------------------------
+
+  imu = Asterism::ROS::SensorMsgs::Imu::FIELD_TYPES
+  check(imu.size == 7 && imu.map { |f| f[0] } == Asterism::ROS::SensorMsgs::Imu::FIELDS.map(&:to_s), "Imu FIELD_TYPES names")
+  check(imu[0] == ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil], "Imu header: nested")
+  check(imu[1] == ["orientation", "geometry_msgs/msg/Quaternion", "scalar", "geometry_msgs/msg/Quaternion", nil, nil],
+        "Imu orientation: nested")
+  check(imu[2] == ["orientation_covariance", "float64", "array", nil, 9, nil], "Imu covariance: float64[9]")
+  js = Asterism::ROS::SensorMsgs::JointState::FIELD_TYPES
+  check(js[1] == ["name", "string", "sequence", nil, nil, nil], "JointState name: string[]")
+  check(js[2] == ["position", "float64", "sequence", nil, nil, nil], "JointState position: float64[]")
+  check(js[1][1] != js[2][1] && js[1][2] == js[2][2], "a string sequence differs from a number sequence")
+  bt = Asterism::ROS::AsterismTestMsgs::Bounds::FIELD_TYPES.to_h { |f| [f[0], f] }
+  check(bt["short_name"] == ["short_name", "string", "scalar", nil, nil, 5], "string<=5")
+  check(bt["few"][2] == "bounded_sequence" && bt["few"][4] == 3, "bounded sequence and its bound")
+  check(bt["short_tags"][2] == "bounded_sequence" && bt["short_tags"][5] == 4, "bounded strings in a bounded sequence")
+  check(bt["points"][2] == "bounded_sequence" && bt["points"][3] == "geometry_msgs/msg/Point", "bounded sequence of messages")
+  check(Asterism::ROS::StdMsgs::Empty::FIELD_TYPES == [], "Empty has no fields")
+  # Every bundled message's FIELD_TYPES is what its .msg says.
+  all.each do |full|
+    tdef = reg.type(full)
+    msgs = tdef.is_a?(AsterismMsgGen::Service) ? [tdef.request, tdef.response] : [tdef]
+    msgs.each do |m|
+      t = if tdef.is_a?(AsterismMsgGen::Service)
+            Asterism::ROS.require_type(full).const_get(m.full_name.split("_").last)
+          else
+            Asterism::ROS.require_type(full)
+          end
+      want = m.fields.map { |f| AsterismMsgGen::Emitter.field_type(f) }
+      check(t::FIELD_TYPES == want, "#{m.full_name}: FIELD_TYPES")
+      check(t::FIELD_TYPES.all? { |f| f.all? { |v| v.nil? || v.is_a?(String) || v.is_a?(Integer) } },
+            "#{m.full_name}: FIELD_TYPES is plain values")
+    end
+  end
+
+  ft = Asterism::ROS.field_types("sensor_msgs/msg/Imu")
+  check(ft.keys == %w[sensor_msgs/msg/Imu std_msgs/msg/Header geometry_msgs/msg/Quaternion geometry_msgs/msg/Vector3
+                      builtin_interfaces/msg/Time], "field_types walks the nested types once each: #{ft.keys}")
+  check(ft["sensor_msgs/msg/Imu"].equal?(imu), "field_types gives FIELD_TYPES")
+  check(ft["builtin_interfaces/msg/Time"] == [["sec", "int32", "scalar", nil, nil, nil], ["nanosec", "uint32", "scalar", nil, nil, nil]],
+        "Time's fields")
+  check(Asterism::ROS.field_types(Asterism::ROS::GeometryMsgs::Twist).keys == %w[geometry_msgs/msg/Twist geometry_msgs/msg/Vector3],
+        "field_types of a type")
+  ma = Asterism::ROS.field_types("visualization_msgs/msg/MarkerArray")
+  check(ma.key?("visualization_msgs/msg/Marker") && ma.key?("sensor_msgs/msg/CompressedImage"), "through a sequence of messages")
+  add = Asterism::ROS.field_types("example_interfaces/srv/AddTwoInts")
+  check(add.keys == %w[example_interfaces/srv/AddTwoInts_Request example_interfaces/srv/AddTwoInts_Response] &&
+        add["example_interfaces/srv/AddTwoInts_Response"] == [["sum", "int64", "scalar", nil, nil, nil]], "field_types of a service")
+  hand = Class.new(Asterism::ROS::Message) { const_set(:ROS_NAME, "hand/msg/Made") }
+  raises(Asterism::ROS::UnknownType, "a type without FIELD_TYPES") { Asterism::ROS.field_types(hand) }
+  raises(ArgumentError, "field_types of a bad name") { Asterism::ROS.field_types("../msg/Foo") }
+  puts "field types: FIELD_TYPES of every bundled type, field_types"
 
   # ---- 4. values ----------------------------------------------------------
 

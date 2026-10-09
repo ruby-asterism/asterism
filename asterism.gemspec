@@ -15,11 +15,11 @@ Gem::Specification.new do |s|
     "bug_tracker_uri" => "https://github.com/ruby-asterism/asterism/issues",
     "rubygems_mfa_required" => "true"
   }
-  # Both licenses apply, each to its own files: MIT for Asterism's code,
+  # The licenses apply each to its own files: MIT for Asterism's code,
   # Apache-2.0 for the bundled ROS 2 message types (data/msgs, made from
-  # ROS 2's definitions; NOTICE and data/msgs/LICENSE-Apache-2.0.txt ship
-  # with the gem).
-  s.licenses = ["MIT", "Apache-2.0"]
+  # ROS 2's definitions) except tf2_msgs, which is BSD-3-Clause (NOTICE,
+  # data/msgs/NOTICE and the license texts in data/msgs ship with the gem).
+  s.licenses = ["MIT", "Apache-2.0", "BSD-3-Clause"]
   s.required_ruby_version = ">= 3.2"
   s.files = Dir["lib/**/*.rb", "mrblib/*.rb", "data/msgs/**/*", "tools/asterism_msggen.rb",
                 "README.md", "CHANGELOG.md", "LICENSE", "NOTICE"]

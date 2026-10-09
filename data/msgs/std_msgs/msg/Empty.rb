@@ -11,6 +11,7 @@ class ::Asterism::ROS::StdMsgs::Empty < ::Asterism::ROS::Message
   TYPE_NAME = "std_msgs::msg::dds_::Empty_"
   TYPE_HASH = "RIHS01_20b625256f32d5dbc0d04fee44f43c41e51c70d3502f84b4a08e7a9c26a96312"
   FIELDS = []
+  FIELD_TYPES = []
 
   def initialize
   end

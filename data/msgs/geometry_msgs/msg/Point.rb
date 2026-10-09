@@ -11,6 +11,11 @@ class ::Asterism::ROS::GeometryMsgs::Point < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::Point_"
   TYPE_HASH = "RIHS01_6963084842a9b04494d6b2941d11444708d892da2f4b09843b9c43f42a7f6881"
   FIELDS = [:x, :y, :z]
+  FIELD_TYPES = [
+    ["x", "float64", "scalar", nil, nil, nil],
+    ["y", "float64", "scalar", nil, nil, nil],
+    ["z", "float64", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :x, :y, :z
 

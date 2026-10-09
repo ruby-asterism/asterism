@@ -14,6 +14,10 @@ class ::Asterism::ROS::GeometryMsgs::PointStamped < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::PointStamped_"
   TYPE_HASH = "RIHS01_4c0296af86e01e562e9e0405d138a01537247580076c58ea38d7923ac1045897"
   FIELDS = [:header, :point]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["point", "geometry_msgs/msg/Point", "scalar", "geometry_msgs/msg/Point", nil, nil]
+  ]
 
   attr_accessor :header, :point
 

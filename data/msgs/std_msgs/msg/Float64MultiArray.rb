@@ -13,6 +13,10 @@ class ::Asterism::ROS::StdMsgs::Float64MultiArray < ::Asterism::ROS::Message
   TYPE_NAME = "std_msgs::msg::dds_::Float64MultiArray_"
   TYPE_HASH = "RIHS01_1025ddc6b9552d191f89ef1a8d2f60f3d373e28b283d8891ddcc974e8c55397f"
   FIELDS = [:layout, :data]
+  FIELD_TYPES = [
+    ["layout", "std_msgs/msg/MultiArrayLayout", "scalar", "std_msgs/msg/MultiArrayLayout", nil, nil],
+    ["data", "float64", "sequence", nil, nil, nil]
+  ]
 
   attr_accessor :layout, :data
 

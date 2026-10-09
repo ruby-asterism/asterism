@@ -11,6 +11,11 @@ class ::Asterism::ROS::StdMsgs::MultiArrayDimension < ::Asterism::ROS::Message
   TYPE_NAME = "std_msgs::msg::dds_::MultiArrayDimension_"
   TYPE_HASH = "RIHS01_5e773a60a4c7fc8a54985f307c7837aa2994252a126c301957a24e31282c9cbe"
   FIELDS = [:label, :size, :stride]
+  FIELD_TYPES = [
+    ["label", "string", "scalar", nil, nil, nil],
+    ["size", "uint32", "scalar", nil, nil, nil],
+    ["stride", "uint32", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :label, :size, :stride
 

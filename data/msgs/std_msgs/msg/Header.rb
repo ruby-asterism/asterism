@@ -13,6 +13,10 @@ class ::Asterism::ROS::StdMsgs::Header < ::Asterism::ROS::Message
   TYPE_NAME = "std_msgs::msg::dds_::Header_"
   TYPE_HASH = "RIHS01_f49fb3ae2cf070f793645ff749683ac6b06203e41c891e17701b1cb597ce6a01"
   FIELDS = [:stamp, :frame_id]
+  FIELD_TYPES = [
+    ["stamp", "builtin_interfaces/msg/Time", "scalar", "builtin_interfaces/msg/Time", nil, nil],
+    ["frame_id", "string", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :stamp, :frame_id
 

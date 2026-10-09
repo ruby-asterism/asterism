@@ -13,6 +13,10 @@ class ::Asterism::ROS::GeometryMsgs::Twist < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::Twist_"
   TYPE_HASH = "RIHS01_9c45bf16fe0983d80e3cfe750d6835843d265a9a6c46bd2e609fcddde6fb8d2a"
   FIELDS = [:linear, :angular]
+  FIELD_TYPES = [
+    ["linear", "geometry_msgs/msg/Vector3", "scalar", "geometry_msgs/msg/Vector3", nil, nil],
+    ["angular", "geometry_msgs/msg/Vector3", "scalar", "geometry_msgs/msg/Vector3", nil, nil]
+  ]
 
   attr_accessor :linear, :angular
 

@@ -13,6 +13,13 @@ class ::Asterism::ROS::SensorMsgs::JointState < ::Asterism::ROS::Message
   TYPE_NAME = "sensor_msgs::msg::dds_::JointState_"
   TYPE_HASH = "RIHS01_a13ee3a330e346c9d87b5aa18d24e11690752bd33a0350f11c5882bc9179260e"
   FIELDS = [:header, :name, :position, :velocity, :effort]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["name", "string", "sequence", nil, nil, nil],
+    ["position", "float64", "sequence", nil, nil, nil],
+    ["velocity", "float64", "sequence", nil, nil, nil],
+    ["effort", "float64", "sequence", nil, nil, nil]
+  ]
 
   attr_accessor :header, :name, :position, :velocity, :effort
 

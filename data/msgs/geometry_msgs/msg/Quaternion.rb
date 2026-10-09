@@ -11,6 +11,12 @@ class ::Asterism::ROS::GeometryMsgs::Quaternion < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::Quaternion_"
   TYPE_HASH = "RIHS01_8a765f66778c8ff7c8ab94afcc590a2ed5325a1d9a076ffff38fbce36f458684"
   FIELDS = [:x, :y, :z, :w]
+  FIELD_TYPES = [
+    ["x", "float64", "scalar", nil, nil, nil],
+    ["y", "float64", "scalar", nil, nil, nil],
+    ["z", "float64", "scalar", nil, nil, nil],
+    ["w", "float64", "scalar", nil, nil, nil]
+  ]
 
   attr_accessor :x, :y, :z, :w
 

@@ -14,6 +14,10 @@ class ::Asterism::ROS::GeometryMsgs::WrenchStamped < ::Asterism::ROS::Message
   TYPE_NAME = "geometry_msgs::msg::dds_::WrenchStamped_"
   TYPE_HASH = "RIHS01_8dc3deaf06b2ab281f9f9a742a8961c328ca7cec16e3fd6586d3a5c83fa78f77"
   FIELDS = [:header, :wrench]
+  FIELD_TYPES = [
+    ["header", "std_msgs/msg/Header", "scalar", "std_msgs/msg/Header", nil, nil],
+    ["wrench", "geometry_msgs/msg/Wrench", "scalar", "geometry_msgs/msg/Wrench", nil, nil]
+  ]
 
   attr_accessor :header, :wrench
 

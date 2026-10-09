@@ -11,11 +11,12 @@
 #
 # Each generated file defines one type (a message, or a service with its
 # Request and Response) under Asterism::ROS::<PackageInCamelCase>, with its
-# fields and defaults, ROS_NAME, TYPE_NAME (the DDS name rmw_zenoh uses),
-# TYPE_HASH (RIHS01, computed here) and the CDR conversion in both directions
-# on top of Asterism::CDR. A file loads the types it is made of through
-# Asterism::ROS.require_type first. The output layout mirrors the ROS names:
-# <out>/<pkg>/msg/<Name>.rb and <out>/<pkg>/srv/<Name>.rb.
+# fields and defaults, FIELD_TYPES (what each field is), ROS_NAME,
+# TYPE_NAME (the DDS name rmw_zenoh uses), TYPE_HASH (RIHS01, computed here)
+# and the CDR conversion in both directions on top of Asterism::CDR. A file
+# loads the types it is made of through Asterism::ROS.require_type first.
+# The output layout mirrors the ROS names: <out>/<pkg>/msg/<Name>.rb and
+# <out>/<pkg>/srv/<Name>.rb.
 #
 # The type hash follows the type description rules of ROS 2 Jazzy
 # (rosidl_generator_type_description, REP 2011): the type and every type it
@@ -578,6 +579,7 @@ module AsterismMsgGen
       out << "  TYPE_NAME = #{dds_name(m).inspect}\n"
       out << "  TYPE_HASH = #{hash.inspect}\n"
       out << "  FIELDS = [#{fs.map { |f| ":#{f.name}" }.join(', ')}]\n"
+      out << field_types_lit(fs)
       m.constants.each do |c|
         out << "  #{c.name} = #{lit(c.value, c.base)}\n"
       end
@@ -614,6 +616,31 @@ module AsterismMsgGen
 
     def kind(f)
       PRIMITIVES.fetch(f.base)[1]
+    end
+
+    # What a field is, for tools that look at a type without its .msg (the
+    # same plain values on mruby and CRuby: Arrays, Strings, Integers, nil):
+    #   [name, base, kind, nested, capacity, string_capacity]
+    # base: the .msg type ("float64", "string", "uint8", ...) or, for a
+    # message, its full name; kind: "scalar", "array" (T[N]),
+    # "bounded_sequence" (T[<=N]) or "sequence" (T[]); nested: the full name
+    # of the message type, or nil; capacity: N of an array or a bounded
+    # sequence, else nil; string_capacity: N of string<=N, else nil.
+    FIELD_KINDS = { nil => "scalar", fixed: "array", bounded: "bounded_sequence", unbounded: "sequence" }.freeze
+
+    def self.field_type(f)
+      cap = f.array == :fixed || f.array == :bounded ? f.size : nil
+      [f.name, f.base, FIELD_KINDS.fetch(f.array), f.nested, cap, f.string_max]
+    end
+
+    def field_types_lit(fs)
+      return "  FIELD_TYPES = []\n" if fs.empty?
+      out = +"  FIELD_TYPES = [\n"
+      fs.each_with_index do |f, i|
+        items = Emitter.field_type(f).map { |v| v.nil? ? "nil" : v.inspect }
+        out << "    [#{items.join(', ')}]#{i < fs.size - 1 ? ',' : ''}\n"
+      end
+      out << "  ]\n"
     end
 
     def byte_kind?(f)
