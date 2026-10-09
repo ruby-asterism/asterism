@@ -220,7 +220,7 @@ module Asterism
       end
       @node_token = s.liveliness("#{ROOT}/#{node}")
       @queryable = s.queryable("#{ROOT}/#{node}/#{app}/**", depth: 32)
-      @watch = s.liveliness_watch("#{ROOT}/**", depth: 64)
+      @watch = s.liveliness_watch("#{ROOT}/**", depth: watch_depth)
     rescue Asterism::Zenoh::Error => e
       s.close
       raise Disconnected, e.message
@@ -475,12 +475,26 @@ module Asterism
     (@depth || 0)
   end
 
+  # The depth of the liveliness watch behind each / nodes. The tokens alive
+  # when it is declared (every node and object on the network) come in one
+  # burst: 64 on the boards (the ring comes from the VM's pool), the
+  # binding's deeper default where it has one (CRuby: 1024).
+  # @api private
+  def self.watch_depth
+    d = Asterism::Zenoh::DEFAULT_WATCH_DEPTH
+    d > 64 ? d : 64
+  end
+
   # @api private
   def self.follow_liveliness
     w = @watch
     return unless w
     # Array forms instead of blocks called from C (see Future#collect).
     events = w.each_pending
+    if events.size > 0 && w.dropped > 0
+      warn_once(w, "asterism: #{w.dropped} liveliness changes dropped (more than #{watch_depth} at once); " \
+                   "Asterism.each and Asterism.nodes may miss some objects")
+    end
     i = 0
     while i < events.size
       key = events[i][0]

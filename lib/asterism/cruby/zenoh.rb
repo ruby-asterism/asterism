@@ -86,6 +86,48 @@ module Asterism
       ::Asterism.time_ms("timeout:", seconds, nil, nil, default_ms)
     end
 
+    # Warns once for owner (a wrapper, or a Get) when raw (what it wraps)
+    # dropped something. Only for queues whose depth the application left
+    # at the default: one that chose depth: reads dropped itself.
+    # @api private
+    def self.note_dropped(owner, raw, what, unit)
+      d = raw.dropped
+      return false if d == 0
+      ::Asterism.warn_once(owner, "asterism: #{what}: #{d} #{unit} dropped, the queue was full " \
+                                  "(pass a larger depth:, or read dropped)")
+    end
+
+    # The keys liveliness_get returns: an Array, with the counts of the get
+    # behind it.
+    class KeyList < Array
+      # Replies that did not fit the get's queue (oldest first), and all
+      # that came.
+      attr_reader :dropped, :received
+
+      # @api private
+      def finish(get)
+        @dropped = get.dropped
+        @received = get.received
+        self
+      end
+    end
+
+    # What Connection#get and Querier#get return without a block: an
+    # Enumerator (each iteration sends the get again) that also has the
+    # counts of the last get it sent: dropped, received, errors (nil before
+    # the first).
+    class GetEnumerator < Enumerator
+      attr_reader :dropped, :received, :errors
+
+      # @api private
+      def finish(get)
+        @dropped = get.dropped
+        @received = get.received
+        @errors = get.errors
+        self
+      end
+    end
+
     # Yields obj and closes it after the block (the block's value), or
     # returns obj without a block. @api private
     def self.scoped(obj)
@@ -189,8 +231,9 @@ module Asterism
       # With a block: every sample is given to it (as a Sample) on the
       # receiving thread; returns the Subscription (close it to stop).
       # Without: a Subscription to take from (each, each_sample).
-      def subscribe(key, depth: 16, &blk)
-        sub = Subscription.new(self, @session.subscribe(key, depth: depth), key)
+      def subscribe(key, depth: nil, &blk)
+        d = depth.nil? ? DEFAULT_DEPTH : depth
+        sub = Subscription.new(self, @session.subscribe(key, depth: d), key, warn: depth.nil?)
         sub.handle(&blk) if blk
         sub
       end
@@ -206,19 +249,22 @@ module Asterism
 
       # The replies to a get: yields each Reply until every answer came or
       # timeout (seconds; or timeout_ms:) ran out, and returns their number
-      # (not named each, so the count stays). Without a block, an Enumerator
-      # (each iteration sends the get again). errors: true also yields the
-      # error replies (Reply#error?); opts: encoding:, priority:,
+      # (not named each, so the count stays). Without a block, a
+      # GetEnumerator (each iteration sends the get again; dropped /
+      # received / errors of the last one). errors: true also yields the
+      # error replies (Reply#error?). depth: the replies kept until taken
+      # (DEFAULT_GET_DEPTH, 1024); replies past it are dropped, which warns
+      # once unless depth: was given. opts: encoding:, priority:,
       # congestion_control:, express:, accept_replies: (Session#get).
       def get(key, timeout: nil, timeout_ms: nil, params: nil, payload: nil, attachment: nil, target: :all,
-              consolidation: :none, errors: false, **opts, &blk)
+              consolidation: :none, errors: false, depth: nil, **opts, &blk)
         ms = ::Asterism.time_ms("Connection#get", timeout, timeout_ms, nil, 2000)
+        opts[:depth] = depth unless depth.nil?
         start = lambda do
           @session.get(key, timeout_ms: ms, params: params, payload: payload,
                        attachment: attachment, target: target, consolidation: consolidation, **opts)
         end
-        return enum_for(:get_each, start, errors) unless blk
-        get_each(start, errors, &blk)
+        get_run(start, errors, "get #{key}", depth.nil?, &blk)
       end
 
       # A liveliness token (close it to withdraw). With a block: the token
@@ -229,26 +275,32 @@ module Asterism
 
       # With a block: yields key and alive (true when the token appeared) on
       # the receiving thread for each change; the tokens alive now come
-      # first. Without: a Watch whose each yields Liveliness values.
-      def liveliness_watch(key, depth: 16, &blk)
-        w = Watch.new(self, @session.liveliness_watch(key, depth: depth), key)
+      # first, in one burst. Without: a Watch whose each yields Liveliness
+      # values. depth: DEFAULT_WATCH_DEPTH (1024); changes past it are
+      # dropped (Watch#dropped), which warns once unless depth: was given.
+      def liveliness_watch(key, depth: nil, &blk)
+        d = depth.nil? ? DEFAULT_WATCH_DEPTH : depth
+        w = Watch.new(self, @session.liveliness_watch(key, depth: d), key, warn: depth.nil?)
         w.handle(&blk) if blk
         w
       end
 
-      # The keys of the liveliness tokens alive now (an Array; waits for
-      # the answers, at most timeout seconds, or timeout_ms:).
-      def liveliness_get(key, timeout: nil, timeout_ms: nil)
-        g = @session.liveliness_get(key, timeout_ms: ::Asterism.time_ms("Connection#liveliness_get", timeout,
-                                                                       timeout_ms, nil, 2000))
-        keys = []
+      # The keys of the liveliness tokens alive now (a KeyList, an Array
+      # with dropped and received; waits for the answers, at most timeout
+      # seconds, or timeout_ms:). depth: DEFAULT_GET_DEPTH (1024); keys
+      # past it are dropped, which warns once unless depth: was given.
+      def liveliness_get(key, timeout: nil, timeout_ms: nil, depth: nil)
+        ms = ::Asterism.time_ms("Connection#liveliness_get", timeout, timeout_ms, nil, 2000)
+        g = @session.liveliness_get(key, timeout_ms: ms, depth: depth)
+        keys = KeyList.new
         loop do
+          ended = g.done? # before taking the replies (see get_each)
           g.each_reply.each { |r| keys << r[0] }
-          break if g.done?
+          break if ended && g.pending == 0
           sleep(ENUM_STEP)
         end
-        g.each_reply.each { |r| keys << r[0] }
-        keys
+        Zenoh.note_dropped(g, g, "liveliness_get #{key}", "keys") if depth.nil?
+        keys.finish(g)
       end
 
       # Receives on a thread of its own (blocks run there). Returns self.
@@ -331,10 +383,19 @@ module Asterism
 
       private
 
+      # The block form (get_each, the count) or a GetEnumerator over it.
+      def get_run(start, errors, what, warn, &blk)
+        return get_each(start, errors, what, warn, nil, &blk) if blk
+        e = nil
+        e = GetEnumerator.new { |y| get_each(start, errors, what, warn, e) { |r| y << r } }
+      end
+
       # Sends the get (start) and yields each Reply; error replies only
       # with errors. The done? before taking the replies: once the get is
-      # done, every reply it had is already in the queue.
-      def get_each(start, errors)
+      # done, every reply it had is already in the queue. Warns once when
+      # replies were dropped (warn: depth left at the default); stats (a
+      # GetEnumerator or nil) gets the counts.
+      def get_each(start, errors, what = "get", warn = true, stats = nil)
         g = start.call
         n = 0
         loop do
@@ -348,6 +409,8 @@ module Asterism
           break if done && g.pending == 0
           sleep(ENUM_STEP) if got.empty?
         end
+        Zenoh.note_dropped(g, g, what, "replies") if warn
+        stats&.finish(g)
         n
       end
 
@@ -360,11 +423,14 @@ module Asterism
 
         attr_reader :key, :subscriber
 
-        def initialize(conn, subscriber, key)
+        # warn: say once when samples were dropped (the depth was left at
+        # the default).
+        def initialize(conn, subscriber, key, warn: false)
           @conn = conn
           @subscriber = subscriber
           @key = key
           @task = nil
+          @warn = warn
         end
 
         def handle(&blk)
@@ -374,9 +440,15 @@ module Asterism
           @task = r.add do
             got = @subscriber.each_sample
             got.each { |s| r.guard(where) { blk.call(s) } }
+            note_dropped unless got.empty?
             got.size
           end
           self
+        end
+
+        # @api private
+        def note_dropped
+          @warn && Zenoh.note_dropped(self, @subscriber, "subscribe #{@key}", "samples")
         end
 
         # Yields each Sample as it comes, waiting for the next; ends when the
@@ -385,7 +457,10 @@ module Asterism
         def each(timeout: nil, &blk)
           return enum_for(:each, timeout: timeout) unless blk
           raise ::Asterism::Error, "this subscription has a block; its samples go there" if @task
-          Zenoh.drain(@subscriber, @conn.session, timeout, take: :each_sample) { |s| blk.call(s) }
+          Zenoh.drain(@subscriber, @conn.session, timeout, take: :each_sample) do |s|
+            note_dropped
+            blk.call(s)
+          end
           self
         end
 
@@ -393,6 +468,7 @@ module Asterism
         # returns their number. (The portable API's each_sample.)
         def each_sample
           got = @subscriber.each_sample
+          note_dropped unless got.empty?
           return got unless block_given?
           got.each { |s| yield s }
           got.size
@@ -489,11 +565,14 @@ module Asterism
 
         attr_reader :key, :watch
 
-        def initialize(conn, watch, key)
+        # warn: say once when changes were dropped (the depth was left at
+        # the default).
+        def initialize(conn, watch, key, warn: false)
           @conn = conn
           @watch = watch
           @key = key
           @task = nil
+          @warn = warn
         end
 
         def handle(&blk)
@@ -503,6 +582,7 @@ module Asterism
           @task = r.add do
             got = @watch.each_pending
             got.each { |e| r.guard(where) { blk.call(e[0], e[1]) } }
+            note_dropped unless got.empty?
             got.size
           end
           self
@@ -513,10 +593,24 @@ module Asterism
         def each(timeout: nil, &blk)
           return enum_for(:each, timeout: timeout) unless blk
           raise ::Asterism::Error, "this watch has a block; its changes go there" if @task
-          Zenoh.drain(@watch, @conn.session, timeout) { |e| blk.call(Liveliness.new(e[0], e[1])) }
+          Zenoh.drain(@watch, @conn.session, timeout) do |e|
+            note_dropped
+            blk.call(Liveliness.new(e[0], e[1]))
+          end
           self
         end
 
+        # @api private
+        def note_dropped
+          @warn && Zenoh.note_dropped(self, @watch, "liveliness_watch #{@key}", "changes")
+        end
+
+        # Changes waiting / received so far / dropped because the queue was
+        # full (the oldest go; the watch no longer knows which tokens are
+        # alive, so declare it again).
+        def pending = @watch.pending
+        def received = @watch.received
+        def dropped = @watch.dropped
         def closed? = @watch.closed?
 
         def close
@@ -588,11 +682,13 @@ module Asterism
 
         # Yields each Reply until every answer came or the querier's time
         # ran out; returns their number. errors: true also yields the error
-        # replies. Without a block, an Enumerator.
-        def get(params: nil, payload: nil, attachment: nil, encoding: nil, errors: false, &blk)
-          start = -> { @querier.get(params, payload, attachment: attachment, encoding: encoding) }
-          return @conn.send(:enum_for, :get_each, start, errors) unless blk
-          @conn.send(:get_each, start, errors, &blk)
+        # replies. depth: as Connection#get. Without a block, a
+        # GetEnumerator.
+        def get(params: nil, payload: nil, attachment: nil, encoding: nil, errors: false, depth: nil, &blk)
+          opts = { attachment: attachment, encoding: encoding }
+          opts[:depth] = depth unless depth.nil?
+          start = -> { @querier.get(params, payload, **opts) }
+          @conn.send(:get_run, start, errors, "querier get #{@key}", depth.nil?, &blk)
         end
 
         def matching? = @querier.matching?

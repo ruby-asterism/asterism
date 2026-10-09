@@ -190,10 +190,10 @@ end
 | `s.subscribe(key, depth: 16) { \|sample\| }` | the block gets each `Sample` on the receiving thread. Returns a `Subscription` (`close` ends it) |
 | `s.subscribe(key, depth: 16)` | a `Subscription` to take from: `each(timeout: nil)` waits for samples (an Enumerator without a block; Enumerable), `each_sample` gives what is there now as Samples (`each_pending`, its old name here, is deprecated: in the portable API `each_pending` gives Arrays), `pending` / `received` / `dropped` / `closed?` / `close` |
 | `s.queryable(key, depth: 16, complete: false) { \|q\| }` | each query on the receiving thread, finished when the block returns. `q.reply(payload)` answers on the queryable's key (when it has no wildcard), `q.reply(key, payload, attachment:)` as before. Without a block, `each(timeout:)` yields the queries |
-| `s.get(key, timeout: 2.0, params:, payload:, attachment:, target:, consolidation:, errors: false, **opts)` | an Enumerator of `Reply`; each iteration sends the get again. With a block: yields each, returns their number. `errors: true` also yields the error replies (`reply.error?`; left out by default, as `each_reply` does: look there when "nobody answers"); `consolidation: :none` keeps every reply (zenoh's own default is `:auto`). opts: `encoding:`, `priority:`, `congestion_control:`, `express:`, `accept_replies:`, `timeout_ms:` |
+| `s.get(key, timeout: 2.0, params:, payload:, attachment:, target:, consolidation:, errors: false, depth: 1024, **opts)` | a `GetEnumerator` of `Reply`; each iteration sends the get again, and `dropped` / `received` / `errors` are those of the last one. With a block: yields each, returns their number. `depth:` the replies kept until taken (see [Queues](#queues)). `errors: true` also yields the error replies (`reply.error?`; left out by default, as `each_reply` does: look there when "nobody answers"); `consolidation: :none` keeps every reply (zenoh's own default is `:auto`). opts: `encoding:`, `priority:`, `congestion_control:`, `express:`, `accept_replies:`, `timeout_ms:` |
 | `s.liveliness(key)` | a token (`close`). With a block: withdrawn after the block |
-| `s.liveliness_watch(key) { \|key, alive\| }` | on the receiving thread; the tokens alive now come first. Without a block, `each` yields `Liveliness` (`key`, `alive?`) |
-| `s.liveliness_get(key, timeout: 2.0)` | the keys alive now (an Array; waits) |
+| `s.liveliness_watch(key, depth: 1024) { \|key, alive\| }` | on the receiving thread; the tokens alive now come first, in one burst. Without a block, `each` yields `Liveliness` (`key`, `alive?`). `pending` / `received` / `dropped` / `closed?` / `close` |
+| `s.liveliness_get(key, timeout: 2.0, depth: 1024)` | the keys alive now (a `KeyList`: an Array with `dropped` and `received`; waits) |
 | `s.start` / `s.stop` / `s.running?` | receive on a thread of its own |
 | `s.run` | receive on this thread until `stop`, the connection closing, or Ctrl-C (returns nil) |
 | `s.on_error { \|error, where\| }` | what the blocks raise (`StandardError`); without a handler it is printed with `warn`. Receiving goes on. `on_error` replaces the handler; every other `on_*` adds one |
@@ -432,13 +432,33 @@ is closed (1.0: `Disconnected`, as the object layer).
 | Connecting | 3 s | `connect_timeout:` (CRuby); `Zenoh::CONNECT_TIMEOUT_MS` (fixed at build time on the boards) |
 | A send that cannot go out | 3 s | `Zenoh::SEND_TIMEOUT_MS` |
 | The duplicate check of `Asterism.connect` | 1.5 s | `check_timeout:`; `CHECK_TIMEOUT` |
-| Queue depth (subscriptions, queryables, watches) | 16 (services 8; the object layer's queryable 32 and watch 64) | `depth:` |
-| A full queue | drops the oldest (counted in `dropped`) | |
+| Queue depth (subscriptions, queryables) | 16 (services 8; the object layer's queryable 32) | `depth:` |
+| Queue depth of gets, liveliness gets and liveliness watches | CRuby 1024, the boards 16 (the object layer's watch: 1024 on CRuby, 64 on the boards) | `depth:`; `Zenoh::DEFAULT_GET_DEPTH`, `Zenoh::DEFAULT_WATCH_DEPTH` |
+| A full queue | drops the oldest (counted in `dropped`); the CRuby API warns once | `depth:` |
 | Pause between polls of a waiting call | 2 ms | `WAIT_STEP_MS`, `Client::WAIT_STEP_MS` |
 | Receiving interval of the CRuby API | 2 ms | `interval:` |
 | Calls waiting inside each other | 4 | `MAX_NESTING` |
 | Encoding depth of a value | 16 | `Codec::MAX_DEPTH` |
 | `get` consolidation | `:none` (every reply; zenoh's own default is `:auto`, but services and the object layer want every reply) | `consolidation:` |
+
+### Queues
+
+Everything received waits in a bounded queue until taken; when it is full
+the oldest entry goes and is counted in `dropped`. A router answers a
+wildcard get or liveliness get, and a new liveliness watch, with
+everything at once, so on CRuby those three queues hold 1024 by default
+(they grow as entries come; nothing is allocated up front). On the boards
+they stay at 16: a get's queue is allocated in full when it is sent (in
+PSRAM on ESP-IDF) and a watch's comes from the VM's pool; pass `depth:`
+when a wildcard can match more.
+
+On CRuby, a get (`get`, `Querier#get`, `liveliness_get`), a liveliness
+watch or a subscription of the CRuby API whose depth was left at the
+default warns once (`asterism: get demo/**: 3 replies dropped, ...`) when
+something was dropped; with `depth:` given it stays quiet, and `dropped`
+tells. The object layer warns once when its own watch dropped changes
+(then `Asterism.each` and `Asterism.nodes` may miss objects).
+`Asterism.warn_once(obj, message)` is the helper.
 
 Every `each_*` of the portable API (`each_pending`, `each_reply`,
 `each_result`) takes what is there now, without waiting, and returns an

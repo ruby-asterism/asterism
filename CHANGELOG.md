@@ -37,9 +37,30 @@ Added
   `c.liveliness(key) { }` and `c.publisher(key) { |pub| }` (closed after
   the block), `net[path, timeout_ms:]`.
 - `DEFAULT_TIMEOUT`, `CHECK_TIMEOUT`, `Client::DEFAULT_TIMEOUT` (seconds).
+- CRuby API: `depth:` on `Connection#get`, `#liveliness_get` and
+  `Querier#get`. A get's queue held 16 and could not be changed, so a
+  wildcard get past the 16th reply lost the rest (a router answers in one
+  burst; `liveliness_get("@ros2_lv/**")` returned 16 of 31).
+- CRuby API: `dropped` (with `received`, and `errors` for gets) on what a
+  get gives: `liveliness_get` returns a `KeyList` (an Array with
+  `dropped` / `received`), `get` and `Querier#get` without a block a
+  `GetEnumerator` (an Enumerator with the counts of the last get it sent).
+  `Watch#dropped` / `pending` / `received` (before only through
+  `w.watch.dropped`).
+- CRuby API: a get, liveliness watch or subscription whose depth was left
+  at the default warns once (`Asterism.warn_once`) when something was
+  dropped. So does the object layer's watch, on every Ruby.
 - README: "Which API?" (the portable API and the CRuby API), the error
   tree, the defaults, the threads table, the deprecations and what 1.0
   changes, reserved keywords. Internal methods are marked `@api private`.
+
+Changed
+
+- CRuby API: the default depth of `get`, `liveliness_get`, `Querier#get`
+  and `liveliness_watch` is the binding's `DEFAULT_GET_DEPTH` /
+  `DEFAULT_WATCH_DEPTH`, 1024 (was 16; the boards stay at 16).
+- The object layer's liveliness watch (behind `Asterism.each` and
+  `Asterism.nodes`) holds 1024 on CRuby (64 on the boards, as before).
 
 Deprecated (each warns once per name; `Asterism.deprecations = :raise`
 raises instead)

@@ -133,10 +133,10 @@ Module `Asterism::Zenoh`.
 | `c.subscribe(key, depth: 16) { \|sample\| }` | | | `Connection::Subscription` | |
 | `c.subscribe(key, depth: 16)` | no block | | `Subscription`: `each(timeout: nil)` (Enumerator, blocks), `each_pending` (**Samples**), `pending`, `received`, `dropped`, `closed?`, `close` | `Asterism::Error` from `each` when it has a block |
 | `c.queryable(key, depth: 16, complete: false) { \|q\| }` | `q.reply(payload)` answers on the **queryable's** key | | `Connection::Queryable` (`each(timeout:)` without a block) | |
-| `c.get(key, timeout: 2.0, params:, payload:, attachment:, target: :all, consolidation: :none, errors: false, **opts) { \|reply\| }` | | **s** | count with a block; an Enumerator without (sends again each time) | `Zenoh::Error` |
+| `c.get(key, timeout: 2.0, params:, payload:, attachment:, target: :all, consolidation: :none, errors: false, depth: 1024, **opts) { \|reply\| }` | | **s** | count with a block; a `GetEnumerator` without (sends again each time; `dropped` / `received` / `errors` of the last get) | `Zenoh::Error` |
 | `c.liveliness(key)` | | | `LivelinessToken` | |
-| `c.liveliness_watch(key, depth: 16) { \|key, alive\| }` | without a block: `Watch#each` yields `Liveliness` | | `Watch` | |
-| `c.liveliness_get(key, timeout: 2.0)` | | **s** | `[String]` (not a `Get`) | |
+| `c.liveliness_watch(key, depth: 1024) { \|key, alive\| }` | without a block: `Watch#each` yields `Liveliness` | | `Watch` (`pending` / `received` / `dropped`) | |
+| `c.liveliness_get(key, timeout: 2.0, depth: 1024)` | | **s** | `KeyList` (an Array of String with `dropped` / `received`; not a `Get`) | |
 | `c.start` / `stop` / `run` / `running?` / `on_error { \|error, where\| }` | `run` returns on Ctrl-C | | self / nil / bool | `Asterism::Error` (already running) |
 | `c.session`, `runner`, `zid`, `peers`, `peer_zids`, `router_zids`, `transports`, `links`, `new_timestamp`, `declare_keyexpr`, `poll`, `closed?`, `close` | delegated | | | |
 | `Liveliness` (`Data`: `key`, `alive`, `alive?`) | | | | |
