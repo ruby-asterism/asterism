@@ -1155,3 +1155,22 @@ have been moved off the deprecated forms.
   the object layer meets it. Left for later: an application's own profile
   (`asterism/<node>/<app>/@profile`), and whether 1.0 should resolve the
   answers of several applications of one node (today the first answer).
+- **0.6.0, one connection** (README "One connection"): `Asterism.session`
+  makes public the session that 0.5.0 kept private as `session!` (still
+  there, `@api private`). It returns the `Asterism::Zenoh::Session` itself,
+  not a wrapper, so everything that takes a session (`Asterism::ROS::Node.new`,
+  the whole Zenoh API) takes it unchanged; the session is extended with a
+  `close` that does nothing (and warns once) unless Asterism closes it,
+  so the ownership stays with Asterism. On the CRuby API, `net.session` is
+  a `Zenoh::Connection` on the `Net`'s receiving thread (`shared?` true;
+  `close` does nothing, `start` / `stop` / `run` are the `Net`'s), and
+  `ROS::Connection.new(net.session)` puts ROS 2 nodes on it (its `close`
+  withdraws its nodes only). Considered and left: a one-time password that
+  lets a few sessions in for a short while (a router-side workaround; the
+  applications would still be two nodes on the network).
+- **0.6.0, a lighter `Asterism.poll`**: same behaviour (the order and number
+  of `on_join` / `on_leave` calls, the order of `nodes`), less work: the
+  queues are read only when their count says something came, and the list
+  of nodes and the comparison behind `on_join` / `on_leave` run only after
+  a liveliness change, with Hashes instead of `include?`. `Asterism.nodes`
+  still returns a new Array. `rake bench:poll` prints the cost by size.

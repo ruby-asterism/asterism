@@ -27,7 +27,7 @@ module Asterism
   # singleton class, so the shared methods themselves are not changed.
   module Locked
     %i[expose unexpose poll nodes [] call_async meta connected? exposed on_join on_leave off_join off_leave
-       profile profile_async].each do |m|
+       profile profile_async session].each do |m|
       define_method(m) do |*args, **kw, &blk|
         ::Asterism::LOCK.synchronize { super(*args, **kw, &blk) }
       end
@@ -128,6 +128,21 @@ module Asterism
       # One tick: Asterism.poll (answers the calls, tells on_join /
       # on_leave); false once the connection is gone.
       @runner.add { ::Asterism.poll ? 0 : false }
+    end
+
+    # Asterism.session as a Zenoh::Connection (the block API of
+    # Asterism::Zenoh.open) on the same receiving thread as the objects:
+    # subscribe / queryable blocks run there, between the calls answered.
+    # For a ROS 2 node on the same session:
+    # Asterism::ROS::Connection.new(net.session).node("name"). The session
+    # stays Asterism's: net.session.close does nothing (shared?), net.close
+    # closes it. Disconnected when not connected.
+    def session
+      ::Asterism::LOCK.synchronize do
+        s = ::Asterism.session
+        @session = nil if @session && !@session.session.equal?(s)
+        @session ||= ::Asterism::Zenoh::Connection.new(s, runner: @runner)
+      end
     end
 
     def node_id = ::Asterism.node_id

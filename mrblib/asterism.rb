@@ -227,16 +227,20 @@ module Asterism
       s.close
       raise Disconnected, e.message
     end
+    s.extend(SharedSession) # Asterism.session: the application's close does not close it
     @session = s
     @node = node
     @app = app
     @objects = {}  # name => [object, {method name => arity}, token]
-    @alive = {}    # "node/app/object" => true (from liveliness)
+    @alive = {}    # "node/app/object" => node (from liveliness)
     @nodes = {}    # node => true (from liveliness)
     @proxies = {}
     @depth = 0
     @lost = nil
     @known = []    # the other nodes told to on_join so far
+    @known_set = {} # the same, as node => true
+    @node_list = [node] # what nodes returns (this node first), rebuilt on a change
+    @nodes_changed = false # liveliness changed since tell_nodes last compared
     tell_profile   # for those who follow the profiles (the reply is the queryable's)
     self
   end
@@ -298,18 +302,65 @@ module Asterism
     @objects = {}
     @alive = {}
     @nodes = {}
+    @node_list = nil
+    @nodes_changed = true
     @proxies = {}
-    s.close if s
+    if s
+      @releasing = s
+      begin
+        s.close
+      ensure
+        @releasing = nil
+      end
+    end
     @node_token = nil
     @queryable = nil
     @watch = nil
     @profile_queryable = nil
   end
 
-  # @api private
+  # The Zenoh session of the connection (an Asterism::Zenoh::Session), for
+  # what the object layer does not do: put and subscribe, a ROS 2 node
+  # (Asterism::ROS::Node.new(Asterism.session, ...)), anything of the
+  # Zenoh API. One connection for everything: on a router that lets each
+  # pass in once, a second session would not get in, and a ROS 2 node on
+  # this session is part of this node (the same Zenoh ID).
+  #
+  # The session stays Asterism's: its close does nothing (it warns once);
+  # Asterism.close closes it, and with it everything declared on it (the
+  # application's subscribers, publishers, ROS 2 nodes). After a lost
+  # connection and a new Asterism.connect, take Asterism.session again and
+  # declare those again. Polling it (session.poll, node.poll) is fine:
+  # Asterism.poll polls it too, each entity keeps what came for it.
+  # Raises Disconnected when not connected (as the calls do).
+  def self.session
+    raise Disconnected, (@lost || "not connected") unless connected?
+    @session
+  end
+
+  # @api private (the name before 0.6.0; Asterism.session is the same)
   def self.session!
     raise Disconnected, (@lost || "not connected") unless @session
     @session
+  end
+
+  # Whether Asterism itself is closing s (SharedSession#close).
+  # @api private
+  def self.releasing?(s)
+    !@releasing.nil? && @releasing.equal?(s)
+  end
+
+  # Extended onto the session of Asterism.connect: the session belongs to
+  # Asterism, so a close from anyone else (the application, a library that
+  # was handed Asterism.session) does nothing. Asterism.close and a lost
+  # connection close it.
+  module SharedSession
+    def close
+      return super if ::Asterism.releasing?(self)
+      ::Asterism.warn_once(self, "asterism: Asterism.session belongs to Asterism; its close is ignored " \
+                                 "(Asterism.close closes it)")
+      nil
+    end
   end
 
   # The connection went away: closed, but the next Asterism.poll still tells
@@ -361,6 +412,10 @@ module Asterism
   # Call from the application's update loop. Answers the calls that came
   # in, follows who is alive and calls the on_join / on_leave blocks. false
   # once the connection is closed.
+  #
+  # Cheap when nothing came: each queue is looked at by its count first,
+  # and the list of nodes (and the comparison behind on_join / on_leave)
+  # is made again only after a liveliness change.
   def self.poll
     ok = @session ? pump : false
     tell_nodes
@@ -408,14 +463,43 @@ module Asterism
   def self.tell_nodes
     known = @known
     return if known.nil?
-    now = @session ? nodes : []
-    now.shift if @session # this node
+    # Nothing came on the liveliness watch since the last comparison (and
+    # the connection is neither new nor lost): nothing can have changed.
+    return unless @nodes_changed
+    @nodes_changed = false
+    now = []
+    now_set = {}
+    if @session
+      list = node_list
+      i = 1 # list[0] is this node
+      while i < list.size
+        n = list[i]
+        now << n
+        now_set[n] = true
+        i += 1
+      end
+    end
+    known_set = @known_set || {}
     joined = []
     left = []
-    now.each { |n| joined << n unless known.include?(n) }
-    known.each { |n| left << n unless now.include?(n) }
+    i = 0
+    while i < now.size
+      joined << now[i] unless known_set[now[i]]
+      i += 1
+    end
+    i = 0
+    while i < known.size
+      left << known[i] unless now_set[known[i]]
+      i += 1
+    end
     # After a loss, everything has been told: nothing more to compare.
-    @known = @session ? now : nil
+    if @session
+      @known = now
+      @known_set = now_set
+    else
+      @known = nil
+      @known_set = nil
+    end
     tell_each("on_join", @on_join, joined)
     tell_each("on_leave", @on_leave, left)
   end
@@ -493,9 +577,10 @@ module Asterism
   # @api private
   def self.follow_liveliness
     w = @watch
-    return unless w
+    return unless w && w.pending > 0
     # Array forms instead of blocks called from C (see Future#collect).
     events = w.each_pending
+    @nodes_changed = true if events.size > 0
     if events.size > 0 && w.dropped > 0
       warn_once(w, "asterism: #{w.dropped} liveliness changes dropped (more than #{watch_depth} at once); " \
                    "Asterism.each and Asterism.nodes may miss some objects")
@@ -515,24 +600,49 @@ module Asterism
         end
       elsif parts.size == 3
         if alive
-          @alive[rest] = true
+          @alive[rest] = parts[0]
         else
           @alive.delete(rest)
         end
       end
     end
+    @node_list = nil
   end
 
   # The node IDs alive now, this one first.
   def self.nodes
     return [] unless @session
+    node_list.dup
+  end
+
+  # The list behind nodes, made again only after a liveliness change (the
+  # caller must not change it). @api private
+  def self.node_list
+    list = @node_list
+    return list if list
     list = [@node]
-    @nodes.each_key { |n| list << n unless list.include?(n) }
-    @alive.each_key do |path|
-      n = path.split("/")[0]
-      list << n unless list.include?(n)
+    seen = { @node => true }
+    names = @nodes.keys
+    i = 0
+    while i < names.size
+      n = names[i]
+      unless seen[n]
+        seen[n] = true
+        list << n
+      end
+      i += 1
     end
-    list
+    owners = @alive.values
+    i = 0
+    while i < owners.size
+      n = owners[i]
+      unless seen[n]
+        seen[n] = true
+        list << n
+      end
+      i += 1
+    end
+    @node_list = list
   end
 
   # The exposed objects alive now whose <node>/<app>/<object> matches the
@@ -543,11 +653,15 @@ module Asterism
   def self.each(pattern = "**")
     paths = []
     if @session
+      seen = {}
       @objects.each_key do |name|
         path = "#{@node}/#{@app}/#{name}"
-        paths << path if glob?(pattern, path)
+        if glob?(pattern, path)
+          paths << path
+          seen[path] = true
+        end
       end
-      @alive.each_key { |path| paths << path if glob?(pattern, path) && !paths.include?(path) }
+      @alive.each_key { |path| paths << path if !seen[path] && glob?(pattern, path) }
     end
     proxies = paths.map { |path| self[path] }
     return proxies unless block_given?
@@ -619,7 +733,7 @@ module Asterism
   # @api private
   def self.answer_calls
     qa = @queryable
-    return unless qa
+    return unless qa && qa.pending > 0
     # Without a block, so that a handler that waits (and so polls) does not
     # re-enter the queryable's iteration.
     queries = qa.each_pending

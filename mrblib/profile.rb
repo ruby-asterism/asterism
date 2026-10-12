@@ -342,7 +342,7 @@ module Asterism
   # @api private
   def self.answer_profile
     qa = @profile_queryable
-    return unless qa
+    return unless qa && qa.pending > 0
     queries = qa.each_pending
     i = 0
     while i < queries.size

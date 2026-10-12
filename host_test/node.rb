@@ -10,7 +10,7 @@ port = ARGV[0]
 icon = File.open(ARGV[1], "r") { |f| f.read }
 Asterism.profile(name: "mruby node", host: "host_test", icon: icon)
 Asterism.connect(nil, node: "mnode", app: "t", mode: :peer, listen: "tcp/127.0.0.1:#{port}")
-s = Asterism.instance_variable_get(:@session)
+s = Asterism.session
 sub = s.subscribe("test/**")
 puts "ready"
 stop = false

@@ -158,11 +158,29 @@ module Asterism
     class Connection
       attr_reader :session, :runner
 
-      def initialize(session, interval: Runner::DEFAULT_INTERVAL)
+      # runner: an existing Runner to receive on instead of a new one
+      # (Asterism::Net#session gives the object layer's: the session and
+      # its receiving thread are Asterism's, see shared?). @api private
+      def initialize(session, interval: Runner::DEFAULT_INTERVAL, runner: nil)
         @session = session
-        @runner = Runner.new(session, interval: interval, name: "zenoh")
-        # The first task: false (the runner stops) once the session closed.
-        @runner.add { @session.poll ? 0 : false }
+        if runner
+          @runner = runner
+          @shared = true
+        else
+          @runner = Runner.new(session, interval: interval, name: "zenoh")
+          # The first task: false (the runner stops) once the session closed.
+          @runner.add { @session.poll ? 0 : false }
+          @shared = false
+        end
+      end
+
+      # True for the Connection of Asterism's own session (net.session):
+      # its close does nothing, start / stop / run are the object layer's
+      # receiving thread (net.start / net.stop / net.run), and
+      # Asterism.close (or the end of the connect block) closes the session
+      # with everything declared on it.
+      def shared?
+        @shared
       end
 
       # opts: those of Session#put (attachment:, encoding:, priority:,
@@ -370,15 +388,23 @@ module Asterism
       def declare_keyexpr(key) = @session.declare_keyexpr(key)
 
       # Stops receiving and closes the session (with everything declared on
-      # it). Idempotent.
+      # it). Idempotent. On a shared? Connection (net.session) it does
+      # nothing: close what you declared on it (subscriptions, publishers,
+      # ROS nodes) one by one, or let Asterism.close close them.
       def close
+        if @shared
+          ::Asterism.warn_once(self, "asterism: net.session belongs to Asterism; its close is ignored " \
+                                     "(net.close closes it)")
+          return nil
+        end
         @runner.close
         @session.close
         nil
       end
 
       def inspect
-        "#<Asterism::Zenoh::Connection #{closed? ? 'closed' : zid}#{running? ? ' running' : ''}>"
+        "#<Asterism::Zenoh::Connection #{closed? ? 'closed' : zid}#{@shared ? ' shared' : ''}" \
+          "#{running? ? ' running' : ''}>"
       end
 
       private

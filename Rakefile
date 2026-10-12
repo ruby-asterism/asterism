@@ -12,12 +12,15 @@
 #                      blocks, receiving threads, Enumerators; needs
 #                      asterism-zenoh too
 #   rake test:mruby    the shared layer on mruby (MRB_UTF8_STRING, as on the
-#                      boards): node profiles between two mruby processes.
+#                      boards): node profiles between two mruby processes,
+#                      Asterism.session and on_join / on_leave in one.
 #                      Builds mruby with picoruby-asterism-zenoh, whose
 #                      checkout (../picoruby-asterism-zenoh or
 #                      PICORUBY_ASTERISM_ZENOH_DIR) provides the pinned mruby
 #                      and zenoh-pico (its `rake mruby:fetch zenoh:fetch`).
 #                      Not part of `rake` (it builds a C toolchain's worth)
+#   rake bench:poll    the time and allocations of one Asterism.poll by the
+#                      number of nodes and objects (CRuby; prints a table)
 #   rake gem           build pkg/asterism-<version>.gem (publishing is a
 #                      separate, manual step)
 #   rake types:check   compare the type hashes with a ROS 2 Jazzy image
@@ -61,6 +64,7 @@ namespace :test do
     incs += ["-I", lib] if lib
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_asterism.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_profile.rb")
+    sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_session.rb")
   end
 
   desc "The Ruby-like API of CRuby (blocks, threads, Enumerators) for Zenoh, objects and ROS 2 (needs asterism-zenoh)"
@@ -101,7 +105,7 @@ namespace :mruby do
 end
 
 namespace :test do
-  desc "The shared layer on mruby: node profiles between two mruby processes (builds mruby)"
+  desc "The shared layer on mruby: profiles, Asterism.session, on_join / on_leave (builds mruby)"
   task mruby: "mruby:build" do
     require "socket"
     require "timeout"
@@ -125,6 +129,34 @@ namespace :test do
       end
       node.close
     end
+    port = TCPServer.new("127.0.0.1", 0).then { |s| s.addr[1].tap { s.close } }
+    msgs = File.join(ROOT, "data", "msgs")
+    peer = IO.popen([bin, "-r", stub, File.join(ROOT, "host_test", "peer.rb"), port.to_s, msgs], err: [:child, :out])
+    begin
+      line = Timeout.timeout(10) { peer.gets }
+      abort "host_test/peer.rb did not start: #{line.inspect}" unless line&.start_with?("ready")
+      ok = system(bin, "-r", stub, File.join(ROOT, "host_test", "test_session.rb"), port.to_s, msgs)
+      abort "test:mruby failed (session)" unless ok
+      rest = Timeout.timeout(10) { peer.read }
+      puts "peer: #{rest}" unless rest.to_s.empty?
+    ensure
+      begin
+        Process.kill("TERM", peer.pid)
+      rescue Errno::ESRCH
+        nil
+      end
+      peer.close
+    end
+  end
+end
+
+namespace :bench do
+  desc "How long one Asterism.poll takes, by the nodes and objects alive (CRuby; prints a table)"
+  task :poll do
+    lib = asterism_zenoh_lib
+    incs = ["-I", File.join(ROOT, "lib")]
+    incs += ["-I", lib] if lib
+    sh RbConfig.ruby, *incs, File.join(ROOT, "test/bench_poll.rb")
   end
 end
 

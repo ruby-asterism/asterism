@@ -74,7 +74,7 @@ check(other && other["kind"] == "picoruby" && other["host"] == "host_test" && ot
 check(other && other["icon"] == ICON && other["icon_hash"] == info[2], "the icon came whole")
 small = Asterism.profile_of("mnode", icon: false, timeout: 1.5)
 check(small && small["icon"].nil? && small["icon_hash"] == info[2], "icon: false leaves the bytes out")
-s = Asterism.instance_variable_get(:@session)
+s = Asterism.session
 s.put("test/name", "renamed")
 t = Time.now
 renamed = nil

@@ -21,7 +21,8 @@ MRuby::Build.new("host") do |conf|
   conf.gem core: "mruby-exit"
   conf.gem core: "mruby-io"
   conf.gem core: "mruby-enum-ext"
-  conf.gem core: "mruby-metaprog" # instance_variable_get: the tests reach the session
+  conf.gem core: "mruby-metaprog" # public_send and the rest, as on the boards
+  conf.gem core: "mruby-eval"     # Asterism::ROS.require_type evaluates the type files
   conf.gem ENV.fetch("PICORUBY_ASTERISM_ZENOH_DIR")
   conf.gem File.expand_path("..", __dir__)
 end

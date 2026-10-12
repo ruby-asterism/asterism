@@ -6,6 +6,46 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
+## 0.6.0
+
+One connection for everything and a lighter `Asterism.poll`; every 0.5.x
+call works as before. Needs asterism-zenoh / picoruby-asterism-zenoh 0.4.0
+(unchanged).
+
+Added
+
+- `Asterism.session` (README "One connection"): the Zenoh session of
+  `Asterism.connect` (an `Asterism::Zenoh::Session`), for put, subscribe, a
+  ROS 2 node (`Asterism::ROS::Node.new(Asterism.session, ...)`) and the rest
+  of the Zenoh API on the same connection. `Disconnected` when not
+  connected. The session stays Asterism's: its `close` does nothing (it
+  warns once); `Asterism.close` and a lost connection close it, with
+  everything declared on it. A router that lets a one-time password in
+  once now takes such an application, and its ROS 2 node has the node's
+  Zenoh ID (a console draws it inside the node).
+- The CRuby API: `net.session`, the same session as a `Zenoh::Connection`
+  on the `Net`'s receiving thread (`shared?`; its `close` does nothing);
+  `Asterism::ROS::Connection.new(net.session)` makes ROS 2 nodes on it, and
+  its `close` withdraws only its nodes. `Zenoh::Connection#shared?`.
+  `ROS::Node#close` on a `ROS::Connection` also stops polling the node.
+- `rake bench:poll` (`test/bench_poll.rb`): the time and the allocations
+  of one `Asterism.poll` by the number of nodes and objects.
+- Tests: `test/test_session.rb`, `test/test_api_session.rb`, and on mruby
+  `host_test/test_session.rb` with `host_test/peer.rb` (the mruby test
+  build adds mruby-eval for the ROS 2 type files).
+
+Changed
+
+- `Asterism.poll` does less when nothing came: each queue (calls, profile
+  queries, liveliness) is read only when its count is not zero, and the
+  list of nodes and the comparison behind `on_join` / `on_leave` are made
+  again only after a liveliness change, with Hashes instead of `include?`.
+  The behaviour is the same (the order and number of the `on_join` /
+  `on_leave` calls, the order of `Asterism.nodes`). With 4 other nodes and
+  5 objects, a poll in which nothing changed: CRuby 3.2 us and 49
+  allocations -> 0.6 us and 7; mruby (host) 14-17 us -> 2.2 us.
+  `Asterism.each` drops duplicates with a Hash.
+
 ## 0.5.0
 
 Node profiles; every 0.4.x call works as before. Needs asterism-zenoh /

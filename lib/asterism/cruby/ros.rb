@@ -95,12 +95,15 @@ module Asterism
         self
       end
 
-      # Stops spinning, withdraws the nodes and closes the session.
+      # Stops spinning, withdraws the nodes and closes the session. On
+      # Asterism's session (ROS::Connection.new(net.session)) it only
+      # withdraws the nodes: the receiving thread and the session stay the
+      # object layer's.
       def close
-        runner.stop
+        runner.stop unless @zenoh.shared?
         @nodes.each { |n| n.close rescue ::Asterism::Zenoh::Error }
         @nodes = []
-        @zenoh.close
+        @zenoh.close unless @zenoh.shared?
         nil
       end
 
@@ -142,8 +145,17 @@ module Asterism
 
       def asterism_runner = @asterism_runner
 
+      # Withdraws the node and stops polling it.
+      def close
+        @asterism_runner.lock.synchronize do
+          super
+          @asterism_runner.remove(@asterism_task) if @asterism_task
+          @asterism_task = nil
+        end
+      end
+
       # The calls that change the node take the connection's lock.
-      %i[subscription client close every cancel_timer].each do |m|
+      %i[subscription client every cancel_timer].each do |m|
         define_method(m) do |*args, **kw, &blk|
           @asterism_runner.lock.synchronize { super(*args, **kw, &blk) }
         end
