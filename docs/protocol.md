@@ -587,6 +587,10 @@ rake test:protocol_mruby    # driver against mruby (builds mruby like test:mruby
 ASTERISM_TEST_ROUTER=tcp/127.0.0.1:7447 rake test:protocol   # through a router
 ```
 
+Through a router, use one that no other Asterism node is connected to:
+the sample "profile not under *" asks `asterism/*/@profile`, and every
+node there answers it.
+
 ### 10.2 Typed values
 
 JSON cannot tell an int from a float or a str from a bin, so values are
