@@ -50,8 +50,8 @@ together. It adds who called (`Asterism.current_call`, `expose(...,
 caller: :from)`; [Who called](#who-called)), the kind of a remote error
 (`RemoteError#remote_kind`) and `proxy.asterism_call`.
 
-How Asterism compares with dRuby and Rinda (what it keeps, what it gives
-up, and why) is in [docs/comparison.md](docs/comparison.md).
+A mechanism-by-mechanism comparison with dRuby and Rinda is in
+[docs/comparison.md](docs/comparison.md).
 
 ## Which API?
 
