@@ -6,6 +6,22 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
+## Unreleased
+
+Documentation and tests only; the wire protocol and the API are unchanged.
+
+- `docs/protocol.md`: the wire protocol as 0.6.0 speaks it (keys, call and
+  reply payloads, errors, meta, liveliness, profiles, the Zenoh features
+  used), checked against what CRuby, mruby and the Family mruby firmware
+  put on the network. `docs/protocol_review.md`: the Ruby-shaped parts and
+  proposals for a protocol 1 (nothing decided).
+- Conformance tests: `test/protocol/samples.json` (language-neutral
+  samples), a driver that checks an implementation over Zenoh, and a node
+  that runs on CRuby and mruby. `rake test:protocol` (part of `rake`),
+  `rake test:protocol_mruby`.
+- `host_test/msgpack.rb` (the mruby test's stand-in MessagePack) reads
+  every format but ext, and 64-bit negative integers without overflowing.
+
 ## 0.6.0
 
 One connection for everything and a lighter `Asterism.poll`; every 0.5.x

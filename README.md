@@ -14,6 +14,7 @@ repository holds the pure Ruby layers, written once for every Ruby:
 | `data/msgs/` | ROS 2 message types generated from ROS 2 Jazzy's definitions (Apache-2.0; tf2_msgs BSD-3-Clause; see NOTICE) |
 | `tools/` | The type generator `asterism_msggen.rb`, the Jazzy definitions it reads, `ros2_types.rb` (refreshes them from a ROS 2 image) |
 | `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_profile.rb` (node profiles), `test_session.rb` (`Asterism.session`, `on_join` / `on_leave`), `test_api_*.rb` (the CRuby API), `bench_poll.rb` (`rake bench:poll`) |
+| `test/protocol/` | the conformance samples of the wire protocol (`samples.json`), the driver that checks an implementation against them, and the Ruby node it checks (`rake test:protocol`, `rake test:protocol_mruby`; [docs/protocol.md](docs/protocol.md)) |
 | `host_test/` | `rake test:mruby`: the shared layer on mruby (profiles between two mruby processes; `Asterism.session`, `on_join` / `on_leave` and the time of a poll against `peer.rb`) |
 | `examples/` | CRuby: `node.rb` (objects with a board), `node_polled.rb` (the same with the portable API of the boards), `ros2_talker.rb` (topics, a timer, services with ROS 2), `ros2_rover.rb` (drive a ROS 2 robot: `/cmd_vel`, `/odom`, `/imu`), `zenoh.rb` (plain Zenoh), `mujoco/` (MuJoCo run from CRuby through Fiddle, its robot exposed as Asterism objects; see its README) |
 
@@ -120,6 +121,8 @@ rake test:objects     # objects and Asterism::ROS between CRuby sessions over a 
 rake test:api         # the CRuby API (blocks, receiving threads, Enumerators)
 ASTERISM_TEST_ROUTER=tcp/127.0.0.1:7447 rake test:objects test:api   # the same through a zenohd router
 rake test:mruby       # the shared layer on mruby (builds mruby; not part of `rake`)
+rake test:protocol    # the wire protocol's conformance samples and driver against CRuby (docs/protocol.md)
+rake test:protocol_mruby   # the same driver against mruby (builds mruby; not part of `rake`)
 rake bench:poll       # the time and allocations of one Asterism.poll by nodes and objects (prints a table)
 ```
 
@@ -666,6 +669,11 @@ caller gets `RemoteError` (`Asterism::EncodeError`). Nesting is limited to
 16 levels.
 
 ## Keys and encoding
+
+The full description, for implementations in other languages, is
+[docs/protocol.md](docs/protocol.md) (with the conformance tests); the
+Ruby-shaped parts and proposals for changing them are in
+[docs/protocol_review.md](docs/protocol_review.md).
 
 | Key | Zenoh | Payload |
 |---|---|---|

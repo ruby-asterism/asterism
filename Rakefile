@@ -19,6 +19,12 @@
 #                      PICORUBY_ASTERISM_ZENOH_DIR) provides the pinned mruby
 #                      and zenoh-pico (its `rake mruby:fetch zenoh:fetch`).
 #                      Not part of `rake` (it builds a C toolchain's worth)
+#   rake test:protocol the conformance samples (test/protocol/samples.json,
+#                      docs/protocol.md 7) and the driver against a CRuby
+#                      node; needs asterism-zenoh
+#   rake test:protocol_mruby  the same driver against an mruby node (builds
+#                      mruby as test:mruby does; needs asterism-zenoh too).
+#                      Not part of `rake`
 #   rake bench:poll    the time and allocations of one Asterism.poll by the
 #                      number of nodes and objects (CRuby; prints a table)
 #   rake gem           build pkg/asterism-<version>.gem (publishing is a
@@ -150,6 +156,39 @@ namespace :test do
   end
 end
 
+# The conformance driver (test/protocol/driver.rb, CRuby) against the node
+# command given (test/protocol/node.rb on CRuby or mruby).
+def protocol_driver(name, node_cmd)
+  lib = asterism_zenoh_lib
+  unless lib || asterism_zenoh_gem?
+    abort "asterism-zenoh not found: build it next to this repository " \
+          "(../asterism-zenoh, rake compile), set ASTERISM_ZENOH_DIR, or install the gem"
+  end
+  incs = ["-I", File.join(ROOT, "lib")]
+  incs += ["-I", lib] if lib
+  router = ENV["ASTERISM_TEST_ROUTER"].to_s
+  opts = router.empty? ? [] : ["--router", router]
+  sh RbConfig.ruby, *incs, File.join(ROOT, "test/protocol/driver.rb"), "--name", name, *opts, "--", *node_cmd.call(incs)
+end
+
+namespace :test do
+  desc "Protocol conformance: the samples, and the driver against a CRuby node (needs asterism-zenoh)"
+  task :protocol do
+    lib = asterism_zenoh_lib
+    incs = ["-I", File.join(ROOT, "lib")]
+    incs += ["-I", lib] if lib
+    sh RbConfig.ruby, *incs, File.join(ROOT, "test/protocol/test_samples.rb")
+    protocol_driver("cruby", ->(i) { [RbConfig.ruby, *i, "-r", "asterism", File.join(ROOT, "test/protocol/node.rb")] })
+  end
+
+  desc "Protocol conformance: the driver against an mruby node (builds mruby; needs asterism-zenoh)"
+  task protocol_mruby: "mruby:build" do
+    bin = File.join(MRUBY_BUILD_DIR, "host", "bin", "mruby")
+    stub = File.join(ROOT, "host_test", "msgpack.rb")
+    protocol_driver("mruby", ->(_) { [bin, "-r", stub, File.join(ROOT, "test/protocol/node.rb")] })
+  end
+end
+
 namespace :bench do
   desc "How long one Asterism.poll takes, by the nodes and objects alive (CRuby; prints a table)"
   task :poll do
@@ -161,7 +200,7 @@ namespace :bench do
 end
 
 desc "Run the test suites"
-task test: ["test:msgs", "test:objects", "test:api"]
+task test: ["test:msgs", "test:objects", "test:api", "test:protocol"]
 
 def ros2_image!
   img = ENV["ASTERISM_ROS2_IMAGE"].to_s

@@ -1,8 +1,10 @@
 # CI for asterism.
 #
-# test:    test:msgs (no Zenoh), then test:objects and test:api against
-#          asterism-zenoh built from the main branch of its repository
-#          (checked out next to this one, `rake compile`, ASTERISM_ZENOH_DIR).
+# test:    test:msgs (no Zenoh), then test:objects, test:api and
+#          test:protocol (the conformance samples and driver against a CRuby
+#          node) against asterism-zenoh built from the main branch of its
+#          repository (checked out next to this one, `rake compile`,
+#          ASTERISM_ZENOH_DIR).
 # install: `rake gem` in both repositories, `gem install --local` of
 #          asterism-zenoh then asterism (msgpack, a registry dependency, is
 #          installed first), then test/installed_check.rb from outside the
@@ -10,7 +12,9 @@
 #
 # mruby:   rake test:mruby: mruby (pinned by picoruby-asterism-zenoh) built
 #          with picoruby-asterism-zenoh and this gem, the profile checks and
-#          profiles between two mruby processes.
+#          profiles between two mruby processes; then test:protocol_mruby,
+#          the conformance driver (CRuby, asterism-zenoh) against an mruby
+#          node.
 #
 # Runners: ubuntu-latest with Ruby 3.2 / 3.3 / 3.4 / 4.0, and one macOS leg
 # (macos-latest, arm64). The other CPUs and macOS on Intel are covered by
@@ -76,12 +80,18 @@ jobs:
         timeout-minutes: 10
         env:
           ASTERISM_ZENOH_DIR: ${{ github.workspace }}/asterism-zenoh
+      - name: rake test:protocol
+        working-directory: asterism
+        run: rake test:protocol
+        timeout-minutes: 10
+        env:
+          ASTERISM_ZENOH_DIR: ${{ github.workspace }}/asterism-zenoh
       # String literals may become frozen by default in a future Ruby:
       # run the tests once more with them frozen.
       - name: tests with frozen string literals
         if: matrix.ruby == '4.0'
         working-directory: asterism
-        run: rake test:msgs test:objects test:api
+        run: rake test:msgs test:objects test:api test:protocol
         timeout-minutes: 15
         env:
           ASTERISM_ZENOH_DIR: ${{ github.workspace }}/asterism-zenoh
@@ -144,3 +154,19 @@ jobs:
         working-directory: asterism
         run: rake test:mruby
         timeout-minutes: 15
+      - uses: actions/checkout@v4
+        with:
+          repository: ruby-asterism/asterism-zenoh
+          ref: ${{ env.ASTERISM_ZENOH_REF }}
+          path: asterism-zenoh
+      - name: msgpack
+        run: gem install --no-document msgpack
+      - name: asterism-zenoh (fetch zenoh-c, compile)
+        working-directory: asterism-zenoh
+        run: rake compile
+      - name: rake test:protocol_mruby
+        working-directory: asterism
+        run: rake test:protocol_mruby
+        timeout-minutes: 10
+        env:
+          ASTERISM_ZENOH_DIR: ${{ github.workspace }}/asterism-zenoh

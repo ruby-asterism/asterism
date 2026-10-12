@@ -1,7 +1,10 @@
 # A small MessagePack for the mruby test only (rake test:mruby): the
 # pack / unpack API of the msgpack gem for the values Asterism sends (nil,
-# true, false, Integer, Float, String as str, Array, Hash). The boards use a
-# MessagePack gem of their own; this stands in for it here.
+# true, false, Integer, Float, String as str, Array, Hash). It reads every
+# format but ext (and a uint64 above int64), so the conformance samples
+# (test/protocol) can be sent to it in any of their forms; it writes the
+# longer forms (array16, map16, int64), which are valid too. The boards use
+# a MessagePack gem of their own; this stands in for it here.
 module MessagePack
   def self.pack(v)
     out = ""
@@ -82,19 +85,30 @@ module MessagePack
     when 0xcc then [u(b, pos, 1), pos + 1]
     when 0xcd then [u(b, pos, 2), pos + 2]
     when 0xce then [u(b, pos, 4), pos + 4]
-    when 0xcf then [u(b, pos, 8), pos + 8]
+    # 64 bits in two halves: mruby's Integer is int64 (no Bignum), so the
+    # sum must not pass through 2**63.
+    when 0xcf
+      raise ArgumentError, "msgpack (test): uint64 above int64" if b.getbyte(pos) >= 0x80
+      [u(b, pos, 4) * 4_294_967_296 + u(b, pos + 4, 4), pos + 8]
     when 0xd0 then x = u(b, pos, 1); [x >= 128 ? x - 256 : x, pos + 1]
     when 0xd1 then x = u(b, pos, 2); [x >= 32768 ? x - 65536 : x, pos + 2]
     when 0xd2 then x = u(b, pos, 4); [x >= 2**31 ? x - 2**32 : x, pos + 4]
-    when 0xd3 then x = u(b, pos, 8); [x >= 2**63 ? x - 2**64 : x, pos + 8]
+    when 0xd3
+      hi = u(b, pos, 4)
+      hi -= 4_294_967_296 if hi >= 2_147_483_648
+      [hi * 4_294_967_296 + u(b, pos + 4, 4), pos + 8]
+    when 0xca then [b.byteslice(pos, 4).unpack("g")[0], pos + 4]
     when 0xcb then [b.byteslice(pos, 8).unpack("G")[0], pos + 8]
     when 0xd9 then str(b, pos + 1, u(b, pos, 1))
     when 0xda then str(b, pos + 2, u(b, pos, 2))
     when 0xdb then str(b, pos + 4, u(b, pos, 4))
     when 0xc4 then str(b, pos + 1, u(b, pos, 1))
     when 0xc5 then str(b, pos + 2, u(b, pos, 2))
+    when 0xc6 then str(b, pos + 4, u(b, pos, 4))
     when 0xdc then seq(b, pos + 2, u(b, pos, 2), false)
+    when 0xdd then seq(b, pos + 4, u(b, pos, 4), false)
     when 0xde then seq(b, pos + 2, u(b, pos, 2), true)
+    when 0xdf then seq(b, pos + 4, u(b, pos, 4), true)
     else raise ArgumentError, "msgpack (test): type 0x#{c.to_s(16)} not handled"
     end
   end

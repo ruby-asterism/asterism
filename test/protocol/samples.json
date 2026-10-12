@@ -1,0 +1,2505 @@
+{
+  "format": "asterism-protocol-samples",
+  "version": 1,
+  "describes": "the Asterism wire protocol as asterism 0.6.0 speaks it (docs/protocol.md)",
+  "names": {
+    "iut": "iut",
+    "app": "conf",
+    "driver": "drv"
+  },
+  "icon": {
+    "hex": "89504e470d0a1a0a0000000d4948445200000020000000200806000000737a7af4000000e34944415478daed96bd0dc230104633825b1a4a4413e18201324236c035cb308247704b83bc0092d7a0bb11c0ee281c7c7f4648e4a4577fafb8cfe76158679d5f9fc7f9643229f3ac713f8e4ba48cd110884be10d81429486fb4fe1088182e786bb563852a0e0a8e113269c205098b0e136031d042063451b2f146837a3b5f1356e873d89ebb88be2c57be7b2dd5071e2ea09043c7611430781a0f6fc320452c6706e00280800399cf22620c2adf41ecc028159eb243b8680d3fe17788280eff539090881f0d5df91b86e4c09a80840f7f05a3dd5eac6ada76add38f554afdb3a7f372fc2f15417ff524d5a0000000049454e44ae426082",
+    "icon_hash": "2a8c0626"
+  },
+  "iut": {
+    "profile": {
+      "map": [
+        [
+          "name",
+          "iut"
+        ]
+      ]
+    },
+    "objects": [
+      {
+        "name": "subject",
+        "methods": [
+          [
+            "echo",
+            {
+              "int": "1"
+            }
+          ],
+          [
+            "kw",
+            {
+              "int": "1"
+            }
+          ],
+          [
+            "add",
+            {
+              "int": "2"
+            }
+          ],
+          [
+            "boom",
+            {
+              "int": "0"
+            }
+          ],
+          [
+            "any",
+            {
+              "int": "-1"
+            }
+          ],
+          [
+            "ok?",
+            {
+              "int": "0"
+            }
+          ],
+          [
+            "unsendable",
+            {
+              "int": "0"
+            }
+          ]
+        ]
+      },
+      {
+        "name": "other",
+        "methods": [
+          [
+            "ping",
+            {
+              "int": "0"
+            }
+          ]
+        ]
+      }
+    ]
+  },
+  "values": [
+    {
+      "id": "nil",
+      "value": null,
+      "encodings": [
+        "c0"
+      ],
+      "portable": true
+    },
+    {
+      "id": "true",
+      "value": true,
+      "encodings": [
+        "c3"
+      ],
+      "portable": true
+    },
+    {
+      "id": "false",
+      "value": false,
+      "encodings": [
+        "c2"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int 0",
+      "value": {
+        "int": "0"
+      },
+      "encodings": [
+        "00",
+        "cc00",
+        "d000"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int 1",
+      "value": {
+        "int": "1"
+      },
+      "encodings": [
+        "01",
+        "cc01",
+        "cd0001",
+        "ce00000001",
+        "cf0000000000000001",
+        "d001",
+        "d10001",
+        "d200000001",
+        "d30000000000000001"
+      ],
+      "note": "every integer form of 1 is the same value",
+      "portable": true
+    },
+    {
+      "id": "int 127",
+      "value": {
+        "int": "127"
+      },
+      "encodings": [
+        "7f"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int 128",
+      "value": {
+        "int": "128"
+      },
+      "encodings": [
+        "cc80"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int 255",
+      "value": {
+        "int": "255"
+      },
+      "encodings": [
+        "ccff"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int 256",
+      "value": {
+        "int": "256"
+      },
+      "encodings": [
+        "cd0100"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int 65535",
+      "value": {
+        "int": "65535"
+      },
+      "encodings": [
+        "cdffff"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int 65536",
+      "value": {
+        "int": "65536"
+      },
+      "encodings": [
+        "ce00010000"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int 2^31",
+      "value": {
+        "int": "2147483648"
+      },
+      "encodings": [
+        "ce80000000"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int 2^32",
+      "value": {
+        "int": "4294967296"
+      },
+      "encodings": [
+        "cf0000000100000000"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int 2^63-1",
+      "value": {
+        "int": "9223372036854775807"
+      },
+      "encodings": [
+        "cf7fffffffffffffff"
+      ],
+      "note": "the largest integer every implementation carries",
+      "portable": true
+    },
+    {
+      "id": "int -1",
+      "value": {
+        "int": "-1"
+      },
+      "encodings": [
+        "ff",
+        "d0ff",
+        "d3ffffffffffffffff"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int -32",
+      "value": {
+        "int": "-32"
+      },
+      "encodings": [
+        "e0"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int -33",
+      "value": {
+        "int": "-33"
+      },
+      "encodings": [
+        "d0df"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int -128",
+      "value": {
+        "int": "-128"
+      },
+      "encodings": [
+        "d080"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int -129",
+      "value": {
+        "int": "-129"
+      },
+      "encodings": [
+        "d1ff7f"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int -32768",
+      "value": {
+        "int": "-32768"
+      },
+      "encodings": [
+        "d18000"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int -32769",
+      "value": {
+        "int": "-32769"
+      },
+      "encodings": [
+        "d2ffff7fff"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int -2^31",
+      "value": {
+        "int": "-2147483648"
+      },
+      "encodings": [
+        "d280000000"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int -2^31-1",
+      "value": {
+        "int": "-2147483649"
+      },
+      "encodings": [
+        "d3ffffffff7fffffff"
+      ],
+      "portable": true
+    },
+    {
+      "id": "int -2^63",
+      "value": {
+        "int": "-9223372036854775808"
+      },
+      "encodings": [
+        "d38000000000000000"
+      ],
+      "note": "the smallest integer every implementation carries",
+      "portable": true
+    },
+    {
+      "id": "float 1.5",
+      "value": {
+        "float": 1.5
+      },
+      "encodings": [
+        "cb3ff8000000000000",
+        "ca3fc00000"
+      ],
+      "note": "float32 is read as a float (answered as float64)",
+      "portable": true
+    },
+    {
+      "id": "float 1.0",
+      "value": {
+        "float": 1.0
+      },
+      "encodings": [
+        "cb3ff0000000000000"
+      ],
+      "note": "a float with an integral value stays a float",
+      "portable": true
+    },
+    {
+      "id": "float 0.0",
+      "value": {
+        "float": 0.0
+      },
+      "encodings": [
+        "cb0000000000000000"
+      ],
+      "portable": true
+    },
+    {
+      "id": "float -2.5e-300",
+      "value": {
+        "float": -2.5e-300
+      },
+      "encodings": [
+        "cb81bac9a7b3b7302f"
+      ],
+      "portable": true
+    },
+    {
+      "id": "float 1e300",
+      "value": {
+        "float": 1e+300
+      },
+      "encodings": [
+        "cb7e37e43c8800759c"
+      ],
+      "portable": true
+    },
+    {
+      "id": "float inf",
+      "value": {
+        "float": "inf"
+      },
+      "encodings": [
+        "cb7ff0000000000000"
+      ],
+      "portable": true
+    },
+    {
+      "id": "str empty",
+      "value": "",
+      "encodings": [
+        "a0",
+        "d900",
+        "da0000",
+        "db00000000"
+      ],
+      "portable": true
+    },
+    {
+      "id": "str a",
+      "value": "a",
+      "encodings": [
+        "a161"
+      ],
+      "portable": true
+    },
+    {
+      "id": "str 31 bytes",
+      "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "encodings": [
+        "bf78787878787878787878787878787878787878787878787878787878787878"
+      ],
+      "portable": true
+    },
+    {
+      "id": "str 32 bytes",
+      "value": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+      "encodings": [
+        "da00207979797979797979797979797979797979797979797979797979797979797979",
+        "d9207979797979797979797979797979797979797979797979797979797979797979",
+        "db000000207979797979797979797979797979797979797979797979797979797979797979"
+      ],
+      "note": "CRuby writes str16 (compatibility mode), the boards str8; both are read",
+      "portable": true
+    },
+    {
+      "id": "str 255 bytes",
+      "value": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+      "encodings": [
+        "da00ff7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+        "d9ff7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a"
+      ],
+      "portable": true
+    },
+    {
+      "id": "str 256 bytes",
+      "value": "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+      "encodings": [
+        "da010077777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777"
+      ],
+      "portable": true
+    },
+    {
+      "id": "str utf-8",
+      "value": "日本語 é",
+      "encodings": [
+        "ace697a5e69cace8aa9e20c3a9"
+      ],
+      "portable": true
+    },
+    {
+      "id": "str with NUL",
+      "value": "a\u0000b",
+      "encodings": [
+        "a3610062"
+      ],
+      "portable": true
+    },
+    {
+      "id": "str not utf-8",
+      "value": {
+        "str_hex": "ff00"
+      },
+      "encodings": [
+        "a2ff00"
+      ],
+      "note": "a str may carry bytes that are not UTF-8; they come back unchanged (binary data travels as str today: Review R-7)",
+      "portable": true
+    },
+    {
+      "id": "array empty",
+      "value": [],
+      "encodings": [
+        "90",
+        "dc0000",
+        "dd00000000"
+      ],
+      "portable": true
+    },
+    {
+      "id": "array 3",
+      "value": [
+        {
+          "int": "1"
+        },
+        {
+          "int": "2"
+        },
+        {
+          "int": "3"
+        }
+      ],
+      "encodings": [
+        "93010203",
+        "dc0003010203"
+      ],
+      "portable": true
+    },
+    {
+      "id": "array 16",
+      "value": [
+        {
+          "int": "1"
+        },
+        {
+          "int": "2"
+        },
+        {
+          "int": "3"
+        },
+        {
+          "int": "4"
+        },
+        {
+          "int": "5"
+        },
+        {
+          "int": "6"
+        },
+        {
+          "int": "7"
+        },
+        {
+          "int": "8"
+        },
+        {
+          "int": "9"
+        },
+        {
+          "int": "10"
+        },
+        {
+          "int": "11"
+        },
+        {
+          "int": "12"
+        },
+        {
+          "int": "13"
+        },
+        {
+          "int": "14"
+        },
+        {
+          "int": "15"
+        },
+        {
+          "int": "16"
+        }
+      ],
+      "encodings": [
+        "dc00100102030405060708090a0b0c0d0e0f10"
+      ],
+      "portable": true
+    },
+    {
+      "id": "array nested",
+      "value": [
+        {
+          "int": "1"
+        },
+        [
+          {
+            "int": "2"
+          },
+          [
+            {
+              "int": "3"
+            },
+            [
+              null
+            ]
+          ]
+        ],
+        "s"
+      ],
+      "encodings": [
+        "93019202920391c0a173"
+      ],
+      "portable": true
+    },
+    {
+      "id": "map empty",
+      "value": {
+        "map": []
+      },
+      "encodings": [
+        "80",
+        "de0000",
+        "df00000000"
+      ],
+      "portable": true
+    },
+    {
+      "id": "map str keys",
+      "value": {
+        "map": [
+          [
+            "a",
+            {
+              "int": "1"
+            }
+          ],
+          [
+            "b",
+            [
+              true
+            ]
+          ]
+        ]
+      },
+      "encodings": [
+        "82a16101a16291c3",
+        "de0002a16101a16291c3"
+      ],
+      "portable": true
+    },
+    {
+      "id": "map int keys",
+      "value": {
+        "map": [
+          [
+            {
+              "int": "1"
+            },
+            "one"
+          ],
+          [
+            {
+              "int": "-2"
+            },
+            "minus two"
+          ]
+        ]
+      },
+      "encodings": [
+        "8201a36f6e65fea96d696e75732074776f"
+      ],
+      "note": "keys are not limited to str (Review R-3)",
+      "portable": true
+    },
+    {
+      "id": "map 16",
+      "value": {
+        "map": [
+          [
+            "k1",
+            {
+              "int": "1"
+            }
+          ],
+          [
+            "k2",
+            {
+              "int": "2"
+            }
+          ],
+          [
+            "k3",
+            {
+              "int": "3"
+            }
+          ],
+          [
+            "k4",
+            {
+              "int": "4"
+            }
+          ],
+          [
+            "k5",
+            {
+              "int": "5"
+            }
+          ],
+          [
+            "k6",
+            {
+              "int": "6"
+            }
+          ],
+          [
+            "k7",
+            {
+              "int": "7"
+            }
+          ],
+          [
+            "k8",
+            {
+              "int": "8"
+            }
+          ],
+          [
+            "k9",
+            {
+              "int": "9"
+            }
+          ],
+          [
+            "k10",
+            {
+              "int": "10"
+            }
+          ],
+          [
+            "k11",
+            {
+              "int": "11"
+            }
+          ],
+          [
+            "k12",
+            {
+              "int": "12"
+            }
+          ],
+          [
+            "k13",
+            {
+              "int": "13"
+            }
+          ],
+          [
+            "k14",
+            {
+              "int": "14"
+            }
+          ],
+          [
+            "k15",
+            {
+              "int": "15"
+            }
+          ],
+          [
+            "k16",
+            {
+              "int": "16"
+            }
+          ]
+        ]
+      },
+      "encodings": [
+        "de0010a26b3101a26b3202a26b3303a26b3404a26b3505a26b3606a26b3707a26b3808a26b3909a36b31300aa36b31310ba36b31320ca36b31330da36b31340ea36b31350fa36b313610"
+      ],
+      "portable": true
+    },
+    {
+      "id": "map nested",
+      "value": {
+        "map": [
+          [
+            "outer",
+            {
+              "map": [
+                [
+                  "inner",
+                  [
+                    {
+                      "map": []
+                    }
+                  ]
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      "encodings": [
+        "81a56f7574657281a5696e6e65729180"
+      ],
+      "portable": true
+    },
+    {
+      "id": "mixed",
+      "value": [
+        null,
+        true,
+        {
+          "int": "1"
+        },
+        {
+          "float": 1.5
+        },
+        "s",
+        [],
+        {
+          "map": []
+        }
+      ],
+      "encodings": [
+        "97c0c301cb3ff8000000000000a1739080"
+      ],
+      "portable": true
+    },
+    {
+      "id": "bin",
+      "value": {
+        "bin_hex": "ff00"
+      },
+      "encodings": [
+        "c402ff00",
+        "c50002ff00"
+      ],
+      "note": "CRuby reads bin as a binary String (answered as str ff00); the boards' MessagePack reads it as nil",
+      "portable": false
+    },
+    {
+      "id": "uint64 above 2^63-1",
+      "value": {
+        "int": "18446744073709551615"
+      },
+      "encodings": [
+        "cfffffffffffffffff"
+      ],
+      "note": "CRuby carries it; mruby's Integer is int64 (the boards read -1)",
+      "portable": false
+    },
+    {
+      "id": "ext type",
+      "value": null,
+      "encodings": [
+        "d40100"
+      ],
+      "note": "no implementation gives ext a meaning",
+      "portable": false
+    }
+  ],
+  "incoming": [
+    {
+      "id": "call add",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a361646492020380",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "ok",
+            {
+              "int": "5"
+            }
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "call kwargs",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a26b77910181a16202",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "ok",
+            [
+              {
+                "int": "1"
+              },
+              {
+                "int": "2"
+              },
+              null
+            ]
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "call kwargs two",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a26b77910182a163a178a16202",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "ok",
+            [
+              {
+                "int": "1"
+              },
+              {
+                "int": "2"
+              },
+              "x"
+            ]
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "call kwargs empty map",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a26b77910180",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "ok",
+            [
+              {
+                "int": "1"
+              },
+              null,
+              null
+            ]
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "call unknown keyword",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a26b77910181a17a02",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "error",
+            "ArgumentError",
+            {
+              "any": "str"
+            }
+          ]
+        }
+      ],
+      "note": "the message is the language's own",
+      "portable": true
+    },
+    {
+      "id": "call method with ?",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a36f6b3f9080",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "ok",
+            true
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "call any arity, 3",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a3616e799301020380",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "ok",
+            {
+              "int": "3"
+            }
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "call any arity, 0",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a3616e799080",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "ok",
+            {
+              "int": "0"
+            }
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "call wrong arity",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a3616464910180",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "error",
+            "ArgumentError",
+            "wrong number of arguments (given 1, expected 2)"
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "call not exposed",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a67365637265749080",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "error",
+            "NoMethodError",
+            "undefined method 'secret' for iut/conf/subject (not exposed)"
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "call no such method",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a46e6f70659080",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "error",
+            "NoMethodError",
+            "undefined method 'nope' for iut/conf/subject (not exposed)"
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "call raises",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a4626f6f6d9080",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "error",
+            "RuntimeError",
+            "boom"
+          ]
+        }
+      ],
+      "note": "the class name and message of the exception the method raised",
+      "portable": true
+    },
+    {
+      "id": "call no such object",
+      "key": "asterism/iut/conf/nothing/call",
+      "params": null,
+      "payload_hex": "93a46563686f910180",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/nothing/call",
+          "payload": [
+            "error",
+            "NameError",
+            "no object nothing exposed by iut/conf"
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "call returns what cannot be sent",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93aa756e73656e6461626c659080",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "error",
+            "Asterism::EncodeError",
+            {
+              "match": "\\Athe return value: "
+            }
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "malformed: two elements",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "92a3616464920203",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "error",
+            "ArgumentError",
+            "malformed call (expected [method, args, kwargs])"
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "malformed: kwargs nil",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a3616464920203c0",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "error",
+            "ArgumentError",
+            "malformed call (expected [method, args, kwargs])"
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "malformed: args a map",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a36164648080",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "error",
+            "ArgumentError",
+            "malformed call (expected [method, args, kwargs])"
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "malformed: method an int",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93059080",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "error",
+            "ArgumentError",
+            "malformed call (expected [method, args, kwargs])"
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "malformed: four elements",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "94a361646492020380c0",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "error",
+            "ArgumentError",
+            "malformed call (expected [method, args, kwargs])"
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "malformed: no payload",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "error",
+            "ArgumentError",
+            "malformed call (expected [method, args, kwargs])"
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "malformed: not MessagePack",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "c1",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "error",
+            "ArgumentError",
+            "malformed call (expected [method, args, kwargs])"
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "ignored: object *",
+      "key": "asterism/iut/conf/*/call",
+      "params": null,
+      "payload_hex": "93a46563686f910180",
+      "replies": [],
+      "portable": true
+    },
+    {
+      "id": "ignored: another kind",
+      "key": "asterism/iut/conf/subject/other",
+      "params": null,
+      "payload_hex": "93a46563686f910180",
+      "replies": [],
+      "portable": true
+    },
+    {
+      "id": "ignored: six chunks",
+      "key": "asterism/iut/conf/subject/call/x",
+      "params": null,
+      "payload_hex": "93a46563686f910180",
+      "replies": [],
+      "portable": true
+    },
+    {
+      "id": "ignored: node and app only",
+      "key": "asterism/iut/conf",
+      "params": null,
+      "payload_hex": null,
+      "replies": [],
+      "portable": true
+    },
+    {
+      "id": "call through a wildcard node",
+      "key": "asterism/*/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a361646492010180",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "ok",
+            {
+              "int": "2"
+            }
+          ]
+        }
+      ],
+      "note": "the reply key is the object's own key, not the query's",
+      "portable": true
+    },
+    {
+      "id": "call through **",
+      "key": "asterism/iut/**/subject/call",
+      "params": null,
+      "payload_hex": "93a361646492010280",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": [
+            "ok",
+            {
+              "int": "3"
+            }
+          ]
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "meta",
+      "key": "asterism/iut/conf/subject/meta",
+      "params": null,
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/meta",
+          "payload": {
+            "map": [
+              [
+                "methods",
+                {
+                  "unordered": [
+                    [
+                      "echo",
+                      {
+                        "int": "1"
+                      }
+                    ],
+                    [
+                      "kw",
+                      {
+                        "int": "1"
+                      }
+                    ],
+                    [
+                      "add",
+                      {
+                        "int": "2"
+                      }
+                    ],
+                    [
+                      "boom",
+                      {
+                        "int": "0"
+                      }
+                    ],
+                    [
+                      "any",
+                      {
+                        "int": "-1"
+                      }
+                    ],
+                    [
+                      "ok?",
+                      {
+                        "int": "0"
+                      }
+                    ],
+                    [
+                      "unsendable",
+                      {
+                        "int": "0"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "note": "arity -1: any number of arguments (exposed without counts)",
+      "portable": true
+    },
+    {
+      "id": "meta ignores a payload",
+      "key": "asterism/iut/conf/other/meta",
+      "params": null,
+      "payload_hex": "93a1789080",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/other/meta",
+          "payload": {
+            "map": [
+              [
+                "methods",
+                [
+                  [
+                    "ping",
+                    {
+                      "int": "0"
+                    }
+                  ]
+                ]
+              ]
+            ]
+          }
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "meta of every object",
+      "key": "asterism/iut/conf/*/meta",
+      "params": null,
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/meta",
+          "payload": {
+            "map": [
+              [
+                "methods",
+                {
+                  "unordered": [
+                    [
+                      "echo",
+                      {
+                        "int": "1"
+                      }
+                    ],
+                    [
+                      "kw",
+                      {
+                        "int": "1"
+                      }
+                    ],
+                    [
+                      "add",
+                      {
+                        "int": "2"
+                      }
+                    ],
+                    [
+                      "boom",
+                      {
+                        "int": "0"
+                      }
+                    ],
+                    [
+                      "any",
+                      {
+                        "int": "-1"
+                      }
+                    ],
+                    [
+                      "ok?",
+                      {
+                        "int": "0"
+                      }
+                    ],
+                    [
+                      "unsendable",
+                      {
+                        "int": "0"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        },
+        {
+          "key": "asterism/iut/conf/other/meta",
+          "payload": {
+            "map": [
+              [
+                "methods",
+                [
+                  [
+                    "ping",
+                    {
+                      "int": "0"
+                    }
+                  ]
+                ]
+              ]
+            ]
+          }
+        }
+      ],
+      "note": "one reply per exposed object, in any order",
+      "portable": true
+    },
+    {
+      "id": "meta of no such object",
+      "key": "asterism/iut/conf/nothing/meta",
+      "params": null,
+      "payload_hex": null,
+      "replies": [],
+      "note": "no reply (the caller sees nobody answer)",
+      "portable": true
+    },
+    {
+      "id": "profile",
+      "key": "asterism/iut/@profile",
+      "params": null,
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/@profile",
+          "payload": {
+            "map": [
+              [
+                "kind",
+                {
+                  "match": "\\A[a-z][a-z0-9_]{0,31}\\z"
+                }
+              ],
+              [
+                "name",
+                "iut"
+              ],
+              [
+                "icon",
+                {
+                  "str_hex": "89504e470d0a1a0a0000000d4948445200000020000000200806000000737a7af4000000e34944415478daed96bd0dc230104633825b1a4a4413e18201324236c035cb308247704b83bc0092d7a0bb11c0ee281c7c7f4648e4a4577fafb8cfe76158679d5f9fc7f9643229f3ac713f8e4ba48cd110884be10d81429486fb4fe1088182e786bb563852a0e0a8e113269c205098b0e136031d042063451b2f146837a3b5f1356e873d89ebb88be2c57be7b2dd5071e2ea09043c7611430781a0f6fc320452c6706e00280800399cf22620c2adf41ecc028159eb243b8680d3fe17788280eff539090881f0d5df91b86e4c09a80840f7f05a3dd5eac6ada76add38f554afdb3a7f372fc2f15417ff524d5a0000000049454e44ae426082"
+                }
+              ],
+              [
+                "icon_hash",
+                "2a8c0626"
+              ]
+            ]
+          }
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "profile icon=0",
+      "key": "asterism/iut/@profile",
+      "params": "icon=0",
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/@profile",
+          "payload": {
+            "map": [
+              [
+                "kind",
+                {
+                  "match": "\\A[a-z][a-z0-9_]{0,31}\\z"
+                }
+              ],
+              [
+                "name",
+                "iut"
+              ],
+              [
+                "icon_hash",
+                "2a8c0626"
+              ]
+            ]
+          }
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "profile icon=no among others",
+      "key": "asterism/iut/@profile",
+      "params": "x=1;icon=no",
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/@profile",
+          "payload": {
+            "map": [
+              [
+                "kind",
+                {
+                  "match": "\\A[a-z][a-z0-9_]{0,31}\\z"
+                }
+              ],
+              [
+                "name",
+                "iut"
+              ],
+              [
+                "icon_hash",
+                "2a8c0626"
+              ]
+            ]
+          }
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "profile icon=false",
+      "key": "asterism/iut/@profile",
+      "params": "icon=false",
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/@profile",
+          "payload": {
+            "map": [
+              [
+                "kind",
+                {
+                  "match": "\\A[a-z][a-z0-9_]{0,31}\\z"
+                }
+              ],
+              [
+                "name",
+                "iut"
+              ],
+              [
+                "icon_hash",
+                "2a8c0626"
+              ]
+            ]
+          }
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "profile icon=1",
+      "key": "asterism/iut/@profile",
+      "params": "icon=1",
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/@profile",
+          "payload": {
+            "map": [
+              [
+                "kind",
+                {
+                  "match": "\\A[a-z][a-z0-9_]{0,31}\\z"
+                }
+              ],
+              [
+                "name",
+                "iut"
+              ],
+              [
+                "icon",
+                {
+                  "str_hex": "89504e470d0a1a0a0000000d4948445200000020000000200806000000737a7af4000000e34944415478daed96bd0dc230104633825b1a4a4413e18201324236c035cb308247704b83bc0092d7a0bb11c0ee281c7c7f4648e4a4577fafb8cfe76158679d5f9fc7f9643229f3ac713f8e4ba48cd110884be10d81429486fb4fe1088182e786bb563852a0e0a8e113269c205098b0e136031d042063451b2f146837a3b5f1356e873d89ebb88be2c57be7b2dd5071e2ea09043c7611430781a0f6fc320452c6706e00280800399cf22620c2adf41ecc028159eb243b8680d3fe17788280eff539090881f0d5df91b86e4c09a80840f7f05a3dd5eac6ada76add38f554afdb3a7f372fc2f15417ff524d5a0000000049454e44ae426082"
+                }
+              ],
+              [
+                "icon_hash",
+                "2a8c0626"
+              ]
+            ]
+          }
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "profile not under **",
+      "key": "asterism/iut/**",
+      "params": null,
+      "payload_hex": null,
+      "replies": [],
+      "note": "@profile is a verbatim chunk: ** does not reach it, and nothing else answers asterism/<node>/**",
+      "portable": true
+    },
+    {
+      "id": "profile not under *",
+      "key": "asterism/*/@profile",
+      "params": null,
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/@profile",
+          "payload": {
+            "map": [
+              [
+                "kind",
+                {
+                  "match": "\\A[a-z][a-z0-9_]{0,31}\\z"
+                }
+              ],
+              [
+                "name",
+                "iut"
+              ],
+              [
+                "icon",
+                {
+                  "str_hex": "89504e470d0a1a0a0000000d4948445200000020000000200806000000737a7af4000000e34944415478daed96bd0dc230104633825b1a4a4413e18201324236c035cb308247704b83bc0092d7a0bb11c0ee281c7c7f4648e4a4577fafb8cfe76158679d5f9fc7f9643229f3ac713f8e4ba48cd110884be10d81429486fb4fe1088182e786bb563852a0e0a8e113269c205098b0e136031d042063451b2f146837a3b5f1356e873d89ebb88be2c57be7b2dd5071e2ea09043c7611430781a0f6fc320452c6706e00280800399cf22620c2adf41ecc028159eb243b8680d3fe17788280eff539090881f0d5df91b86e4c09a80840f7f05a3dd5eac6ada76add38f554afdb3a7f372fc2f15417ff524d5a0000000049454e44ae426082"
+                }
+              ],
+              [
+                "icon_hash",
+                "2a8c0626"
+              ]
+            ]
+          }
+        }
+      ],
+      "note": "a wildcard node does reach it",
+      "portable": true
+    },
+    {
+      "id": "ignored: trailing bytes",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93a36164649202038000",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": {
+            "any": "value"
+          }
+        }
+      ],
+      "note": "CRuby answers malformed call; the boards ignore the extra bytes and answer 5",
+      "portable": false
+    },
+    {
+      "id": "method name as bin",
+      "key": "asterism/iut/conf/subject/call",
+      "params": null,
+      "payload_hex": "93c40361646492020380",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call",
+          "payload": {
+            "any": "value"
+          }
+        }
+      ],
+      "note": "CRuby reads the name and answers 5; the boards read bin as nil (malformed call)",
+      "portable": false
+    }
+  ],
+  "outgoing": [
+    {
+      "id": "plain",
+      "do": {
+        "call": "plain",
+        "args": [],
+        "kwargs": {
+          "map": []
+        }
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call",
+        "params": "",
+        "payload": [
+          "plain",
+          [],
+          {
+            "map": []
+          }
+        ]
+      },
+      "reply_hex": [
+        "92a26f6bc0"
+      ],
+      "outcome": [
+        "ok",
+        null
+      ]
+    },
+    {
+      "id": "arguments",
+      "do": {
+        "call": "args",
+        "args": [
+          {
+            "int": "1"
+          },
+          "two",
+          {
+            "float": 3.0
+          },
+          null,
+          true,
+          false
+        ],
+        "kwargs": {
+          "map": []
+        }
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call",
+        "params": "",
+        "payload": [
+          "args",
+          [
+            {
+              "int": "1"
+            },
+            "two",
+            {
+              "float": 3.0
+            },
+            null,
+            true,
+            false
+          ],
+          {
+            "map": []
+          }
+        ]
+      },
+      "reply_hex": [
+        "92a26f6b9601a374776fcb4008000000000000c0c3c2"
+      ],
+      "outcome": [
+        "ok",
+        [
+          {
+            "int": "1"
+          },
+          "two",
+          {
+            "float": 3.0
+          },
+          null,
+          true,
+          false
+        ]
+      ]
+    },
+    {
+      "id": "keywords",
+      "do": {
+        "call": "kw",
+        "args": [
+          {
+            "int": "1"
+          }
+        ],
+        "kwargs": {
+          "map": [
+            [
+              "tag",
+              "sym"
+            ],
+            [
+              "n",
+              {
+                "int": "2"
+              }
+            ]
+          ]
+        },
+        "ruby": "rec.kw(1, tag: :sym, n: 2)"
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call",
+        "params": "",
+        "payload": [
+          "kw",
+          [
+            {
+              "int": "1"
+            }
+          ],
+          {
+            "map": [
+              [
+                "tag",
+                "sym"
+              ],
+              [
+                "n",
+                {
+                  "int": "2"
+                }
+              ]
+            ]
+          }
+        ]
+      },
+      "reply_hex": [
+        "92a26f6ba26b77"
+      ],
+      "outcome": [
+        "ok",
+        "kw"
+      ],
+      "note": "keyword names and Symbol values go as str"
+    },
+    {
+      "id": "symbols and hashes",
+      "do": {
+        "call": "sym",
+        "args": [
+          "abc",
+          {
+            "map": [
+              [
+                "a",
+                {
+                  "int": "1"
+                }
+              ],
+              [
+                "b",
+                "c"
+              ]
+            ]
+          }
+        ],
+        "kwargs": {
+          "map": []
+        },
+        "ruby": "rec.sym(:abc, { a: 1, \"b\" => :c })"
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call",
+        "params": "",
+        "payload": [
+          "sym",
+          [
+            "abc",
+            {
+              "map": [
+                [
+                  "a",
+                  {
+                    "int": "1"
+                  }
+                ],
+                [
+                  "b",
+                  "c"
+                ]
+              ]
+            }
+          ],
+          {
+            "map": []
+          }
+        ]
+      },
+      "reply_hex": [
+        "92a26f6b81a16101"
+      ],
+      "outcome": [
+        "ok",
+        {
+          "map": [
+            [
+              "a",
+              {
+                "int": "1"
+              }
+            ]
+          ]
+        }
+      ],
+      "note": "Symbols, also as map keys, go as str; they come back as str"
+    },
+    {
+      "id": "nesting",
+      "do": {
+        "call": "nest",
+        "args": [
+          [
+            [
+              {
+                "int": "1"
+              },
+              [
+                {
+                  "int": "2"
+                }
+              ]
+            ],
+            {
+              "map": [
+                [
+                  "k",
+                  [
+                    {
+                      "map": []
+                    }
+                  ]
+                ]
+              ]
+            }
+          ]
+        ],
+        "kwargs": {
+          "map": []
+        }
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call",
+        "params": "",
+        "payload": [
+          "nest",
+          [
+            [
+              [
+                {
+                  "int": "1"
+                },
+                [
+                  {
+                    "int": "2"
+                  }
+                ]
+              ],
+              {
+                "map": [
+                  [
+                    "k",
+                    [
+                      {
+                        "map": []
+                      }
+                    ]
+                  ]
+                ]
+              }
+            ]
+          ],
+          {
+            "map": []
+          }
+        ]
+      },
+      "reply_hex": [
+        "92a26f6b929201910281a16b9180"
+      ],
+      "outcome": [
+        "ok",
+        [
+          [
+            {
+              "int": "1"
+            },
+            [
+              {
+                "int": "2"
+              }
+            ]
+          ],
+          {
+            "map": [
+              [
+                "k",
+                [
+                  {
+                    "map": []
+                  }
+                ]
+              ]
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "id": "numbers",
+      "do": {
+        "call": "num",
+        "args": [
+          {
+            "int": "4611686018427387904"
+          },
+          {
+            "int": "-4611686018427387904"
+          },
+          {
+            "float": 1.0
+          },
+          {
+            "int": "0"
+          }
+        ],
+        "kwargs": {
+          "map": []
+        }
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call",
+        "params": "",
+        "payload": [
+          "num",
+          [
+            {
+              "int": "4611686018427387904"
+            },
+            {
+              "int": "-4611686018427387904"
+            },
+            {
+              "float": 1.0
+            },
+            {
+              "int": "0"
+            }
+          ],
+          {
+            "map": []
+          }
+        ]
+      },
+      "reply_hex": [
+        "92a26f6bcf7fffffffffffffff"
+      ],
+      "outcome": [
+        "ok",
+        {
+          "int": "9223372036854775807"
+        }
+      ]
+    },
+    {
+      "id": "utf-8",
+      "do": {
+        "call": "utf8",
+        "args": [
+          "日本語"
+        ],
+        "kwargs": {
+          "map": []
+        }
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call",
+        "params": "",
+        "payload": [
+          "utf8",
+          [
+            "日本語"
+          ],
+          {
+            "map": []
+          }
+        ]
+      },
+      "reply_hex": [
+        "92a26f6ba2c3a9"
+      ],
+      "outcome": [
+        "ok",
+        "é"
+      ]
+    },
+    {
+      "id": "remote error",
+      "do": {
+        "call": "oops",
+        "args": [],
+        "kwargs": {
+          "map": []
+        }
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call",
+        "params": "",
+        "payload": [
+          "oops",
+          [],
+          {
+            "map": []
+          }
+        ]
+      },
+      "reply_hex": [
+        "93a56572726f72a84b65794572726f72ab6d697373696e67206b6579"
+      ],
+      "outcome": [
+        "error",
+        "KeyError",
+        "missing key"
+      ],
+      "note": "RemoteError with the class name and message as they came"
+    },
+    {
+      "id": "remote error, namespaced class",
+      "do": {
+        "call": "oops2",
+        "args": [],
+        "kwargs": {
+          "map": []
+        }
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call",
+        "params": "",
+        "payload": [
+          "oops2",
+          [],
+          {
+            "map": []
+          }
+        ]
+      },
+      "reply_hex": [
+        "93a56572726f72b5417374657269736d3a3a456e636f64654572726f72da00267468652072657475726e2076616c75653a2063616e6e6f742073656e642061204f626a656374"
+      ],
+      "outcome": [
+        "error",
+        "Asterism::EncodeError",
+        "the return value: cannot send a Object"
+      ]
+    },
+    {
+      "id": "malformed answer, not MessagePack",
+      "do": {
+        "call": "bad1",
+        "args": [],
+        "kwargs": {
+          "map": []
+        }
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call",
+        "params": "",
+        "payload": [
+          "bad1",
+          [],
+          {
+            "map": []
+          }
+        ]
+      },
+      "reply_hex": [
+        "c1"
+      ],
+      "outcome": [
+        "failed",
+        {
+          "any": "str"
+        }
+      ]
+    },
+    {
+      "id": "malformed answer, not ok or error",
+      "do": {
+        "call": "bad2",
+        "args": [],
+        "kwargs": {
+          "map": []
+        }
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call",
+        "params": "",
+        "payload": [
+          "bad2",
+          [],
+          {
+            "map": []
+          }
+        ]
+      },
+      "reply_hex": [
+        "92a368756801"
+      ],
+      "outcome": [
+        "failed",
+        {
+          "any": "str"
+        }
+      ]
+    },
+    {
+      "id": "no answer",
+      "do": {
+        "call": "silent",
+        "args": [],
+        "kwargs": {
+          "map": []
+        }
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call",
+        "params": "",
+        "payload": [
+          "silent",
+          [],
+          {
+            "map": []
+          }
+        ]
+      },
+      "reply_hex": [],
+      "outcome": [
+        "timeout"
+      ],
+      "note": "the get ends without a reply: the caller does not wait for the time limit"
+    },
+    {
+      "id": "two answers, the first wins",
+      "do": {
+        "call": "twice",
+        "args": [],
+        "kwargs": {
+          "map": []
+        }
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call",
+        "params": "",
+        "payload": [
+          "twice",
+          [],
+          {
+            "map": []
+          }
+        ]
+      },
+      "reply_hex": [
+        "92a26f6b01",
+        "92a26f6b02"
+      ],
+      "outcome": [
+        "ok",
+        {
+          "int": "1"
+        }
+      ]
+    },
+    {
+      "id": "meta",
+      "do": {
+        "respond_to": [
+          "plain",
+          "x?",
+          "nope"
+        ],
+        "ruby": "[:plain, :x?, :nope].map { |n| rec.respond_to?(n) }"
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/meta",
+        "params": "",
+        "payload": null
+      },
+      "reply_hex": [
+        "81a76d6574686f64739292a5706c61696e0092a2783fff"
+      ],
+      "outcome": [
+        "ok",
+        [
+          true,
+          true,
+          false
+        ]
+      ],
+      "note": "the meta is fetched once per proxy"
+    },
+    {
+      "id": "profile without the icon",
+      "do": {
+        "profile_of": "drv",
+        "icon": false
+      },
+      "request": {
+        "key": "asterism/drv/@profile",
+        "params": "icon=0",
+        "payload": null
+      },
+      "reply_hex": [
+        "85a46b696e64a56372756279a46e616d65a3647276a4686f737405a5657874726101a969636f6e5f68617368a83030303061626364"
+      ],
+      "outcome": [
+        "ok",
+        {
+          "map": [
+            [
+              "kind",
+              "cruby"
+            ],
+            [
+              "name",
+              "drv"
+            ],
+            [
+              "icon_hash",
+              "0000abcd"
+            ]
+          ]
+        }
+      ],
+      "note": "the reader keeps only the known fields that pass their checks"
+    },
+    {
+      "id": "profile with the icon",
+      "do": {
+        "profile_of": "drv",
+        "icon": true
+      },
+      "request": {
+        "key": "asterism/drv/@profile",
+        "params": "",
+        "payload": null
+      },
+      "reply_hex": [
+        "83a46b696e64a56372756279a469636f6eda011c89504e470d0a1a0a0000000d4948445200000020000000200806000000737a7af4000000e34944415478daed96bd0dc230104633825b1a4a4413e18201324236c035cb308247704b83bc0092d7a0bb11c0ee281c7c7f4648e4a4577fafb8cfe76158679d5f9fc7f9643229f3ac713f8e4ba48cd110884be10d81429486fb4fe1088182e786bb563852a0e0a8e113269c205098b0e136031d042063451b2f146837a3b5f1356e873d89ebb88be2c57be7b2dd5071e2ea09043c7611430781a0f6fc320452c6706e00280800399cf22620c2adf41ecc028159eb243b8680d3fe17788280eff539090881f0d5df91b86e4c09a80840f7f05a3dd5eac6ada76add38f554afdb3a7f372fc2f15417ff524d5a0000000049454e44ae426082a969636f6e5f68617368a86666666666666666"
+      ],
+      "outcome": [
+        "ok",
+        {
+          "map": [
+            [
+              "kind",
+              "cruby"
+            ],
+            [
+              "icon",
+              {
+                "str_hex": "89504e470d0a1a0a0000000d4948445200000020000000200806000000737a7af4000000e34944415478daed96bd0dc230104633825b1a4a4413e18201324236c035cb308247704b83bc0092d7a0bb11c0ee281c7c7f4648e4a4577fafb8cfe76158679d5f9fc7f9643229f3ac713f8e4ba48cd110884be10d81429486fb4fe1088182e786bb563852a0e0a8e113269c205098b0e136031d042063451b2f146837a3b5f1356e873d89ebb88be2c57be7b2dd5071e2ea09043c7611430781a0f6fc320452c6706e00280800399cf22620c2adf41ecc028159eb243b8680d3fe17788280eff539090881f0d5df91b86e4c09a80840f7f05a3dd5eac6ada76add38f554afdb3a7f372fc2f15417ff524d5a0000000049454e44ae426082"
+              }
+            ],
+            [
+              "icon_hash",
+              "2a8c0626"
+            ]
+          ]
+        }
+      ],
+      "note": "icon_hash is computed again from the icon; the one sent is not trusted"
+    },
+    {
+      "id": "profile that is not one",
+      "do": {
+        "profile_of": "drv",
+        "icon": false
+      },
+      "request": {
+        "key": "asterism/drv/@profile",
+        "params": "icon=0",
+        "payload": null
+      },
+      "reply_hex": [
+        "81a46b696e64aa4e6f74204120576f7264"
+      ],
+      "outcome": [
+        "ok",
+        null
+      ],
+      "note": "no valid kind: no profile (nil)"
+    },
+    {
+      "id": "change the profile",
+      "do": {
+        "set_profile": {
+          "map": [
+            [
+              "name",
+              "iut 2"
+            ]
+          ]
+        }
+      },
+      "request": null,
+      "reply_hex": [],
+      "outcome": [
+        "ok",
+        null
+      ],
+      "note": "the change is put on asterism/iut/@profile (see profile_puts)"
+    }
+  ],
+  "liveliness": {
+    "alive": [
+      "asterism/iut",
+      "asterism/iut/conf/subject",
+      "asterism/iut/conf/other"
+    ],
+    "gone_after_close": [
+      "asterism/iut",
+      "asterism/iut/conf/subject",
+      "asterism/iut/conf/other"
+    ]
+  },
+  "profile_puts": [
+    {
+      "when": "connect",
+      "key": "asterism/iut/@profile",
+      "payload": {
+        "map": [
+          [
+            "kind",
+            {
+              "match": "\\A[a-z][a-z0-9_]{0,31}\\z"
+            }
+          ],
+          [
+            "name",
+            "iut"
+          ],
+          [
+            "icon_hash",
+            "2a8c0626"
+          ]
+        ]
+      }
+    },
+    {
+      "when": "change the profile",
+      "key": "asterism/iut/@profile",
+      "payload": {
+        "map": [
+          [
+            "kind",
+            {
+              "match": "\\A[a-z][a-z0-9_]{0,31}\\z"
+            }
+          ],
+          [
+            "name",
+            "iut 2"
+          ],
+          [
+            "icon_hash",
+            "2a8c0626"
+          ]
+        ]
+      }
+    }
+  ]
+}
