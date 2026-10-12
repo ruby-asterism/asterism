@@ -348,7 +348,9 @@ samples = {
 
 json = JSON.pretty_generate(samples) + "\n"
 if ARGV.include?("--check")
-  if File.exist?(OUT) && File.read(OUT) == json
+  # Compare what the file says, not how it is laid out: the json gem's
+  # pretty printer differs between versions (empty arrays, float exponents).
+  if File.exist?(OUT) && JSON.parse(File.read(OUT)) == JSON.parse(json)
     puts "samples.json is up to date"
   else
     warn "samples.json is stale: run ruby test/protocol/gen_samples.rb"
