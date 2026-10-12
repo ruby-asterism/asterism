@@ -3,9 +3,9 @@ module Asterism
   # Any method it does not have itself becomes a call that waits for the
   # answer. respond_to? and remote_methods come from the object's meta.
   #
-  # Its own methods (not forwarded): async, asterism_path, asterism_meta,
-  # asterism_refresh, remote_methods, respond_to?, methods, inspect, to_s
-  # and those of Object.
+  # Its own methods (not forwarded): async, asterism_call, asterism_path,
+  # asterism_meta, asterism_refresh, remote_methods, respond_to?, methods,
+  # inspect, to_s and those of Object.
   class Proxy
     # Conversions Ruby asks for implicitly (puts, Array#flatten, ...): never
     # forwarded.
@@ -25,6 +25,15 @@ module Asterism
       return super if ::Asterism::Proxy::LOCAL_ONLY.include?(name)
       raise ::ArgumentError, "a block cannot be sent to #{@path}" if blk
       ::Asterism.call(@path, name, args, kw, @timeout_ms)
+    end
+
+    # Calls the remote method by its name (a String or Symbol): for the
+    # names the proxy cannot forward (those Object and Kernel define:
+    # display, hash, class, fail, ...) and for names that are not Ruby
+    # identifiers (from objects written in other languages).
+    def asterism_call(name, *args, **kw, &blk)
+      raise ::ArgumentError, "a block cannot be sent to #{@path}" if blk
+      ::Asterism.call(@path, name.to_s, args, kw, @timeout_ms)
     end
 
     # In Ruby rather than through respond_to_missing?: Object#respond_to? is
@@ -52,7 +61,8 @@ module Asterism
       remote_methods
     end
 
-    # The meta reply, fetched once: {"methods" => [[name, arity], ...]}.
+    # The meta reply, fetched once:
+    # {"methods" => [{"name" => name, "arity" => n}, ...]}.
     def asterism_meta
       @meta ||= ::Asterism.meta(@path, @timeout_ms)
     end
@@ -67,7 +77,9 @@ module Asterism
     def remote_names
       list = asterism_meta["methods"]
       return [] unless list.is_a?(Array)
-      list.map { |pair| pair.is_a?(Array) ? pair[0].to_s : pair.to_s }
+      names = []
+      list.each { |m| names << m["name"].to_s if m.is_a?(Hash) && m["name"].is_a?(String) }
+      names
     end
 
     # The same object, calls that do not wait: each returns a Future.
@@ -98,6 +110,12 @@ module Asterism
 
     def respond_to_missing?(name, _include_private = false)
       !::Asterism::Proxy::LOCAL_ONLY.include?(name.to_sym)
+    end
+
+    # Proxy#asterism_call that does not wait: returns a Future.
+    def asterism_call(name, *args, **kw, &blk)
+      raise ::ArgumentError, "a block cannot be sent to #{@path}" if blk
+      ::Asterism.call_async(@path, name.to_s, args, kw, @timeout_ms)
     end
 
     def inspect

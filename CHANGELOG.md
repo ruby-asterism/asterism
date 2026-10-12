@@ -6,21 +6,77 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
-## Unreleased
+## 0.7.0
 
-Documentation and tests only; the wire protocol and the API are unchanged.
+**This release breaks compatibility: it speaks wire protocol 1 only.** A
+node of 0.7.0 and a node of 0.6.0 or earlier (protocol 0) do not see each
+other's objects, and a call between them fails: a protocol 0 call to a
+0.7.0 node is refused with the error kind `protocol`, a 0.7.0 call to an
+older node is not answered, and their replies are malformed answers to
+each other. Move every node of a network to 0.7.0 together (boards,
+browsers, consoles, CRuby programs). The Ruby API stays as it was, with
+the additions below. Needs asterism-zenoh / picoruby-asterism-zenoh 0.4.0
+(unchanged), and on mruby a MessagePack that reads and writes bin (README,
+"Using it").
 
-- `docs/protocol.md`: the wire protocol as 0.6.0 speaks it (keys, call and
-  reply payloads, errors, meta, liveliness, profiles, the Zenoh features
-  used), checked against what CRuby, mruby and the Family mruby firmware
-  put on the network. `docs/protocol_review.md`: the Ruby-shaped parts and
-  proposals for a protocol 1 (nothing decided).
-- Conformance tests: `test/protocol/samples.json` (language-neutral
-  samples), a driver that checks an implementation over Zenoh, and a node
-  that runs on CRuby and mruby. `rake test:protocol` (part of `rake`),
-  `rake test:protocol_mruby`.
-- `host_test/msgpack.rb` (the mruby test's stand-in MessagePack) reads
-  every format but ext, and 64-bit negative integers without overflowing.
+Protocol 1 (`docs/protocol.md`, normative; `docs/protocol_review.md` says
+what was decided and why):
+
+- A call is a get on `asterism/<node>/<app>/<object>/call/<caller>`, where
+  `<caller>` is the calling node's ID. Its payload is a map
+  `{"method" => name, "args" => [...], "kwargs" => {...}}` (args and
+  kwargs left out when empty) instead of the array `[method, args,
+  kwargs]`.
+- A reply is `{"value" => value}` or `{"error" => {"kind" => ..., "class"
+  => ..., "message" => ...}}` instead of `["ok", value]` /
+  `["error", class, message]`. The kinds: `raised`, `not_exposed`,
+  `no_object`, `arguments`, `malformed`, `unsendable`, `nesting`,
+  `protocol`.
+- The meta is `{"methods" => [{"name" => name, "arity" => n}, ...]}`.
+- Binary Strings go as MessagePack bin (CRuby: ASCII-8BIT Strings, no more
+  compatibility mode; mruby: `String#b`), and a bin arrives as a binary
+  String. The profile's icon is a bin.
+- The profile has `"protocol" => 1`.
+- Each application declares its own liveliness token
+  `asterism/<node>/<app>`; the node token `asterism/<node>`, which the
+  applications of a node shared, is gone. A node is present while any of
+  its applications or objects is.
+- A payload is exactly one value: bytes after it, ext types and integers
+  outside the signed 64-bit range make it malformed. CRuby raises
+  `EncodeError` before sending an Integer outside int64 (it raised
+  `RangeError` before).
+- A protocol 0 call (on the five-chunk `.../call` key) is answered with the
+  error kind `protocol`.
+
+Added
+
+- `Asterism.current_call` while an exposed method runs for a call (per
+  thread on CRuby, `net.current_call` too): `from` (the calling node),
+  `verified` (`:claimed`; `:local` for a call from the same application),
+  `object`, `method`. `Asterism::CurrentCall`.
+- `Asterism.expose(name, obj, methods:, caller: :from)` (and
+  `net.expose`): passes the calling node's ID as the keyword `from:` and
+  refuses a call that brings `from:` itself.
+- `RemoteError#remote_kind`: the error's kind, as above (nil when the
+  answer did not say).
+- `proxy.asterism_call(name, *args, **kw)` and `proxy.async.asterism_call`:
+  a call by the method's name, for names a proxy cannot forward (`display`,
+  `hash`, `class`, `fail`, ...) and names that are not Ruby identifiers.
+- `Asterism::PROTOCOL` (1).
+- The conformance tests (`test/protocol/`) are protocol 1's: 55 values, 54
+  incoming queries, 24 outgoing steps; CRuby and mruby pass them all.
+
+Changed
+
+- `proxy.asterism_meta` returns the new meta form.
+- `Asterism.connect`'s duplicate check also finds a copy of the
+  application that exposes nothing (it has its application token now).
+- `host_test/msgpack.rb` (the mruby test's MessagePack) writes a binary
+  String as bin and reads a bin as one; the mruby test build adds
+  mruby-encoding (to tell a binary String).
+- The documentation of the wire protocol (docs/protocol.md,
+  docs/protocol_review.md) and the conformance tests (X0, unreleased in
+  0.6.0) are rewritten for protocol 1.
 
 ## 0.6.0
 

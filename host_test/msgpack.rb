@@ -1,8 +1,10 @@
 # A small MessagePack for the mruby test only (rake test:mruby): the
 # pack / unpack API of the msgpack gem for the values Asterism sends (nil,
-# true, false, Integer, Float, String as str, Array, Hash). It reads every
-# format but ext (and a uint64 above int64), so the conformance samples
-# (test/protocol) can be sent to it in any of their forms; it writes the
+# true, false, Integer, Float, String as str, a binary String (String#b,
+# mruby's binary flag; mruby-encoding tells it) as bin, Array, Hash). It
+# reads every format but ext (and a uint64 above int64), and refuses bytes
+# after the value, so the conformance samples (test/protocol) can be sent to
+# it in any of their forms; a bin is read as a binary String. It writes the
 # longer forms (array16, map16, int64), which are valid too. The boards use
 # a MessagePack gem of their own; this stands in for it here.
 module MessagePack
@@ -29,6 +31,16 @@ module MessagePack
       end
     elsif v.is_a?(Float)
       out << [0xcb].pack("C") << [v].pack("G")
+    elsif v.is_a?(String) && v.encoding == "ASCII-8BIT"
+      n = v.bytesize
+      if n < 256
+        out << [0xc4, n].pack("CC")
+      elsif n < 65536
+        out << [0xc5, n].pack("Cn")
+      else
+        out << [0xc6, n].pack("CN")
+      end
+      out << v
     elsif v.is_a?(String)
       n = v.bytesize
       if n < 32
@@ -61,6 +73,10 @@ module MessagePack
 
   def self.str(b, pos, n)
     [b.byteslice(pos, n), pos + n]
+  end
+
+  def self.bin(b, pos, n)
+    [b.byteslice(pos, n).b, pos + n]
   end
 
   def self.u(b, pos, n)
@@ -102,9 +118,9 @@ module MessagePack
     when 0xd9 then str(b, pos + 1, u(b, pos, 1))
     when 0xda then str(b, pos + 2, u(b, pos, 2))
     when 0xdb then str(b, pos + 4, u(b, pos, 4))
-    when 0xc4 then str(b, pos + 1, u(b, pos, 1))
-    when 0xc5 then str(b, pos + 2, u(b, pos, 2))
-    when 0xc6 then str(b, pos + 4, u(b, pos, 4))
+    when 0xc4 then bin(b, pos + 1, u(b, pos, 1))
+    when 0xc5 then bin(b, pos + 2, u(b, pos, 2))
+    when 0xc6 then bin(b, pos + 4, u(b, pos, 4))
     when 0xdc then seq(b, pos + 2, u(b, pos, 2), false)
     when 0xdd then seq(b, pos + 4, u(b, pos, 4), false)
     when 0xde then seq(b, pos + 2, u(b, pos, 2), true)

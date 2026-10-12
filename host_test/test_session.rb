@@ -87,7 +87,7 @@ events = []
 Asterism.on_join { |n| events << "+#{n}" }
 Asterism.on_leave { |n| events << "-#{n}" }
 poll_some
-token("asterism/n1", true)
+token("asterism/n1/main", true)
 check(until_true { events.size == 1 }, "n1 joins")
 token("asterism/n2/app/o", true)
 token("asterism/n1/app/o2", true)
@@ -97,7 +97,7 @@ check(events == ["+n1", "+n2"], "joins: #{events.inspect}")
 check(Asterism.nodes == ["me", "n1", "n2"], "nodes: #{Asterism.nodes.inspect}")
 poll_some(50)
 check(events.size == 2, "nothing more while nothing changes")
-token("asterism/n1", false)
+token("asterism/n1/main", false)
 until_true { !Asterism.nodes.include?("n1") || Asterism.nodes[1] == "n2" }
 poll_some
 check(events.size == 2 && Asterism.nodes == ["me", "n2", "n1"], "n1 stays by its object: #{Asterism.nodes.inspect}")
@@ -107,7 +107,7 @@ check(events[2] == "-n1", "leave: #{events.inspect}")
 
 # --- the time of one poll: 4 other nodes, 5 objects, nothing changing
 names = ["n2", "n3", "n4", "n5"]
-names.each { |n| token("asterism/#{n}", true) }
+names.each { |n| token("asterism/#{n}/main", true) }
 4.times { |i| token("asterism/#{names[i]}/app/p#{i}", true) }
 until_true { Asterism.nodes.size == 5 && Asterism.each("*/app/*").size == 5 }
 poll_some

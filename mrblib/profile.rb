@@ -7,11 +7,14 @@
 #
 # Key: asterism/<node>/@profile (a queryable of every application connected
 # as that node). The reply is a MessagePack Hash:
+#   "protocol"   the wire protocol the node speaks (Asterism::PROTOCOL, 1);
+#                a node without it speaks protocol 0
 #   "kind"       what Ruby runs the node: "family_mruby", "picoruby",
 #                "cruby", "console" (others are allowed)
 #   "host"       where it runs, optional ("atoms3r", "tab5", "sim", ...)
 #   "name"       a display name, optional
-#   "icon"       PNG bytes, optional (8 KB and 256x256 at most)
+#   "icon"       PNG bytes as a MessagePack bin, optional (8 KB and
+#                256x256 at most)
 #   "icon_hash"  the icon's summary (Profile.png_info): a reader that has
 #                that icon already asks again with the parameter icon=0 and
 #                gets the rest without it
@@ -87,6 +90,13 @@ module Asterism
       nil
     end
 
+    # The bytes as a binary String (String#b), so that they are sent as a
+    # MessagePack bin; as they are where String#b is missing.
+    # @api private
+    def self.binary(s)
+      s.respond_to?(:b) ? s.b : s
+    end
+
     # @api private
     def self.type?(b, pos, c0, c1, c2, c3)
       b.getbyte(pos + 4) == c0 && b.getbyte(pos + 5) == c1 && b.getbyte(pos + 6) == c2 && b.getbyte(pos + 7) == c3
@@ -107,6 +117,8 @@ module Asterism
       kind = h["kind"]
       return nil unless kind.is_a?(String) && kind?(kind)
       out = { "kind" => kind }
+      pr = h["protocol"]
+      out["protocol"] = pr if pr.is_a?(Integer) && pr >= 0
       host = h["host"]
       out["host"] = host if host.is_a?(String) && !host.empty? && host.bytesize <= HOST_MAX
       name = h["name"]
@@ -301,7 +313,7 @@ module Asterism
   # @api private
   def self.profile_hash(with_icon)
     set = @profile_set || {}
-    h = { "kind" => set["kind"] || default_profile_kind }
+    h = { "protocol" => PROTOCOL, "kind" => set["kind"] || default_profile_kind }
     h["host"] = set["host"] if set["host"]
     h["name"] = set["name"] if set["name"]
     icon = profile_icon
@@ -324,7 +336,8 @@ module Asterism
         bytes = path ? read_icon_file(path) : nil
       end
       info = bytes ? Profile.png_info(bytes) : nil
-      @profile_icon = info ? [bytes, info[2]] : false
+      # A binary String: it goes as a MessagePack bin.
+      @profile_icon = info ? [Profile.binary(bytes), info[2]] : false
     end
     @profile_icon ? @profile_icon : nil
   end

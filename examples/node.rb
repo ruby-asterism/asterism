@@ -87,8 +87,9 @@ class Info
       "pool_used" => nil, "up_ms" => ((Time.now - @started) * 1000).to_i }
   end
 
-  # A call that calls back (the board's key m).
-  def relay(from, n)
+  # A call that calls back (the board's key m): the caller, from the call.
+  def relay(n)
+    from = Asterism.current_call.from
     t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     name = Asterism["#{from}/demo/info"].status["name"]
     log(format("info.relay from %s #%d (called %s back: %.1f ms)", from, n, name,
@@ -117,7 +118,7 @@ end
 Asterism.connect(opt[:router], node: opt[:node], app: opt[:app], config: tls.empty? ? nil : tls) do |net|
   net.expose("apu", Apu.new, methods: { play: 1, stop: 0 })
   net.expose("screen", Screen.new, methods: [:say])
-  net.expose("info", Info.new(opt[:node]), methods: { status: 0, relay: 2, boom: 0, echo: 1 })
+  net.expose("info", Info.new(opt[:node]), methods: { status: 0, relay: 1, boom: 0, echo: 1 })
   log("#{opt[:node]}/#{opt[:app]} connected to #{opt[:router]}")
 
   net.on_join { |n| log("joined: #{n}") }
@@ -166,7 +167,7 @@ Asterism.connect(opt[:router], node: opt[:node], app: opt[:app], config: tls.emp
         ok = 0
         _, ms = timed do
           10.times do |i|
-            r = info.relay(opt[:node], i)
+            r = info.relay(i)
             ok += 1 if r[0] == i
           rescue Asterism::Error => e
             log("relay #{i}: #{e.class}: #{e.message}")

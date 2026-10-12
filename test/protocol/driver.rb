@@ -1,5 +1,5 @@
-# The conformance driver (docs/protocol.md 7): checks an implementation of
-# the Asterism wire protocol against test/protocol/samples.json, over Zenoh.
+# The conformance driver (docs/protocol.md 10): checks an implementation of
+# the Asterism wire protocol 1 against test/protocol/samples.json, over Zenoh.
 # It uses only the plain Zenoh API (asterism-zenoh) and msgpack, never
 # Asterism's object layer, so what it checks is what goes on the wire.
 #
@@ -171,12 +171,13 @@ begin
   wait(3) { lock.synchronize { profile_puts.size >= 1 } }
 
   # ---------------------------------------------------------- values (through subject.echo)
-  echo_key = "asterism/#{IUT}/#{APP}/subject/call"
+  echo_key = "asterism/#{IUT}/#{APP}/subject/call/#{DRV}"
   SAMPLES["values"].each do |v|
     v["encodings"].each_with_index do |enc, n|
-      payload = hexbytes("93a46563686f91#{enc}80")
+      # {"method" => "echo", "args" => [<the value>]}
+      payload = hexbytes("82a66d6574686f64a46563686fa46172677391#{enc}")
       replies = s.get(echo_key, timeout: 2.0, payload: payload, errors: true).to_a
-      expected = v["expect"] || [{ "key" => echo_key, "payload" => ["ok", v["value"]] }]
+      expected = v["expect"] || [{ "key" => echo_key, "payload" => { "map" => [["value", v["value"]]] } }]
       why = replies_mismatch(expected, replies)
       id = n.zero? ? v["id"] : "#{v['id']} (as #{enc[0, 12]}#{enc.size > 12 ? '...' : ''})"
       if v["portable"]
@@ -214,7 +215,19 @@ begin
     why = "key #{q.key}, expected #{exp['key']}" if q.key != exp["key"]
     why ||= "params #{q.params.inspect}, expected #{exp['params'].inspect}" if q.params.to_s != exp["params"].to_s
     if why.nil?
-      if exp["payload"].nil?
+      if exp["call"]
+        # A call: a map; absent args / kwargs are read as empty.
+        st, v = decode(q.payload)
+        if st != :ok
+          why = "payload #{st} #{v}"
+        elsif !v.is_a?(Hash)
+          why = "the request is not a map: #{TV.from_ruby(v).to_json[0, 120]}"
+        else
+          got = { "method" => v["method"], "args" => v.key?("args") ? v["args"] : [],
+                  "kwargs" => v.key?("kwargs") ? v["kwargs"] : {} }
+          why = TV.mismatch({ "map" => exp["call"].to_a }, got)
+        end
+      elsif exp["payload"].nil?
         why = "a payload where none was expected" unless q.payload.nil? || q.payload.empty?
       else
         st, v = decode(q.payload)
@@ -233,15 +246,15 @@ begin
       meta_count += 1
       lock.synchronize { requests[meta["id"]] = check_request.(meta, q) } if meta_count == 1
       answer.(meta, q)
-    elsif q.key == "#{rec_key}/call"
+    elsif q.key == "#{rec_key}/call/#{IUT}"
       st, req = decode(q.payload)
-      method = st == :ok && req.is_a?(Array) ? req[0] : nil
+      method = st == :ok && req.is_a?(Hash) ? req["method"] : nil
       if method == "report"
-        lock.synchronize { reports << req[1] }
-        q.reply(q.key, MessagePack.pack(["ok", nil], compatibility_mode: true))
+        lock.synchronize { reports << req["args"] }
+        q.reply(q.key, MessagePack.pack({ "value" => nil }))
       elsif method == "done"
         lock.synchronize { done = true }
-        q.reply(q.key, MessagePack.pack(["ok", nil], compatibility_mode: true))
+        q.reply(q.key, MessagePack.pack({ "value" => nil }))
       elsif (o = by_call[method])
         lock.synchronize { requests[o["id"]] = check_request.(o, q) }
         answer.(o, q)

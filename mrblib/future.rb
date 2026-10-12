@@ -48,16 +48,22 @@ module Asterism
       @finished
     end
 
+    # The answer: {"value" => v} gives v, {"error" => {"kind", "class",
+    # "message"}} raises RemoteError; anything else is a malformed answer.
     def value
       raw = raw_value
-      unless raw.is_a?(Array) && (raw[0] == "ok" || raw[0] == "error")
-        raise ::Asterism::Error, "malformed answer from #{@path}"
+      raise ::Asterism::Error, "malformed answer from #{@path}" unless raw.is_a?(Hash)
+      if raw.key?("error")
+        e = raw["error"]
+        raise ::Asterism::Error, "malformed answer from #{@path}" unless e.is_a?(Hash)
+        kind = e["kind"]
+        raise ::Asterism::RemoteError.new(e["class"], e["message"], kind.is_a?(String) ? kind : nil)
       end
-      raise ::Asterism::RemoteError.new(raw[1], raw[2]) if raw[0] == "error"
-      raw[1]
+      raise ::Asterism::Error, "malformed answer from #{@path}" unless raw.key?("value")
+      raw["value"]
     end
 
-    # The decoded answer (meta replies are not ["ok", value] pairs).
+    # The decoded answer (meta and profile replies are not value maps).
     def raw_value
       ::Asterism.wait_until { done? } unless done?
       if @reply.nil?

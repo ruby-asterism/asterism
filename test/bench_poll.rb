@@ -43,7 +43,7 @@ SIZES.each do |nodes, objects|
   Asterism.on_join { |_n| joined += 1 }
   other = Asterism::Zenoh::Session.open(loc, mode: :peer)
   tokens = []
-  nodes.times { |i| tokens << other.liveliness("asterism/n#{i}") }
+  nodes.times { |i| tokens << other.liveliness("asterism/n#{i}/main") }
   objects.times { |i| tokens << other.liveliness("asterism/n#{i % [nodes, 1].max}/app/o#{i}") }
   wait_until { Asterism.nodes.size == nodes + 1 && Asterism.each("*/app/*").size == objects && joined == nodes }
 

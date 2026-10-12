@@ -43,7 +43,12 @@ profiles ([Profiles](#profiles): what a node runs on, where, a name and an
 icon); 0.6.0 adds `Asterism.session`
 ([One connection](#one-connection-asterismsession): the object layer's
 session for plain Zenoh and ROS 2 too) and makes `Asterism.poll` cheap when
-nothing changed.
+nothing changed. **0.7.0 speaks wire protocol 1 only**
+([docs/protocol.md](docs/protocol.md)): it does not talk to the object
+layer of earlier versions, so every node of a network moves to 0.7.0
+together. It adds who called (`Asterism.current_call`, `expose(...,
+caller: :from)`; [Who called](#who-called)), the kind of a remote error
+(`RemoteError#remote_kind`) and `proxy.asterism_call`.
 
 ## Which API?
 
@@ -92,7 +97,7 @@ build but not yet tested. To install from the repositories instead:
 
 ```
 (cd ../asterism-zenoh && rake gem) && rake gem
-gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.0.gem pkg/asterism-0.6.0.gem
+gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.0.gem pkg/asterism-0.7.0.gem
 ```
 
 From the working trees, without installing:
@@ -102,12 +107,14 @@ ruby -I lib -I ../asterism-zenoh/lib your_script.rb    # after `rake compile` in
 ```
 
 `Asterism::ROS::TYPE_PATH` is `data/msgs` there; add your own directories.
-MessagePack sends every String as str (compatibility mode), as the boards
-do: their MessagePack does not read the bin type.
+MessagePack sends a binary (ASCII-8BIT) String as bin and any other String
+as str (protocol 1; [Values](#values)).
 
 mruby / PicoRuby: add this repository and picoruby-asterism-zenoh as gems
 (`conf.gem "path/to/asterism"`; a `MessagePack` module with `pack` /
-`unpack` is needed too), and put `data/msgs` on the device's file system at
+`unpack` is needed too: for protocol 1 it must write a binary String
+(`String#b`) as bin and read a bin as one, and refuse ext types, integers
+outside int64 and bytes after the value), and put `data/msgs` on the device's file system at
 `/usr/share/asterism/msgs` (or add the place to
 `Asterism::ROS::TYPE_PATH`). Family mruby does this from pinned commits of
 these repositories.
@@ -254,7 +261,8 @@ end
 |---|---|
 | `Asterism.connect(...) { \|net\| }` | yields an `Asterism::Net`, `Asterism.close` when the block ends; returns the block's value. Without a block, as before |
 | `Asterism.net` | the `Net` of the connection made without a block (nil when not connected) |
-| `net.expose` / `unexpose` / `exposed` | as `Asterism.expose`. The methods run on the receiving thread, in `run`, or in whatever polls |
+| `net.expose` / `unexpose` / `exposed` | as `Asterism.expose` (also `caller: :from`). The methods run on the receiving thread, in `run`, or in whatever polls |
+| `net.current_call` | `Asterism.current_call`: the call being answered on this thread (the receiving thread while it answers), or nil |
 | `net[path, timeout: 2.0]` | a proxy (`timeout` in seconds, or `timeout_ms:`) |
 | `net.each(pattern = "**")` | the proxies alive now; an Enumerator without a block. With a block it returns their number (1.0: `self`, as Ruby's `each` does; `net.count` is the number) |
 | `net.on_join { \|node\| }` / `net.on_leave { \|node\| }` | `Asterism.on_join` / `on_leave` of the portable API (the same blocks, told from `Asterism.poll`), here on the receiving thread; what they raise goes to `on_error`. `net.off_join(proc)` / `off_leave(proc)` remove one |
@@ -420,17 +428,19 @@ Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 | Call | Returns | Raises / notes |
 |---|---|---|
 | `Asterism.connect(locator, node:, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil, check_timeout: 1.5)` | `Asterism` | `locator`, `mode:`, `listen:` (and `config:` / `connect_timeout:` when given, CRuby only: TLS and the rest of zenoh's configuration; the boards raise `ArgumentError`) go to `Asterism::Zenoh::Session.open` (client of a router by default; `mode: :peer` with or without `listen:` without one). `node:` is this machine's ID, `app:` the application's name (one key chunk each: no `/ * $ ? #`, not starting with `@`; else `ArgumentError`). `Disconnected` when it cannot connect; `Error` when objects of the same `<node>/<app>` are already alive (a second copy of the application), or when already connected. Waits up to `check_timeout:` seconds for that check (a router answers at once; give more over a slow relay). Returns the module itself: on a board the module is the connection (one per application). The default is plain text without authentication; see [Over TLS](#over-tls-a-router-on-the-internet). |
-| `Asterism.expose(name, obj, methods:)` | `"<node>/<app>/<name>"` | `methods:` is an Array of names, or a Hash `name => number of arguments` (checked before the call; `-1` or the Array form: any). `ArgumentError` when `obj` has no such public method. Exposing a name again replaces it. |
+| `Asterism.expose(name, obj, methods:, caller: nil)` | `"<node>/<app>/<name>"` | `methods:` is an Array of names, or a Hash `name => number of arguments` (checked before the call; `-1` or the Array form: any). `ArgumentError` when `obj` has no such public method. Exposing a name again replaces it. `caller: :from` passes the calling node's ID to every method as the keyword `from:` and refuses a call that brings `from:` itself ([Who called](#who-called)). |
+| `Asterism.current_call` | `Asterism::CurrentCall` or nil | While an exposed method runs for a call: `from` (the calling node's ID), `verified` (`:claimed`, or `:local` for a call from this application), `object`, `method`. nil outside a call ([Who called](#who-called)). |
 | `Asterism.unexpose(name)` | true / false | |
 | `Asterism.poll` | true / false | Call from the update loop: polls Zenoh, answers the calls that came in, follows who is alive and calls the `on_join` / `on_leave` blocks. `false` once the connection is closed or lost. Cheap when nothing came (0.6.0): each queue is looked at by its count, and the list of nodes is made again only after a liveliness change. |
-| `Asterism.on_join { \|node\| }` / `Asterism.on_leave { \|node\| }` | `Asterism` | Another node appeared (its node token or one of its objects) / is gone (no token and no object left). The nodes there already join on the first polls after connecting; when the connection is lost, every node known until then leaves (on the next `Asterism.poll`). The blocks run from `Asterism.poll` only, never from the polling inside a waiting call; what they raise comes out of `Asterism.poll`. Each call adds a block; `Asterism.off_join(proc)` / `off_leave(proc)` remove one; `Asterism.close` forgets them (a lost connection does not). |
+| `Asterism.on_join { \|node\| }` / `Asterism.on_leave { \|node\| }` | `Asterism` | Another node appeared (one of its applications or objects) / is gone (no application and no object left). The nodes there already join on the first polls after connecting; when the connection is lost, every node known until then leaves (on the next `Asterism.poll`). The blocks run from `Asterism.poll` only, never from the polling inside a waiting call; what they raise comes out of `Asterism.poll`. Each call adds a block; `Asterism.off_join(proc)` / `off_leave(proc)` remove one; `Asterism.close` forgets them (a lost connection does not). |
 | `Asterism[path, timeout: 2.0]` | `Proxy` | `path` is `<node>/<app>/<object>` without wildcards (`ArgumentError`). `timeout:` (seconds) or `timeout_ms:` is the time limit of its calls. Nothing is sent until a method is called. |
-| `proxy.<method>(*args, **kw)` | the remote return value | Waits for the answer (the proxy's time limit). `RemoteError` when it raised there or could not be called (not exposed: `NoMethodError`; wrong number of arguments: `ArgumentError`; no such object: `NameError`), `TimeoutError` when no answer came in time (also at once when nobody answers that key), `Disconnected`, `EncodeError` (before anything is sent) for a value MessagePack cannot carry. A block cannot be sent (`ArgumentError`). |
+| `proxy.<method>(*args, **kw)` | the remote return value | Waits for the answer (the proxy's time limit). `RemoteError` when it raised there or could not be called (`remote_kind` says which: `raised`, or not exposed `not_exposed` (`NoMethodError`), wrong number of arguments `arguments` (`ArgumentError`), no such object `no_object` (`NameError`); [Errors](#errors)), `TimeoutError` when no answer came in time (also at once when nobody answers that key), `Disconnected`, `EncodeError` (before anything is sent) for a value MessagePack cannot carry. A block cannot be sent (`ArgumentError`). |
+| `proxy.asterism_call(name, *args, **kw)` | the remote return value | The same call by the method's name (a String or Symbol): for names a proxy cannot forward (those `Object` and `Kernel` have: `display`, `hash`, `class`, `fail`, ...) and names that are not Ruby identifiers. `proxy.async.asterism_call(...)` returns a `Future`. |
 | `proxy.async.<method>(...)` | `Future` | Sends and returns at once. `EncodeError` / `Disconnected` are raised here. |
 | `future.done?` | true / false | Never waits (`Asterism.poll` moves it on). True once the answer came, the time ran out or the connection closed. |
 | `future.value` | the return value | Waits (polling) if not done; raises like a waiting call. `future.took` (seconds) / `took_ms`: time to the answer. |
 | `proxy.respond_to?(name)` / `proxy.remote_methods` | true / false, `[Symbol]` | From the object's meta (fetched once, `proxy.asterism_refresh` forgets it). `respond_to?` is false when the object does not answer; `remote_methods` raises then. (`proxy.methods` returns the same with a deprecation warning; from 1.0 it is `Object#methods`.) |
-| `proxy.asterism_meta` / `proxy.asterism_path` | Hash, String | `{"methods" => [[name, arity], ...]}` |
+| `proxy.asterism_meta` / `proxy.asterism_path` | Hash, String | `{"methods" => [{"name" => name, "arity" => n}, ...]}` |
 | `Asterism.each(pattern = "**") { \|proxy\| }` | count (Array without a block) | The exposed objects alive now (this application's own included) whose `<node>/<app>/<object>` matches; `*` is one chunk, `**` any number. 1.0 returns the proxies from the block form instead of their number (Ruby's `each` returns its receiver); write `Asterism.each(pattern).size` for the count. |
 | `Asterism.nodes` | `[String]` | Node IDs alive now, this one first. |
 | `Asterism.connected?` / `node_id` / `app` / `exposed` / `lost_reason` | | |
@@ -447,19 +457,20 @@ and an icon. A console draws it with that; anyone can ask.
 ```ruby
 Asterism.profile(name: "Rover", icon: File.binread("rover.png"))   # this node's (any time)
 Asterism.profile
-# => {"kind" => "cruby", "name" => "Rover", "icon" => "\x89PNG...", "icon_hash" => "2a8c0626"}
+# => {"protocol" => 1, "kind" => "cruby", "name" => "Rover", "icon" => "\x89PNG...", "icon_hash" => "2a8c0626"}
 Asterism.profile_of("fmruby-aaaaaa")
-# => {"kind" => "family_mruby", "host" => "atoms3r", "icon" => "\x89PNG...", "icon_hash" => "..."}
+# => {"protocol" => 1, "kind" => "family_mruby", "host" => "atoms3r", "icon" => "\x89PNG...", "icon_hash" => "..."}
 Asterism.profile_of("fmruby-aaaaaa", icon: false)   # the same without the icon bytes
 Asterism.profile_of("an-older-node")                 # => nil
 ```
 
 | Field | Value | Default |
 |---|---|---|
+| `protocol` | set by Asterism, never given: the wire protocol the node speaks (`Asterism::PROTOCOL`, 1). A node whose profile has none speaks protocol 0 (asterism before 0.7.0), which 0.7.0 does not talk to | |
 | `kind` | what Ruby runs the node: `family_mruby`, `picoruby`, `cruby`, `console` (a lower-case word: `a-z`, `0-9`, `_`, up to 32 bytes; other words are allowed) | `cruby` on CRuby, `picoruby` on mruby / PicoRuby; Family mruby's firmware sets `family_mruby` |
 | `host` | where it runs, e.g. `atoms3r`, `tab5`, `p4nano`, `browser`, `sim` (up to 32 bytes) | none; Family mruby's firmware sets it from the board |
 | `name` | a display name (up to 64 bytes) | none |
-| `icon` | the bytes of a PNG: at most 8 KB and 256x256 (32x32 is the size meant). PNG only: an SVG can carry scripts | the file at `Asterism.default_icon_path` when it is there: on CRuby the gem's `data/icon.png` (a ruby), on the boards `/usr/share/asterism/icon.png` |
+| `icon` | the bytes of a PNG (a binary String; sent as a MessagePack bin): at most 8 KB and 256x256 (32x32 is the size meant). PNG only: an SVG can carry scripts | the file at `Asterism.default_icon_path` when it is there: on CRuby the gem's `data/icon.png` (a ruby), on the boards `/usr/share/asterism/icon.png` |
 | `icon_hash` | set by Asterism, never given: the icon's summary (8 hex digits: the Adler-32 of the PNG's chunk CRCs, so a board computes it from a few bytes) | |
 
 - **Setting.** `Asterism.profile(**fields)` changes the fields given and keeps
@@ -539,7 +550,7 @@ end
   another. Your own `put` does not come back to your own subscriber on the
   same session.
 - **Keys.** Keep your keys out of the object layer's: `asterism/<node>/<app>/**`
-  is answered by its queryable (`get` there is a call), `asterism/<node>` and
+  is answered by its queryable (`get` there is a call), `asterism/<node>/<app>` and
   `asterism/<node>/<app>/<object>` are its liveliness tokens. Putting under
   `asterism/<node>/<app>/<object>/<anything>` (a state, a log) is fine:
   puts and subscriptions do not meet queryables or liveliness.
@@ -556,11 +567,17 @@ Asterism::Error                       (the Zenoh bindings define it)
 ├── Asterism::TimeoutError            (no answer in time; old name Asterism::Timeout)
 │   └── Asterism::ROS::TimeoutError   (old name Asterism::ROS::Timeout)
 ├── Asterism::EncodeError
-├── Asterism::RemoteError             (remote_class, remote_message)
+├── Asterism::RemoteError             (remote_kind, remote_class, remote_message)
 ├── Asterism::ROS::UnknownType
 ├── Asterism::CDR::DecodeError
 └── Asterism::DeprecationError        (only with Asterism.deprecations = :raise)
 ```
+
+`RemoteError#remote_kind` says what happened on the other side, as a word
+of the protocol (docs/protocol.md 4.4): `raised` (the method raised;
+`remote_class` is its class there), `not_exposed`, `no_object`,
+`arguments`, `malformed`, `unsendable`, `nesting`, `protocol` (the other
+side speaks a different protocol); nil when the answer did not say.
 
 The old names `Asterism::Timeout` and `Asterism::ROS::Timeout` still work
 (they warn once). Inside `module Asterism`, `Timeout` is Ruby's `Timeout`
@@ -661,27 +678,71 @@ session is closed, its entities raise `Zenoh::ClosedError`).
 
 ## Values
 
-Only what MessagePack carries: `nil`, `true`, `false`, `Integer` (64 bit),
-`Float`, `String`, `Array`, `Hash`. A `Symbol` is sent as a `String` (also
-as a Hash key: keyword arguments arrive as Symbols again). Anything else in
-the arguments raises `EncodeError` before sending; in a return value the
-caller gets `RemoteError` (`Asterism::EncodeError`). Nesting is limited to
-16 levels.
+Only what MessagePack carries: `nil`, `true`, `false`, `Integer` (signed
+64 bit), `Float`, `String`, `Array`, `Hash`. A `Symbol` is sent as a
+`String` and arrives as one (also as a Hash key; keyword names become
+Symbols again). A binary String (`String#b`: ASCII-8BIT on CRuby, the
+binary flag on mruby) goes as a MessagePack bin and arrives as a binary
+String; any other String goes as text (str). Anything else in the
+arguments, or an Integer outside the signed 64-bit range, raises
+`EncodeError` before sending; in a return value the caller gets
+`RemoteError` (`unsendable`). Nesting is limited to 16 levels.
+
+- Hash keys: use String (or Symbol) and Integer keys for anything another
+  language reads (Python and JavaScript refuse others by default).
+- Times: send an Integer of nanoseconds since the epoch (or name the unit:
+  `timeout_ms`); there is no time type.
+- A keyword given as `nil` and one left out differ: the callee's default
+  applies only to the one left out.
+- A JavaScript caller's `1.0` arrives as the Integer `1`.
+
+## Who called
+
+The caller's node ID travels in the call's key (`.../call/<caller>`). An
+exposed method can read it:
+
+```ruby
+class Rover
+  def stop
+    c = Asterism.current_call        # nil outside a call
+    log("stop from #{c.from}")       # c.verified: :claimed (:local from this app)
+  end
+
+  def drive(v, w, from:)             # caller: :from fills from: in
+    log("drive from #{from}")
+  end
+end
+Asterism.expose("rover", Rover.new, methods: { stop: 0 })
+Asterism.expose("wheels", Rover.new, methods: { drive: 2 }, caller: :from)
+```
+
+- `Asterism.current_call` is set only while a method runs for a call (per
+  thread on CRuby). Calls answered while that method waits for its own
+  call come on top of it and go when they end.
+- With `caller: :from`, a call that passes `from:` itself is refused
+  (`RemoteError`, `remote_kind` `arguments`): `from` is always the one
+  Asterism took from the call.
+- **It is a claim.** Any client can call with any name. A router's access
+  control makes it binding: with mutual TLS, zenohd's ACL can let each
+  certificate query only keys ending in its own name
+  (`asterism/*/*/*/call/<name>`; docs/protocol.md 4.7). Without such a
+  router, use `from` to avoid mistakes, not to decide who may do what.
 
 ## Keys and encoding
 
-The full description, for implementations in other languages, is
-[docs/protocol.md](docs/protocol.md) (with the conformance tests); the
-Ruby-shaped parts and proposals for changing them are in
+Wire protocol 1. The full description, for implementations in other
+languages, is [docs/protocol.md](docs/protocol.md) (with the conformance
+tests); why it has this shape (the review of protocol 0's Ruby-shaped
+parts, and what was decided) is
 [docs/protocol_review.md](docs/protocol_review.md).
 
 | Key | Zenoh | Payload |
 |---|---|---|
-| `asterism/<node>/<app>/<object>/call` | get / queryable | query: `[method, [args...], {kwargs}]`; reply: `["ok", value]` or `["error", class name, message]` |
-| `asterism/<node>/<app>/<object>/meta` | get / queryable | reply: `{"methods" => [[name, arity], ...]}` (arity `-1` when not declared). The object may be `*` in the query: one reply per object |
-| `asterism/<node>` | liveliness | the node is connected |
+| `asterism/<node>/<app>/<object>/call/<caller>` | get / queryable | query: `{"method" => name, "args" => [...], "kwargs" => {...}}` (args and kwargs left out when empty); reply: `{"value" => value}` or `{"error" => {"kind" => ..., "class" => ..., "message" => ...}}`. `<caller>` is the calling node's ID |
+| `asterism/<node>/<app>/<object>/meta` | get / queryable | reply: `{"methods" => [{"name" => name, "arity" => n}, ...]}` (arity `-1` when not declared). The object may be `*` in the query: one reply per object |
+| `asterism/<node>/<app>` | liveliness | the application is connected (a node is there while any of its applications or objects is) |
 | `asterism/<node>/<app>/<object>` | liveliness | the object is exposed |
-| `asterism/<node>/@profile` | get / queryable, and put | query (parameter `icon=0` for no icon): reply the node's profile, a Hash (`kind`, `host`, `name`, `icon`, `icon_hash`; [Profiles](#profiles)). The node also puts the profile without the icon at connect and on each change. `@profile` is a verbatim chunk, so `asterism/**` does not match it: the object layer's wildcards never see it. An application's own profile would go at `asterism/<node>/<app>/@profile` (not in 0.6.0) |
+| `asterism/<node>/@profile` | get / queryable, and put | query (parameter `icon=0` for no icon): reply the node's profile, a Hash (`kind`, `host`, `name`, `icon`, `icon_hash`; [Profiles](#profiles)). The node also puts the profile without the icon at connect and on each change. `@profile` is a verbatim chunk, so `asterism/**` does not match it: the object layer's wildcards never see it. An application's own profile would go at `asterism/<node>/<app>/@profile` (not yet) |
 
 One queryable per application (`asterism/<node>/<app>/**`), and one for the
 profile (`asterism/<node>/@profile`). A call whose
@@ -736,9 +797,9 @@ nested type (`geometry_msgs/msg/Twist`) at start-up took 0.6 KB more.
 
 - Objects cannot be passed by reference (a return value is a copy), blocks
   cannot be sent, there are no events (later stages).
-- The node token `asterism/<node>` is shared by every application of that
-  node; when one of them closes, the others still list the node through
-  their objects, but a watcher may see the node token go away.
+- The wire protocol is protocol 1 only: nodes of asterism before 0.7.0
+  (protocol 0) do not see 0.7.0's objects and a call between the two
+  fails (a protocol 0 call is refused with `remote_kind` `protocol`).
 - No authentication by default (plain TCP): a trusted LAN is assumed, or
   TLS through a router (CRuby; [Over TLS](#over-tls-a-router-on-the-internet)).
 - One object-layer connection per process (per VM on the boards).

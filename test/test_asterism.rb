@@ -27,8 +27,17 @@ class TestAsterismObjects < Minitest::Test
       def secret = "no"
       # Calls the caller back while answering (nested waits on both sides).
       def relay(node) = Asterism["#{node}/t/back"].name + "!"
+      def who
+        c = Asterism.current_call
+        [c.from, c.verified.to_s, c.object, c.method]
+      end
+      def display = "remote display"
     end
-    Asterism.expose("calc", Calc.new, methods: { add: 2, kw: 1, boom: 0, bin: 0, echo: 1, relay: 1 })
+    class Greeter
+      def hello(name, from:) = "#{name} from #{from}"
+    end
+    Asterism.expose("calc", Calc.new, methods: { add: 2, kw: 1, boom: 0, bin: 0, echo: 1, relay: 1, who: 0, display: 0 })
+    Asterism.expose("greet", Greeter.new, methods: { hello: 1 }, caller: :from)
     STDOUT.puts "ready"
     STDOUT.flush
     loop do
@@ -82,15 +91,32 @@ class TestAsterismObjects < Minitest::Test
     e = assert_raises(Asterism::RemoteError) { calc.boom }
     assert_equal "ArgumentError", e.remote_class
     assert_equal "boom in child", e.remote_message
+    assert_equal "raised", e.remote_kind
     e = assert_raises(Asterism::RemoteError) { calc.secret }
     assert_equal "NoMethodError", e.remote_class
+    assert_equal "not_exposed", e.remote_kind
     e = assert_raises(Asterism::RemoteError) { calc.add(1) }
     assert_equal "ArgumentError", e.remote_class
+    assert_equal "arguments", e.remote_kind
     assert_raises(Asterism::EncodeError) { calc.echo(Object.new) }
+    e = assert_raises(Asterism::EncodeError) { calc.echo(2**64) }
+    assert_match(/signed 64-bit/, e.message)
+
+    # Who called (protocol 1: the caller's node is the call key's last chunk).
+    assert_equal ["parent", "claimed", "calc", "who"], calc.who
+    assert_nil Asterism.current_call
+    greet = Asterism["child/t/greet"]
+    assert_equal "hi from parent", greet.hello("hi")
+    e = assert_raises(Asterism::RemoteError) { greet.hello("hi", from: "someone else") }
+    assert_equal "arguments", e.remote_kind
+    assert_match(/from: is given by Asterism/, e.message)
+    # A name Object already has: by its name.
+    assert_equal "remote display", calc.asterism_call(:display)
+    assert_equal 7, calc.async.asterism_call("add", 3, 4).value
 
     assert calc.respond_to?(:add)
     refute calc.respond_to?(:secret)
-    assert_equal %i[add kw boom bin echo relay].sort, calc.remote_methods.sort
+    assert_equal %i[add kw boom bin echo relay who display].sort, calc.remote_methods.sort
     warned = with_deprecations { assert_equal calc.remote_methods.sort, calc.methods.sort; calc.methods }
     assert_equal 1, warned.size
     assert_match(/Proxy#methods is deprecated.*remote_methods/, warned[0])
@@ -113,7 +139,7 @@ class TestAsterismObjects < Minitest::Test
     assert_match(/Asterism\[\] with the time limit as a positional argument/, warned[0])
     assert_match(/Float.*2\.0 waits 2 ms/, warned[1])
 
-    assert_equal ["child/t/calc"], Asterism.each("child/*/*").map(&:asterism_path)
+    assert_equal ["child/t/calc", "child/t/greet"], Asterism.each("child/*/*").map(&:asterism_path).sort
     assert_equal ["parent", "child"], Asterism.nodes
     assert_equal "parent", Asterism["parent/t/back"].name, "own objects are called in place"
 
@@ -159,11 +185,18 @@ class TestAsterismObjects < Minitest::Test
     end
   end
 
-  def test_codec_sends_strings_as_str
-    bin = Asterism::Codec.pack(["\xff".b, "abc"])
-    # fixarray(2), fixstr(1) 0xff, fixstr(3) "abc": no bin type (0xc4..0xc6),
-    # which the boards' MessagePack does not read.
-    assert_equal "\x92\xa1\xff\xa3abc".b, bin
+  def test_codec_sends_binary_strings_as_bin
+    bin = Asterism::Codec.pack(["\xff".b, "abc", :sym])
+    # fixarray(3), bin8(1) 0xff, fixstr(3) "abc", fixstr(3) "sym".
+    assert_equal "\x93\xc4\x01\xff\xa3abc\xa3sym".b, bin
+    assert_raises(Asterism::EncodeError) { Asterism::Codec.pack([2**63]) }
+    assert_raises(Asterism::EncodeError) { Asterism::Codec.pack({ "a" => -(2**63) - 1 }) }
+    assert_equal "\xd3\x80\x00\x00\x00\x00\x00\x00\x00".b, Asterism::Codec.pack(-(2**63))
+    # Received: a uint64 above 2^63-1, trailing bytes and ext are not values.
+    assert_nil Asterism::Codec.unpack("\xcf\xff\xff\xff\xff\xff\xff\xff\xff".b)
+    assert_equal 2**63 - 1, Asterism::Codec.unpack("\xcf\x7f\xff\xff\xff\xff\xff\xff\xff".b)
+    assert_nil Asterism::Codec.unpack("\x01\x00".b)
+    assert_nil Asterism::Codec.unpack("\xd4\x01\x00".b)
   end
 end
 

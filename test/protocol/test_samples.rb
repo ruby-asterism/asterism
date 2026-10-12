@@ -18,7 +18,7 @@ class TestProtocolSamples < Minitest::Test
 
   def test_every_encoding_decodes_to_the_value
     S["values"].each do |v|
-      next unless v["portable"]
+      next unless v["portable"] && !v["expect"]
       v["encodings"].each do |hex|
         got = TV.unpack([hex].pack("H*"))
         assert_nil TV.mismatch(v["value"], got), "#{v['id']} as #{hex[0, 20]}"
@@ -28,7 +28,7 @@ class TestProtocolSamples < Minitest::Test
 
   def test_the_first_encoding_is_what_cruby_writes
     S["values"].each do |v|
-      next unless v["portable"]
+      next unless v["portable"] && !v["expect"]
       sent = Asterism::Codec.pack(TV.to_ruby(v["value"])).unpack1("H*")
       assert_equal v["encodings"][0], sent, v["id"]
     end
@@ -36,11 +36,20 @@ class TestProtocolSamples < Minitest::Test
 
   def test_payloads_are_messagepack_unless_meant_not_to_be
     S["incoming"].each do |q|
-      next if q["payload_hex"].nil? || !q["portable"] || q["id"].include?("not MessagePack")
+      next if q["payload_hex"].nil? || !q["portable"] || q["id"].start_with?("malformed:")
       TV.unpack([q["payload_hex"]].pack("H*")) # raises when not
     end
     S["outgoing"].each do |o|
       o["reply_hex"].each { |h| TV.unpack([h].pack("H*")) unless o["id"].include?("not MessagePack") }
+    end
+    pass
+  end
+
+  # What the protocol does not carry: the CRuby implementation does not
+  # read it as a value either.
+  def test_values_outside_the_protocol_do_not_decode
+    S["values"].select { _1["expect"] }.each do |v|
+      v["encodings"].each { |hex| assert_nil Asterism::Codec.unpack([hex].pack("H*")), "#{v['id']} as #{hex}" }
     end
     pass
   end

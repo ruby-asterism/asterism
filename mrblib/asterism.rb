@@ -7,20 +7,25 @@
 #                                      # Asterism["...", timeout: 5.0])
 #   Asterism.poll                      # call regularly (answers incoming calls)
 #
-# Keys (doc/ruby_asterism/design.md ch. 4):
-#   asterism/<node>/<app>/<object>/call   get: payload [method, args, kwargs]
-#                                         reply ["ok", value] or
-#                                         ["error", class name, message]
-#   asterism/<node>/<app>/<object>/meta   get: reply {"methods" => [[name, arity], ...]}
-#   asterism/<node>                       liveliness: the node is up
-#   asterism/<node>/<app>/<object>        liveliness: the object is exposed
-#   asterism/<node>/@profile              get: reply the node's profile (profile.rb)
+# Keys and payloads: protocol 1 (docs/protocol.md):
+#   asterism/<node>/<app>/<object>/call/<caller>
+#                     get: {"method" => name, "args" => [...], "kwargs" => {...}}
+#                     reply {"value" => v} or
+#                     {"error" => {"kind" => k, "class" => c, "message" => m}}
+#   asterism/<node>/<app>/<object>/meta
+#                     get: reply {"methods" => [{"name" => n, "arity" => a}, ...]}
+#   asterism/<node>/<app>             liveliness: the application is up
+#   asterism/<node>/<app>/<object>    liveliness: the object is exposed
+#   asterism/<node>/@profile          get: reply the node's profile (profile.rb)
 #
 # Everything is polled: nothing runs behind the application's back. A call
 # that waits for its answer keeps polling meanwhile and answers the calls
 # that come in, so two machines calling each other do not lock up.
 module Asterism
   ROOT = "asterism"
+  # The version of the wire protocol this implementation speaks (and the
+  # only one: protocol 0, the 0.x releases before 0.7.0, is not spoken).
+  PROTOCOL = 1
   # The time limit of a call (Asterism[path] without timeout:), in seconds
   # and in milliseconds.
   DEFAULT_TIMEOUT = 2.0
@@ -51,14 +56,46 @@ module Asterism
   class Disconnected < Error; end
 
   # The remote method raised, or could not be called (not exposed, wrong
-  # number of arguments). remote_class is the class name on the other side.
+  # number of arguments). remote_class is the class name on the other side,
+  # remote_kind what happened, as a protocol word (a String): "raised" (the
+  # method raised; remote_class is then the callee language's own name),
+  # "not_exposed", "no_object", "arguments", "malformed", "unsendable",
+  # "nesting", "protocol" (docs/protocol.md 4.4); nil when the answer did
+  # not say.
   class RemoteError < Error
-    attr_reader :remote_class, :remote_message
+    attr_reader :remote_class, :remote_message, :remote_kind
 
-    def initialize(remote_class, remote_message)
+    def initialize(remote_class, remote_message, remote_kind = nil)
       @remote_class = remote_class.to_s
       @remote_message = remote_message.to_s
+      @remote_kind = remote_kind.nil? ? nil : remote_kind.to_s
       super("#{@remote_class}: #{@remote_message}")
+    end
+  end
+
+  # What Asterism.current_call returns while an exposed method runs for a
+  # call: who called and what. from is the calling node's ID (a String),
+  # verified how far that is checked: :claimed (the caller named itself in
+  # the call's key; a router's access control is what makes the name
+  # binding, docs/protocol.md 4.7) or :local (a call from this same
+  # application, which does not go on the network). object is the exposed
+  # object's name, method the method's name (Strings).
+  class CurrentCall
+    attr_reader :from, :verified, :object, :method
+
+    def initialize(from, verified, object, method)
+      @from = from
+      @verified = verified
+      @object = object
+      @method = method
+    end
+
+    def inspect
+      "#<Asterism::CurrentCall #{@object}.#{@method} from #{@from} (#{@verified})>"
+    end
+
+    def to_s
+      inspect
     end
   end
 
@@ -79,6 +116,9 @@ module Asterism
     MAX_DEPTH = 16
 
     # The value as it will be sent (Symbols become Strings), or EncodeError.
+    # A String goes as a MessagePack str, a binary String (String#b) as a
+    # bin: the MessagePack module decides by the String's encoding
+    # (ASCII-8BIT on CRuby, the binary flag on mruby).
     def self.check(v, depth = 0)
       raise ::Asterism::EncodeError, "value nested too deep (max #{MAX_DEPTH})" if depth > MAX_DEPTH
       if v.nil? || v == true || v == false || v.is_a?(Integer) || v.is_a?(Float) || v.is_a?(String)
@@ -101,7 +141,15 @@ module Asterism
       ::MessagePack.pack(check(v))
     end
 
-    # nil when the bytes are not MessagePack.
+    # A String for a text field of the protocol (an error's class and
+    # message): always a str, also when it came as a binary String.
+    def self.text(s)
+      "#{s}"
+    end
+
+    # nil when the bytes are not exactly one MessagePack value of the types
+    # above (the MessagePack module refuses trailing bytes, ext types and
+    # integers outside int64).
     def self.unpack(bytes)
       return nil if bytes.nil? || bytes.empty?
       ::MessagePack.unpack(bytes)
@@ -219,7 +267,7 @@ module Asterism
         s.close
         raise Error, "#{node}/#{app} is already on the network"
       end
-      @node_token = s.liveliness("#{ROOT}/#{node}")
+      @app_token = s.liveliness("#{ROOT}/#{node}/#{app}")
       @queryable = s.queryable("#{ROOT}/#{node}/#{app}/**", depth: 32)
       @watch = s.liveliness_watch("#{ROOT}/**", depth: watch_depth)
       @profile_queryable = s.queryable("#{ROOT}/#{node}/#{Profile::KEY}", depth: 4)
@@ -231,9 +279,9 @@ module Asterism
     @session = s
     @node = node
     @app = app
-    @objects = {}  # name => [object, {method name => arity}, token]
+    @objects = {}  # name => [object, {method name => arity}, token, caller keyword or nil]
     @alive = {}    # "node/app/object" => node (from liveliness)
-    @nodes = {}    # node => true (from liveliness)
+    @apps = {}     # "node/app" => node (from liveliness)
     @proxies = {}
     @depth = 0
     @lost = nil
@@ -245,8 +293,8 @@ module Asterism
     self
   end
 
-  # Whether objects of node/app are alive already (a second copy of the
-  # same application). Waits for the answer (a router answers at once), at
+  # Whether node/app is alive already (its application token or an object:
+  # a second copy of the same application). Waits for the answer (a router answers at once), at
   # most check_ms. @api private
   def self.already_there?(s, node, app, check_ms = 1500)
     get_ms = check_ms > 1000 ? check_ms - 500 : check_ms
@@ -301,7 +349,7 @@ module Asterism
     @session = nil
     @objects = {}
     @alive = {}
-    @nodes = {}
+    @apps = {}
     @node_list = nil
     @nodes_changed = true
     @proxies = {}
@@ -313,7 +361,7 @@ module Asterism
         @releasing = nil
       end
     end
-    @node_token = nil
+    @app_token = nil
     @queryable = nil
     @watch = nil
     @profile_queryable = nil
@@ -376,7 +424,11 @@ module Asterism
   # Makes obj callable from other machines as <node>/<app>/<name>. Only the
   # listed methods can be called. methods: is an Array of names, or a Hash
   # name => number of arguments (checked before calling; -1 for any).
-  def self.expose(name, obj, methods:)
+  # caller: a keyword name (caller: :from): each call passes the calling
+  # node's ID (Asterism.current_call.from) to the method as that keyword,
+  # and a call that brings the keyword itself is refused (an "arguments"
+  # error), so the value is always the one Asterism took from the call.
+  def self.expose(name, obj, methods:, caller: nil)
     s = session!
     name = check_name("object", name)
     table = {}
@@ -389,9 +441,17 @@ module Asterism
     table.each_key do |m|
       raise ArgumentError, "#{obj.class} has no public method #{m}" unless obj.respond_to?(m)
     end
+    kw = nil
+    unless caller.nil?
+      unless caller.is_a?(Symbol) || caller.is_a?(String)
+        raise ArgumentError, "caller: expects a keyword name (caller: :from), got #{caller.inspect}"
+      end
+      kw = caller.to_s
+      raise ArgumentError, "caller: expects a keyword name (caller: :from), got #{caller.inspect}" if kw.empty?
+    end
     unexpose(name)
     token = s.liveliness("#{ROOT}/#{@node}/#{@app}/#{name}")
-    @objects[name] = [obj, table, token]
+    @objects[name] = [obj, table, token, kw]
     "#{@node}/#{@app}/#{name}"
   rescue Asterism::Zenoh::Error => e
     raise Disconnected, e.message
@@ -424,7 +484,7 @@ module Asterism
 
   # ------------------------------------------------------------ nodes coming and going
 
-  # on_join { |node| }: another node appeared (its node token or one of its
+  # on_join { |node| }: another node appeared (one of its applications or
   # objects). The nodes there already join on the first polls after
   # connecting. on_leave { |node| }: a node is gone (no token and no object
   # left); when the connection is lost, every node known until then leaves.
@@ -546,7 +606,11 @@ module Asterism
   # Polls until the block is true. Answers incoming calls meanwhile.
   # @api private
   def self.wait_until
-    raise Error, "calls nested too deep (max #{MAX_NESTING})" if (@depth || 0) >= MAX_NESTING
+    if (@depth || 0) >= MAX_NESTING
+      # Kept, so that a method that lets it out is answered as "nesting".
+      @nesting_error = Error.new("calls nested too deep (max #{MAX_NESTING})")
+      raise @nesting_error
+    end
     @depth = (@depth || 0) + 1
     begin
       until yield
@@ -592,13 +656,13 @@ module Asterism
       i += 1
       rest = key[ROOT.length + 1, key.length].to_s
       parts = rest.split("/")
-      if parts.size == 1
+      if parts.size == 2 # an application: asterism/<node>/<app>
         if alive
-          @nodes[rest] = true
+          @apps[rest] = parts[0]
         else
-          @nodes.delete(rest)
+          @apps.delete(rest)
         end
-      elsif parts.size == 3
+      elsif parts.size == 3 # an object: asterism/<node>/<app>/<object>
         if alive
           @alive[rest] = parts[0]
         else
@@ -622,7 +686,7 @@ module Asterism
     return list if list
     list = [@node]
     seen = { @node => true }
-    names = @nodes.keys
+    names = @apps.values
     i = 0
     while i < names.size
       n = names[i]
@@ -689,14 +753,16 @@ module Asterism
   # @api private
   def self.call_async(path, method, args, kwargs, timeout_ms)
     parts = split_path(path)
-    payload = Codec.pack([method.to_s, args, kwargs])
+    payload = Codec.pack(request(method, args, kwargs))
     if parts[0] == @node && parts[1] == @app && @session
       # This application's own object: no network (a session does not see
       # its own queryable), same encoding and checks as a remote call.
-      return Future.answered(path, method, dispatch(parts[2], payload))
+      return Future.answered(path, method, dispatch(parts[2], payload, @node, :local))
     end
     begin
-      g = session!.get("#{ROOT}/#{path}/call", timeout_ms: timeout_ms, payload: payload)
+      s = session!
+      # The caller's node ID is the key's last chunk (docs/protocol.md 4.1).
+      g = s.get("#{ROOT}/#{path}/call/#{@node}", timeout_ms: timeout_ms, payload: payload)
     rescue Asterism::Zenoh::Error => e
       lost(e.message)
       raise Disconnected, e.message
@@ -704,18 +770,28 @@ module Asterism
     Future.new(path, method, g, now_ms + timeout_ms, timeout_ms)
   end
 
+  # The request of a call: a map with the method's name, and the arguments
+  # and keyword arguments when there are any (absent means none).
+  # @api private
+  def self.request(method, args, kwargs)
+    req = { "method" => method.to_s }
+    req["args"] = args unless args.nil? || args.empty?
+    req["kwargs"] = kwargs unless kwargs.nil? || kwargs.empty?
+    req
+  end
+
   # @api private
   def self.call(path, method, args, kwargs, timeout_ms)
     call_async(path, method, args, kwargs, timeout_ms).value
   end
 
-  # The meta reply of path: {"methods" => [[name, arity], ...]}.
+  # The meta reply of path: {"methods" => [{"name" => n, "arity" => a}, ...]}.
   # @api private
   def self.meta(path, timeout_ms = DEFAULT_TIMEOUT_MS)
     parts = split_path(path)
     if parts[0] == @node && parts[1] == @app && @session
       m = meta_of(parts[2])
-      raise RemoteError.new("NameError", "no object #{parts[2]} exposed by #{@node}/#{@app}") unless m
+      raise RemoteError.new("NameError", "no object #{parts[2]} exposed by #{@node}/#{@app}", "no_object") unless m
       return m
     end
     begin
@@ -729,6 +805,21 @@ module Asterism
   end
 
   # ------------------------------------------------------------ answering
+
+  # The call being answered now (an Asterism::CurrentCall: who called,
+  # which object and method), while an exposed method runs for a call; nil
+  # outside one. Calls answered while that method waits for its own call
+  # are on top of it until they end.
+  def self.current_call
+    stack = call_stack
+    stack.empty? ? nil : stack[stack.size - 1]
+  end
+
+  # The calls being answered, innermost last (CRuby: per thread).
+  # @api private
+  def self.call_stack
+    @call_stack ||= []
+  end
 
   # @api private
   def self.answer_calls
@@ -753,24 +844,44 @@ module Asterism
     end
   end
 
-  # asterism/<node>/<app>/<object>/<call|meta>; the node and app may come
-  # as wildcards (the query matched this application's queryable).
+  # asterism/<node>/<app>/<object>/call/<caller> and
+  # asterism/<node>/<app>/<object>/meta; the node and app may come as
+  # wildcards (the query matched this application's queryable).
   # @api private
   def self.answer(q)
     parts = q.key.split("/")
-    return unless parts.size == 5
+    n = parts.size
+    return unless n == 5 || n == 6
     obj = parts[3]
     kind = parts[4]
     prefix = "#{ROOT}/#{@node}/#{@app}/"
     if kind == "meta"
+      return unless n == 5
       names = obj == "*" ? @objects.keys : [obj]
-      names.each do |n|
-        m = meta_of(n)
-        q.reply("#{prefix}#{n}/meta", Codec.pack(m)) if m
+      names.each do |nm|
+        m = meta_of(nm)
+        q.reply("#{prefix}#{nm}/meta", Codec.pack(m)) if m
       end
-    elsif kind == "call" && obj != "*"
-      q.reply("#{prefix}#{obj}/call", dispatch(obj, q.payload))
+    elsif kind == "call" && valid_name?(obj)
+      if n == 5
+        # A protocol 0 call (no caller chunk): refused, so that its sender
+        # learns why at once instead of waiting.
+        q.reply("#{prefix}#{obj}/call",
+                error_reply("protocol", "Asterism::Error",
+                            "#{@node}/#{@app} speaks Asterism protocol #{PROTOCOL}: call " \
+                            "asterism/<node>/<app>/<object>/call/<caller> with a map " \
+                            "{\"method\", \"args\", \"kwargs\"} (asterism 0.7.0 and later)"))
+      elsif valid_name?(parts[5])
+        q.reply("#{prefix}#{obj}/call/#{parts[5]}", dispatch(obj, q.payload, parts[5], :claimed))
+      end
     end
+  end
+
+  # Whether s can be a node, app or object name (check_name without raising).
+  # @api private
+  def self.valid_name?(s)
+    return false if s.nil? || s.empty? || s.start_with?("@")
+    !(s.include?("/") || s.include?("*") || s.include?("$") || s.include?("?") || s.include?("#"))
   end
 
   # @api private
@@ -778,37 +889,76 @@ module Asterism
     entry = @objects[name]
     return nil unless entry
     list = []
-    entry[1].each { |m, n| list << [m, n] }
+    entry[1].each { |m, n| list << { "name" => m, "arity" => n } }
     { "methods" => list }
   end
 
-  # Runs a call on an exposed object; returns the packed reply.
+  MALFORMED = "malformed call (expected a map {\"method\" => name, \"args\" => [...], \"kwargs\" => {...}})"
+
+  # Runs a call on an exposed object; returns the packed reply. from is
+  # the caller's node ID, verified how it is known (CurrentCall).
   # @api private
-  def self.dispatch(obj_name, payload)
-    req = Codec.unpack(payload)
-    unless req.is_a?(Array) && req.size == 3 && req[0].is_a?(String) && req[1].is_a?(Array) && req[2].is_a?(Hash)
-      return error_reply("ArgumentError", "malformed call (expected [method, args, kwargs])")
-    end
+  def self.dispatch(obj_name, payload, from, verified)
+    req = parse_request(Codec.unpack(payload))
+    return error_reply("malformed", "ArgumentError", MALFORMED) unless req
     entry = @objects[obj_name]
-    return error_reply("NameError", "no object #{obj_name} exposed by #{@node}/#{@app}") unless entry
+    return error_reply("no_object", "NameError", "no object #{obj_name} exposed by #{@node}/#{@app}") unless entry
     name = req[0]
     args = req[1]
     kw = req[2]
     arity = entry[1][name]
     if arity.nil?
-      return error_reply("NoMethodError", "undefined method '#{name}' for #{@node}/#{@app}/#{obj_name} (not exposed)")
+      return error_reply("not_exposed", "NoMethodError",
+                         "undefined method '#{name}' for #{@node}/#{@app}/#{obj_name} (not exposed)")
     end
     if arity >= 0 && args.size != arity
-      return error_reply("ArgumentError", "wrong number of arguments (given #{args.size}, expected #{arity})")
+      return error_reply("arguments", "ArgumentError", "wrong number of arguments (given #{args.size}, expected #{arity})")
     end
+    ckw = entry[3]
+    if ckw
+      if kw.key?(ckw)
+        return error_reply("arguments", "ArgumentError",
+                           "#{ckw}: is given by Asterism, not by the caller " \
+                           "(#{@node}/#{@app}/#{obj_name} is exposed with caller: :#{ckw})")
+      end
+      kw[ckw] = from
+    end
+    stack = call_stack
+    stack << CurrentCall.new(from, verified, obj_name, name)
     begin
       value = invoke(entry[0], name, args, kw)
-      Codec.pack(["ok", value])
-    rescue EncodeError => e
-      error_reply("Asterism::EncodeError", "the return value: #{e.message}")
     rescue => e
-      error_reply(e.class.to_s, e.message)
+      return error_reply(e.equal?(@nesting_error) ? "nesting" : "raised", e.class.to_s, e.message)
+    ensure
+      stack.pop
     end
+    begin
+      Codec.pack({ "value" => value })
+    rescue EncodeError => e
+      error_reply("unsendable", "Asterism::EncodeError", "the return value: #{e.message}")
+    end
+  end
+
+  # [method, args, kwargs] of a decoded request, or nil when it is not one:
+  # a map with "method" (a non-empty str), "args" (an array, absent: none)
+  # and "kwargs" (a map with str keys, absent: none). Other keys are
+  # ignored (room for later additions).
+  # @api private
+  def self.parse_request(req)
+    return nil unless req.is_a?(Hash)
+    m = req["method"]
+    return nil unless m.is_a?(String) && !m.empty?
+    args = req.key?("args") ? req["args"] : []
+    return nil unless args.is_a?(Array)
+    kw = req.key?("kwargs") ? req["kwargs"] : {}
+    return nil unless kw.is_a?(Hash)
+    keys = kw.keys
+    i = 0
+    while i < keys.size
+      return nil unless keys[i].is_a?(String)
+      i += 1
+    end
+    [m, args, kw]
   end
 
   # @api private
@@ -817,13 +967,14 @@ module Asterism
       obj.public_send(name, *args)
     else
       opts = {}
-      kw.each { |k, v| opts[k.to_s.to_sym] = v }
+      kw.each { |k, v| opts[k.to_sym] = v }
       obj.public_send(name, *args, **opts)
     end
   end
 
+  # {"error" => {"kind", "class", "message"}}, packed.
   # @api private
-  def self.error_reply(klass, message)
-    ::MessagePack.pack(["error", klass.to_s, message.to_s])
+  def self.error_reply(kind, klass, message)
+    ::MessagePack.pack({ "error" => { "kind" => kind, "class" => Codec.text(klass), "message" => Codec.text(message) } })
   end
 end

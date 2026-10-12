@@ -153,11 +153,15 @@ module Asterism
     def exposed = ::Asterism.exposed
 
     # Asterism.expose: methods: an Array of names or a Hash name => number
-    # of arguments. The object's methods run on the receiving thread (or in
+    # of arguments; caller: :from passes the calling node's ID as that
+    # keyword. The object's methods run on the receiving thread (or in
     # run, or in whatever polls).
-    def expose(name, obj, methods:)
-      ::Asterism.expose(name, obj, methods: methods)
+    def expose(name, obj, methods:, caller: nil)
+      ::Asterism.expose(name, obj, methods: methods, caller: caller)
     end
+
+    # Asterism.current_call: the call being answered on this thread, or nil.
+    def current_call = ::Asterism.current_call
 
     def unexpose(name)
       ::Asterism.unexpose(name)

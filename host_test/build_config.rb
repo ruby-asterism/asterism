@@ -13,6 +13,7 @@ MRuby::Build.new("host") do |conf|
   conf.gem core: "mruby-sleep"
   conf.gem core: "mruby-time"
   conf.gem core: "mruby-string-ext"
+  conf.gem core: "mruby-encoding"  # String#encoding: the test MessagePack tells a binary String (bin)
   conf.gem core: "mruby-array-ext"
   conf.gem core: "mruby-hash-ext"
   conf.gem core: "mruby-kernel-ext"

@@ -59,10 +59,11 @@ class TestApiSession < Minitest::Test
       assert_equal "o1", odom.pop(timeout: 3)
 
       # Calls are answered meanwhile.
-      g = @other.get("asterism/me/t/echo/call", timeout: 2.0, payload: MessagePack.pack(["echo", [7], {}]))
+      g = @other.get("asterism/me/t/echo/call/other", timeout: 2.0,
+                     payload: MessagePack.pack({ "method" => "echo", "args" => [7] }))
       replies = []
       wait_for { d = g.done?; replies.concat(g.each_reply); d }
-      assert_equal ["ok", 7], MessagePack.unpack(replies[0][1])
+      assert_equal({ "value" => 7 }, MessagePack.unpack(replies[0][1]))
 
       # Closing the ROS connection withdraws its nodes, nothing else.
       ros.close

@@ -1,17 +1,19 @@
-# Review of the wire protocol: the Ruby-shaped parts (proposal)
+# Review of the wire protocol: the Ruby-shaped parts
 
-Status: **proposal, nothing decided**. It goes with
-[protocol.md](protocol.md), which describes protocol 0 as asterism 0.6.0
-speaks it. This review lists where protocol 0 follows Ruby rather than
-something every language has, what that costs an implementation in
-Python, TypeScript or C, and how it could be changed. Nothing here is
-implemented: the wire stays as it is until the maintainer decides, and
-the decisions are implemented in a later stage (as protocol 1).
+Status: **decided (2026-10-12), implemented in asterism 0.7.0 as protocol
+1** ([protocol.md](protocol.md)). The maintainer took every
+recommendation, and chose to drop protocol 0 instead of keeping
+compatibility with it: where a recommendation's form was there only to
+stay compatible with protocol 0 (a call that stays a three-element array,
+a fourth element in error replies, an application token next to the shared
+node token), protocol 1 uses the clean form instead. The section
+"Decisions and what protocol 1 does" at the end says, item by item, what
+was done. The items below are the review as it was written, describing
+protocol 0.
 
 Each item has: what protocol 0 does, the trouble in other languages, the
 options, a recommendation, and how protocol 0 nodes keep working
-(compatibility). Section "Decisions" at the end lists the questions to
-answer.
+(compatibility).
 
 Two facts about protocol 0 readers decide what is compatible:
 
@@ -469,31 +471,28 @@ reply looks like "nobody answers").
 so that an implementation in another language does not answer with
 `reply_err`.
 
-## Decisions
+## Decisions and what protocol 1 does
 
-Answer by number (the recommendation in brackets):
+| # | Item | Decision | Protocol 1 (protocol.md) |
+|---|---|---|---|
+| 1 | R-1 arguments | recommended, clean form | the request is a map `{"method", "args", "kwargs"}`; `args` and `kwargs` may be left out (4.1). A language without keywords sends none |
+| 2 | R-2 Symbols | recommended | str on the wire, Strings when read (3.1) |
+| 3 | R-3 map keys | A | str and int are the portable keys; keyword names MUST be str (3.2) |
+| 4 | R-4 integers | recommended | signed 64-bit only; CRuby raises `EncodeError` before sending, a uint64 above 2^63-1 makes a payload malformed (3.3) |
+| 5 | R-5 floats | recommended | documented (3.3) |
+| 6 | R-6 time | A | int nanoseconds since the epoch by convention; no ext (3.3) |
+| 7 | R-7 bytes | B, without the compatible steps | bin for binary data, str for text, from every sender at once; the icon is a bin (3.4, 7.3). The boards' MessagePack reads bin as a binary String and writes one as bin |
+| 8 | R-8 nil and absent | recommended | documented (3.5) |
+| 9 | R-9 errors | recommended, clean form | the reply is `{"value" => v}` or `{"error" => {"kind", "class", "message"}}`; the kinds of 4.4. Ruby: `RemoteError#remote_kind` |
+| 10 | R-10 method names | recommended | opaque str, a portable-name guideline (2.1); Ruby: `proxy.asterism_call(name, ...)` |
+| 11 | R-11 arity | recommended | the meta entries are maps `{"name", "arity"}`, so later fields (optional arguments, keywords) are additions (5) |
+| 12 | R-13 version | A | the profile's `protocol` (1; absent: 0) (7.3) |
+| 13 | R-14 caller | b + c, the key form now | the caller's node ID is the call key's last chunk, `.../call/<caller>` (4.1); `Asterism.current_call` and `expose(..., caller: :from)` (4.7). Step 2 (source info) is not done: see protocol.md 4.7; step 3 (the router's ACL) is a deployment's (G1.5) |
+| 14 | R-15 malformed input | recommended | exactly one value; ext, out-of-range ints and trailing bytes are malformed (3.1). The boards' MessagePack checks them |
+| 15 | R-16 node tokens | B, clean form | one token per application, `asterism/<node>/<app>`, and no node token (6.1) |
+| - | R-12 meta shape | (kept) | a map |
+| - | R-17 Zenoh error replies | (kept) | not used, ignored by callers (4.5) |
 
-1. R-1 arguments: keep `[method, args, kwargs]`; receivers of protocol 1
-   also accept `[method, args]`? [yes]
-2. R-2 Symbols travel as strings and come back as strings? [yes, document]
-3. R-3 portable map keys: str and int (A), str only (B), anything (C)? [A]
-4. R-4 integers: signed 64-bit only, CRuby refuses others with
-   `EncodeError`? [yes]
-5. R-5 an integral float may arrive as an int from JavaScript: document
-   only? [yes]
-6. R-6 time: int nanoseconds since the epoch by convention (A), or the
-   timestamp ext (B)? [A now]
-7. R-7 bytes: str for everything (A), bin for binary in protocol 1 (B), only
-   the icon as bin (C)? [B, receivers first]
-8. R-8 nil and absent keywords differ: document? [yes]
-9. R-9 errors: add the fourth element `{"kind" => ...}`? [yes]
-10. R-10 method names: opaque, with a portable-name guideline and a
-    generic call form? [yes]
-11. R-11 arity: keep `[name, n]` for now? [yes]
-12. R-13 protocol version: a profile field `protocol`, absent = 0? [yes]
-13. R-14 caller identity: API `Asterism.current_call` (b), plus
-    `caller: :from` injection (c)? Steps 1-3 as written? Refuse on
-    mismatch? [b + c; steps 1-3; refuse]
-14. R-15 trailing bytes and unreadable types are malformed (fix the boards'
-    MessagePack)? [yes]
-15. R-16 add the application token `asterism/<node>/<app>`? [yes]
+Protocol 0 calls (on the five-chunk `.../call` key) are refused with the
+error `protocol` (protocol.md 4.3), so that an old caller or a new
+implementation that forgot the caller chunk is told at once.

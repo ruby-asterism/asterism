@@ -1,6 +1,6 @@
 # The implementation under test for the conformance driver (driver.rb), in
 # Ruby: the portable API only, so the same file runs on CRuby and on mruby
-# (docs/protocol.md 7.3 says what an implementation in another language
+# (docs/protocol.md 10.4 says what an implementation in another language
 # does in its place).
 #
 #   ruby -I lib node.rb LOCATOR MODE ICON_FILE            (CRuby, -r asterism)
@@ -42,6 +42,12 @@ class Subject
     Object.new
   end
 
+  # Who called: [from, verified, object, method] (Asterism.current_call).
+  def whoami
+    c = Asterism.current_call
+    [c.from, c.verified.to_s, c.object, c.method]
+  end
+
   def secret
     "not exposed"
   end
@@ -57,7 +63,7 @@ end
 def outcome
   ["ok", yield]
 rescue Asterism::RemoteError => e
-  ["error", e.remote_class, e.remote_message]
+  ["error", e.remote_class, e.remote_message, e.remote_kind]
 rescue Asterism::TimeoutError
   ["timeout"]
 rescue Asterism::Disconnected => e
@@ -73,7 +79,7 @@ else
   Asterism.connect(locator, node: "iut", app: "conf")
 end
 Asterism.expose("subject", Subject.new,
-                methods: { echo: 1, kw: 1, add: 2, boom: 0, any: -1, "ok?" => 0, unsendable: 0 })
+                methods: { echo: 1, kw: 1, add: 2, boom: 0, any: -1, "ok?" => 0, unsendable: 0, whoami: 0 })
 Asterism.expose("other", Other.new, methods: { ping: 0 })
 puts "ready"
 
@@ -97,15 +103,21 @@ steps = [
   ["nesting", -> { rec.nest([[1, [2]], { "k" => [{}] }]) }],
   ["numbers", -> { rec.num(2**62, -(2**62), 1.0, 0) }],
   ["utf-8", -> { rec.utf8("日本語") }],
+  ["bytes", -> { rec.bytes("\xff\x00".b) }],
   ["remote error", -> { rec.oops }],
   ["remote error, namespaced class", -> { rec.oops2 }],
+  ["remote error without a kind", -> { rec.oops3 }],
+  ["an error wins over a value", -> { rec.both }],
   ["malformed answer, not MessagePack", -> { rec.bad1 }],
-  ["malformed answer, not ok or error", -> { rec.bad2 }],
+  ["malformed answer, protocol 0's array", -> { rec.bad2 }],
+  ["malformed answer, neither value nor error", -> { rec.bad3 }],
+  ["malformed answer, error not a map", -> { rec.bad4 }],
   ["no answer", -> { rec.silent }],
   ["two answers, the first wins", -> { rec.twice }],
   ["meta", -> { [rec.respond_to?(:plain), rec.respond_to?(:x?), rec.respond_to?(:nope)] }],
   ["profile without the icon", -> { Asterism.profile_of("drv", icon: false, timeout: 1.5) }],
   ["profile with the icon", -> { Asterism.profile_of("drv", timeout: 1.5) }],
+  ["profile without a protocol", -> { Asterism.profile_of("drv", icon: false, timeout: 1.5) }],
   ["profile that is not one", -> { Asterism.profile_of("drv", icon: false, timeout: 1.5) }],
   ["change the profile", -> { Asterism.profile(name: "iut 2"); nil }]
 ]

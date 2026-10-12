@@ -22,9 +22,22 @@ class TestApiObjects < Minitest::Test
       def who = Thread.current.name.to_s
       # Calls the caller back while answering, from the child's run loop.
       def relay(node) = Asterism["#{node}/t/back"].name + "!"
+      def relay_who(node) = Asterism["#{node}/t/back"].caller_name
+      # A wait that is one too deep: answered as "nesting".
+      def nest
+        d = Asterism.instance_variable_get(:@depth)
+        Asterism.instance_variable_set(:@depth, Asterism::MAX_NESTING)
+        Asterism["parent/t/back"].name
+      ensure
+        Asterism.instance_variable_set(:@depth, d)
+      end
+    end
+    class Greet
+      def hello(from:) = [from, Asterism.current_call.from, Asterism.current_call.method]
     end
     Asterism.connect(opts[0], node: "child", app: "t", **opts[1]) do |net|
-      net.expose("calc", Calc.new, methods: { add: 2, slow: 1, who: 0, relay: 1 })
+      net.expose("calc", Calc.new, methods: { add: 2, slow: 1, who: 0, relay: 1, relay_who: 1, nest: 0 })
+      net.expose("greet", Greet.new, methods: { hello: 0 }, caller: :from)
       Thread.new do
         STDIN.read
         net.stop
@@ -37,6 +50,7 @@ class TestApiObjects < Minitest::Test
 
   class Back
     def name = "parent on #{Thread.current.name || 'main'}"
+    def caller_name = Asterism.current_call.from
   end
 
   def spawn_child
@@ -77,7 +91,7 @@ class TestApiObjects < Minitest::Test
     loc, opts = connect_opts
     value = Asterism.connect(loc, node: "parent", app: "t", **opts) do |net|
       assert_instance_of Asterism::Net, net
-      net.expose("back", Back.new, methods: [:name])
+      net.expose("back", Back.new, methods: [:name, :caller_name])
       net.on_join { |n| joined << n }
       net.on_join { |n| raise "join handler failed for #{n}" }
       net.on_leave { |n| left << n }
@@ -98,8 +112,16 @@ class TestApiObjects < Minitest::Test
       assert_equal [0, 2, 4, 6], results
       f = calc.async.add(1, 1)
       assert_equal 2, f.value
+      # Who called: the receiving thread answers the child's call back, and
+      # current_call is that thread's (none on the main thread meanwhile).
+      assert_equal "child", calc.relay_who("parent")
+      assert_nil net.current_call
+      assert_equal %w[parent parent hello], net["child/t/greet"].hello
+      e = assert_raises(Asterism::RemoteError) { calc.nest }
+      assert_equal "nesting", e.remote_kind
+      assert_match(/nested too deep/, e.remote_message)
 
-      assert_equal ["child/t/calc"], net.each("child/*/*").map(&:asterism_path)
+      assert_equal ["child/t/calc", "child/t/greet"], net.each("child/*/*").map(&:asterism_path).sort
       assert_equal [5], net.each("*/t/calc").map { _1.add(2, 3) }
       assert_equal %w[parent child], net.nodes
       e = assert_raises(Asterism::TimeoutError) { net["child/other/x", timeout: 0.5].anything }

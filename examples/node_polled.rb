@@ -73,8 +73,9 @@ class Info
       "pool_used" => nil, "up_ms" => ((now - @started) * 1000).to_i }
   end
 
-  def relay(from, n)
-    st = Asterism["#{from}/demo/info"].status
+  # Calls the caller back (Asterism.current_call says who called).
+  def relay(n)
+    st = Asterism["#{Asterism.current_call.from}/demo/info"].status
     [n, st["name"]]
   end
 
@@ -90,7 +91,7 @@ end
 Asterism.connect(opt[:router], node: opt[:node], app: opt[:app])
 Asterism.expose("apu", Apu.new, methods: { play: 1, stop: 0 })
 Asterism.expose("screen", Screen.new, methods: [:say])
-Asterism.expose("info", Info.new(opt[:node]), methods: { status: 0, relay: 2, boom: 0, echo: 1 })
+Asterism.expose("info", Info.new(opt[:node]), methods: { status: 0, relay: 1, boom: 0, echo: 1 })
 log("#{opt[:node]}/#{opt[:app]} connected to #{opt[:router]}")
 
 peer = opt[:peer]

@@ -72,6 +72,10 @@ other = Asterism.profile_of("mnode")
 check(other && other["kind"] == "picoruby" && other["host"] == "host_test" && other["name"] == "mruby node",
       "profile_of: #{other.inspect[0, 120]}")
 check(other && other["icon"] == ICON && other["icon_hash"] == info[2], "the icon came whole")
+check(other && other["protocol"] == 1, "the other node speaks protocol 1")
+check(other && other["icon"].encoding == "ASCII-8BIT", "the icon came as a bin (a binary String)")
+check(MessagePack.pack(Asterism::Profile.binary("\x89PNG")).getbyte(0) == 0xc4,
+      "an icon's bytes are a binary String (sent as a bin)")
 small = Asterism.profile_of("mnode", icon: false, timeout: 1.5)
 check(small && small["icon"].nil? && small["icon_hash"] == info[2], "icon: false leaves the bytes out")
 s = Asterism.session

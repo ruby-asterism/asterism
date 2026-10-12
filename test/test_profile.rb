@@ -87,7 +87,7 @@ class TestProfile < Minitest::Test
     assert_equal Asterism::Profile.png_info(ICON)[2], p0["icon_hash"]
     refute p0.key?("host")
     p1 = Asterism.profile(name: "Lab PC", host: :lab, kind: :console)
-    assert_equal({ "kind" => "console", "host" => "lab", "name" => "Lab PC" }, p1.except("icon", "icon_hash"))
+    assert_equal({ "protocol" => 1, "kind" => "console", "host" => "lab", "name" => "Lab PC" }, p1.except("icon", "icon_hash"))
     assert_equal "Lab PC", Asterism.profile(kind: nil)["name"], "fields not given stay"
     assert_equal "cruby", Asterism.profile["kind"], "kind: nil goes back to the default"
     refute Asterism.profile(icon: nil).key?("icon_hash"), "icon: nil is no icon"
@@ -183,9 +183,15 @@ class TestProfile < Minitest::Test
     notices = s.subscribe("asterism/*/@profile")
 
     pr = Asterism.profile_of("child")
-    assert_equal({ "kind" => "cruby", "host" => "test", "name" => "Child" }, pr.except("icon", "icon_hash"))
+    assert_equal({ "protocol" => 1, "kind" => "cruby", "host" => "test", "name" => "Child" }, pr.except("icon", "icon_hash"))
     assert_equal ICON, pr["icon"]
     assert_equal Asterism::Profile.png_info(ICON)[2], pr["icon_hash"]
+    # On the wire the icon is a bin (msgpack-ruby reads a bin as ASCII-8BIT,
+    # a str as UTF-8) and the protocol is told.
+    wire = Asterism.profile_async("child", true, nil, nil).raw_value
+    assert_equal Encoding::BINARY, wire["icon"].encoding
+    assert_equal Encoding::UTF_8, wire["kind"].encoding
+    assert_equal 1, wire["protocol"]
     without = Asterism.profile_of("child", icon: false, timeout: 1.5)
     assert_equal pr.except("icon"), without
 

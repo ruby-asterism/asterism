@@ -74,10 +74,11 @@ class TestAsterismSession < Minitest::Test
 
     # Calls are still answered by Asterism.poll on the shared session.
     Asterism.expose("echo", Echo.new, methods: [:echo])
-    g = @other.get("asterism/me/t/echo/call", timeout: 2.0, payload: MessagePack.pack(["echo", [5], {}]))
+    g = @other.get("asterism/me/t/echo/call/other", timeout: 2.0,
+                   payload: MessagePack.pack({ "method" => "echo", "args" => [5] }))
     replies = []
     wait_for { Asterism.poll; node.poll; d = g.done?; replies.concat(g.each_reply); d }
-    assert_equal ["ok", 5], MessagePack.unpack(replies[0][1])
+    assert_equal({ "value" => 5 }, MessagePack.unpack(replies[0][1]))
 
     # The application's close does not close it (warns once).
     _, err = capture_io { assert_nil s.close; s.close }
@@ -112,7 +113,7 @@ class TestAsterismSession < Minitest::Test
   end
 
   # The order and number of on_join / on_leave calls and the list of
-  # nodes, through joins and leaves of node tokens and objects. The same
+  # nodes, through joins and leaves of application tokens and objects. The same
   # sequence was checked against 0.5.0's Asterism.poll (which made the list
   # again on every poll).
   def test_join_and_leave_as_before
@@ -128,7 +129,7 @@ class TestAsterismSession < Minitest::Test
     end
     poll_some.call
 
-    t1 = @other.liveliness("asterism/n1")
+    t1 = @other.liveliness("asterism/n1/main")
     assert wait_for { Asterism.poll; events.size == 1 }
     assert_equal [[:join, "n1"]], events
     assert_equal %w[me n1], Asterism.nodes
@@ -149,7 +150,7 @@ class TestAsterismSession < Minitest::Test
     Asterism.nodes << "scribble"
     assert_equal list, Asterism.nodes, "nodes returns a copy"
 
-    # n1's token goes but its object stays: n1 stays. Then the object goes.
+    # n1's application token goes but its object stays: n1 stays. Then the object goes.
     t1.close
     poll_some.call
     assert_equal 2, events.size
@@ -160,7 +161,7 @@ class TestAsterismSession < Minitest::Test
     assert_equal %w[me n2], Asterism.nodes
 
     # A token and an object of one node in one burst: one join.
-    t3 = @other.liveliness("asterism/n3")
+    t3 = @other.liveliness("asterism/n3/main")
     o3 = @other.liveliness("asterism/n3/app/x")
     assert wait_for { Asterism.poll; events.size == 4 }
     poll_some.call
@@ -170,7 +171,7 @@ class TestAsterismSession < Minitest::Test
     # A block added later is told only of what comes after.
     late = []
     Asterism.on_join { |n| late << n }
-    t4 = @other.liveliness("asterism/n4")
+    t4 = @other.liveliness("asterism/n4/main")
     assert wait_for { Asterism.poll; late == ["n4"] }
     t4.close
     assert wait_for { Asterism.poll; events.last == [:leave, "n4"] }
