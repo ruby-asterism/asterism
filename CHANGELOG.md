@@ -6,6 +6,41 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
+## 0.5.0
+
+Node profiles; every 0.4.x call works as before. Needs asterism-zenoh /
+picoruby-asterism-zenoh 0.4.0 (unchanged).
+
+Added
+
+- Node profiles (README "Profiles"): `Asterism.profile(kind:, name:, host:,
+  icon:)` sets this node's profile (the fields given; the rest stay) and
+  returns it, `Asterism.profile` returns it, `Asterism.profile_of(node,
+  icon: true, timeout: 2.0)` asks another node's (nil when it does not
+  answer). The CRuby API: `net.profile`, `net.profile_of`. Answered on
+  `asterism/<node>/@profile` (a queryable of every connected application,
+  MessagePack Hash: `kind`, `host`, `name`, `icon`, `icon_hash`; the
+  parameter `icon=0` leaves the icon out), and put on the same key without
+  the icon at connect and on each change.
+- Defaults: `kind` is `cruby` on CRuby and `picoruby` on mruby / PicoRuby;
+  the icon is the file at `Asterism.default_icon_path` when it is there:
+  the gem's `data/icon.png` on CRuby (new; a ruby, 32x32), and
+  `/usr/share/asterism/icon.png` on the boards.
+- `Asterism::Profile`: `png_info` (the icon checks: PNG signature, chunks
+  from IHDR to IEND, 8 KB, 256x256; and `icon_hash`, the Adler-32 of the
+  chunks' CRCs), `check` (cleans a received profile: an icon that does not
+  pass is dropped), the limits as constants.
+- `rake test:mruby` and `host_test/`: the shared layer on mruby (built with
+  picoruby-asterism-zenoh, MRB_UTF8_STRING as on the boards), profiles
+  between two mruby processes. CI runs it.
+
+Changed
+
+- The "Ruby profile" (0.4.0) is now called the Ruby feature table, so that
+  it is not taken for a node's profile: `docs/ruby_profile.md` is
+  `docs/ruby_features.md`. The probes' directory `profile/` and its code
+  keep their names.
+
 ## 0.4.1
 
 Additions and a fix; every 0.4.0 call works as before. Needs

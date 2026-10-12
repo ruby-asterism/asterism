@@ -14,6 +14,7 @@
 #   asterism/<node>/<app>/<object>/meta   get: reply {"methods" => [[name, arity], ...]}
 #   asterism/<node>                       liveliness: the node is up
 #   asterism/<node>/<app>/<object>        liveliness: the object is exposed
+#   asterism/<node>/@profile              get: reply the node's profile (profile.rb)
 #
 # Everything is polled: nothing runs behind the application's back. A call
 # that waits for its answer keeps polling meanwhile and answers the calls
@@ -221,6 +222,7 @@ module Asterism
       @node_token = s.liveliness("#{ROOT}/#{node}")
       @queryable = s.queryable("#{ROOT}/#{node}/#{app}/**", depth: 32)
       @watch = s.liveliness_watch("#{ROOT}/**", depth: watch_depth)
+      @profile_queryable = s.queryable("#{ROOT}/#{node}/#{Profile::KEY}", depth: 4)
     rescue Asterism::Zenoh::Error => e
       s.close
       raise Disconnected, e.message
@@ -235,6 +237,7 @@ module Asterism
     @depth = 0
     @lost = nil
     @known = []    # the other nodes told to on_join so far
+    tell_profile   # for those who follow the profiles (the reply is the queryable's)
     self
   end
 
@@ -300,6 +303,7 @@ module Asterism
     @node_token = nil
     @queryable = nil
     @watch = nil
+    @profile_queryable = nil
   end
 
   # @api private
@@ -447,6 +451,7 @@ module Asterism
       return false
     end
     answer_calls
+    answer_profile
     follow_liveliness
     !@session.nil?
   rescue Asterism::Zenoh::Error => e

@@ -12,7 +12,7 @@ require "asterism/zenoh"
 require_relative "asterism/version"
 
 # The same order as an mrbgem's mrblib (alphabetical).
-%w[asterism cdr future proxy ros].each do |f|
+%w[asterism cdr future profile proxy ros].each do |f|
   require_relative "../mrblib/#{f}"
 end
 require_relative "asterism/cruby"

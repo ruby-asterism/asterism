@@ -21,7 +21,7 @@ Gem::Specification.new do |s|
   # data/msgs/NOTICE and the license texts in data/msgs ship with the gem).
   s.licenses = ["MIT", "Apache-2.0", "BSD-3-Clause"]
   s.required_ruby_version = ">= 3.2"
-  s.files = Dir["lib/**/*.rb", "mrblib/*.rb", "data/msgs/**/*", "tools/asterism_msggen.rb",
+  s.files = Dir["lib/**/*.rb", "mrblib/*.rb", "data/msgs/**/*", "data/icon.png", "tools/asterism_msggen.rb",
                 "README.md", "CHANGELOG.md", "LICENSE", "NOTICE"]
   s.require_paths = ["lib"]
   s.add_dependency "asterism-zenoh", "~> 0.4.0"

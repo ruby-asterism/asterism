@@ -6,11 +6,18 @@
 #   rake               all the test suites (the default)
 #   rake test:msgs     the generator, the type hashes, CDR, the bundled
 #                      types and the layout (CRuby only: no Zenoh, no docker)
-#   rake test:objects  the object layer and Asterism::ROS between CRuby
-#                      sessions; needs asterism-zenoh (below)
+#   rake test:objects  the object layer, node profiles and Asterism::ROS
+#                      between CRuby sessions; needs asterism-zenoh (below)
 #   rake test:api      the Ruby-like API of CRuby (lib/asterism/cruby/):
 #                      blocks, receiving threads, Enumerators; needs
 #                      asterism-zenoh too
+#   rake test:mruby    the shared layer on mruby (MRB_UTF8_STRING, as on the
+#                      boards): node profiles between two mruby processes.
+#                      Builds mruby with picoruby-asterism-zenoh, whose
+#                      checkout (../picoruby-asterism-zenoh or
+#                      PICORUBY_ASTERISM_ZENOH_DIR) provides the pinned mruby
+#                      and zenoh-pico (its `rake mruby:fetch zenoh:fetch`).
+#                      Not part of `rake` (it builds a C toolchain's worth)
 #   rake gem           build pkg/asterism-<version>.gem (publishing is a
 #                      separate, manual step)
 #   rake types:check   compare the type hashes with a ROS 2 Jazzy image
@@ -53,6 +60,7 @@ namespace :test do
     incs = ["-I", File.join(ROOT, "lib")]
     incs += ["-I", lib] if lib
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_asterism.rb")
+    sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_profile.rb")
   end
 
   desc "The Ruby-like API of CRuby (blocks, threads, Enumerators) for Zenoh, objects and ROS 2 (needs asterism-zenoh)"
@@ -66,6 +74,56 @@ namespace :test do
     incs += ["-I", lib] if lib
     Dir.glob(File.join(ROOT, "test/test_api_*.rb")).sort.each do |t|
       sh RbConfig.ruby, *incs, t
+    end
+  end
+end
+
+def picoruby_asterism_zenoh_dir
+  dir = ENV["PICORUBY_ASTERISM_ZENOH_DIR"].to_s
+  dir = File.expand_path("../picoruby-asterism-zenoh", ROOT) if dir.empty?
+  dir = File.expand_path(dir)
+  abort "picoruby-asterism-zenoh not found at #{dir} (PICORUBY_ASTERISM_ZENOH_DIR)" unless File.file?(File.join(dir, "mrbgem.rake"))
+  dir
+end
+
+MRUBY_BUILD_DIR = File.join(ROOT, "tmp", "mruby_build")
+
+namespace :mruby do
+  desc "Build mruby with picoruby-asterism-zenoh and this gem (for test:mruby)"
+  task :build do
+    pz = picoruby_asterism_zenoh_dir
+    mruby = ENV["MRUBY_DIR"].to_s.empty? ? File.join(pz, "vendor", "mruby") : File.expand_path(ENV["MRUBY_DIR"])
+    abort "no mruby at #{mruby}: run `rake mruby:fetch zenoh:fetch` in #{pz}, or set MRUBY_DIR" unless File.directory?(mruby)
+    env = { "MRUBY_CONFIG" => File.join(ROOT, "host_test", "build_config.rb"), "MRUBY_BUILD_DIR" => MRUBY_BUILD_DIR,
+            "PICORUBY_ASTERISM_ZENOH_DIR" => pz }
+    Dir.chdir(mruby) { sh env, RbConfig.ruby, "-S", "rake", "-j#{ENV['JOBS'] || 8}", "all" }
+  end
+end
+
+namespace :test do
+  desc "The shared layer on mruby: node profiles between two mruby processes (builds mruby)"
+  task mruby: "mruby:build" do
+    require "socket"
+    require "timeout"
+    bin = File.join(MRUBY_BUILD_DIR, "host", "bin", "mruby")
+    port = TCPServer.new("127.0.0.1", 0).then { |s| s.addr[1].tap { s.close } }
+    icon = File.join(ROOT, "data", "icon.png")
+    stub = File.join(ROOT, "host_test", "msgpack.rb")
+    node = IO.popen([bin, "-r", stub, File.join(ROOT, "host_test", "node.rb"), port.to_s, icon], err: [:child, :out])
+    begin
+      line = Timeout.timeout(10) { node.gets }
+      abort "host_test/node.rb did not start: #{line.inspect}" unless line&.start_with?("ready")
+      ok = system(bin, "-r", stub, File.join(ROOT, "host_test", "test_profile.rb"), port.to_s, icon)
+      abort "test:mruby failed" unless ok
+      rest = Timeout.timeout(10) { node.read }
+      puts "node: #{rest}" unless rest.to_s.empty?
+    ensure
+      begin
+        Process.kill("TERM", node.pid)
+      rescue Errno::ESRCH
+        nil
+      end
+      node.close
     end
   end
 end

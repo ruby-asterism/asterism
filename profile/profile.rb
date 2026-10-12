@@ -1,6 +1,6 @@
-# The Ruby profile's host tool (CRuby): runs the probes on each Ruby, keeps
+# The Ruby feature table's host tool (CRuby): runs the probes on each Ruby, keeps
 # the results in profile/results/<impl>.txt and writes the table into
-# docs/ruby_profile.md.
+# docs/ruby_features.md.
 #
 #   ruby profile/profile.rb cruby               # CRuby 3.2 / 3.4 / 4.0 and
 #                                               # 4.0 with frozen literals (docker)
@@ -14,7 +14,7 @@
 #   ruby profile/profile.rb collect NAME [CONTAINER]
 #                                               # the last run of the app in the sim's log
 #                                               # (docker logs, default fmruby_core)
-#   ruby profile/profile.rb table               # regenerate the table in docs/ruby_profile.md
+#   ruby profile/profile.rb table               # regenerate the table in docs/ruby_features.md
 #
 # Image names can be changed with RPROF_IMAGE_<version> (e.g.
 # RPROF_IMAGE_3_2=ruby:3.2). Each run prints the RPROF lines it kept.
@@ -25,7 +25,7 @@ module ProfileTool
   ROOT = File.expand_path("..", __dir__)
   DIR = File.join(ROOT, "profile")
   RESULTS = File.join(DIR, "results")
-  DOC = File.join(ROOT, "docs", "ruby_profile.md")
+  DOC = File.join(ROOT, "docs", "ruby_features.md")
 
   # Columns of the table, in order: [result name, heading].
   IMPLS = [

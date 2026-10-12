@@ -1,16 +1,16 @@
-# Ruby profile probes
+# Ruby feature table probes
 
 A test suite of small Ruby snippets, each checking one language or
 core-library feature, run on every Ruby the shared layer (`mrblib/`) has to
 work on. The results and what they mean for the shared layer are in
-[docs/ruby_profile.md](../docs/ruby_profile.md).
+[docs/ruby_features.md](../docs/ruby_features.md).
 
 | File | What |
 |---|---|
 | `probes.txt` | The probes. A probe is a header (`## id:`, `## area:`, `## title:`, `## expect:`, optionally `## mrblib:` and `## kind: measure`) and its code; the format is described at the top of the file |
 | `runner.rb` | Parses `probes.txt` and runs each probe with `eval`. Written to run unchanged on CRuby, mruby, PicoRuby and Family mruby's application VM (no Regexp, no `defined?`, `while` loops) |
 | `run.rb` | Command-line entry for CRuby and the `mruby` / `picoruby` commands: prints one `RPROF|<id>|<status>|<detail>` line per probe |
-| `profile.rb` | The host tool (CRuby): runs the CRuby columns in docker, runs an `mruby` / `picoruby` binary, copies the probes to Family mruby's test app, collects the app's log, and writes the table into `docs/ruby_profile.md` |
+| `profile.rb` | The host tool (CRuby): runs the CRuby columns in docker, runs an `mruby` / `picoruby` binary, copies the probes to Family mruby's test app, collects the app's log, and writes the table into `docs/ruby_features.md` |
 | `results/<impl>.txt` | The kept RPROF lines of each column |
 
 Statuses: `ok` (the answer CRuby 3.4 gives), `differs` (another answer, no
@@ -42,4 +42,4 @@ fails on its helper reports the wrong feature. Write `expect` as a plain
 literal, the answer CRuby 3.4 gives, and check that the CRuby columns stay
 ok. The test app's only top-level local is `rprof_top_error`; a probe must
 not assign a local of that name (see the eval caveat in
-docs/ruby_profile.md).
+docs/ruby_features.md).

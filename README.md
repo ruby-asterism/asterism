@@ -10,9 +10,11 @@ repository holds the pure Ruby layers, written once for every Ruby:
 | `mrblib/` | The layers: remote objects (`Asterism`), `Asterism::CDR`, `Asterism::ROS`. The source of truth for both forms below |
 | `mrbgem.rake` | The mrbgem `picoruby-asterism` (mruby / PicoRuby): compiles `mrblib/` |
 | `asterism.gemspec`, `lib/` | The CRuby gem `asterism`: `lib/asterism.rb` loads `mrblib/` as it is, `lib/asterism/cruby.rb` adds what CRuby needs, `lib/asterism/cruby/` the CRuby API (CRuby only) |
+| `data/icon.png` | CRuby's default profile icon (32x32 PNG; [Profiles](#profiles)) |
 | `data/msgs/` | ROS 2 message types generated from ROS 2 Jazzy's definitions (Apache-2.0; tf2_msgs BSD-3-Clause; see NOTICE) |
 | `tools/` | The type generator `asterism_msggen.rb`, the Jazzy definitions it reads, `ros2_types.rb` (refreshes them from a ROS 2 image) |
-| `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_api_*.rb` (the CRuby API) |
+| `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_profile.rb` (node profiles), `test_api_*.rb` (the CRuby API) |
+| `host_test/` | `rake test:mruby`: the shared layer on mruby (profiles between two mruby processes) |
 | `examples/` | CRuby: `node.rb` (objects with a board), `node_polled.rb` (the same with the portable API of the boards), `ros2_talker.rb` (topics, a timer, services with ROS 2), `ros2_rover.rb` (drive a ROS 2 robot: `/cmd_vel`, `/odom`, `/imu`), `zenoh.rb` (plain Zenoh), `mujoco/` (MuJoCo run from CRuby through Fiddle, its robot exposed as Asterism objects; see its README) |
 
 The Zenoh binding underneath is a separate gem with the same Ruby API on
@@ -35,7 +37,9 @@ Both gems are on rubygems.org (`gem install asterism` installs
 asterism-zenoh too). What changed in each version is in
 [CHANGELOG.md](CHANGELOG.md); 0.4.0 is the first step toward 1.0
 ([docs/api_review.md](docs/api_review.md)) and only adds and deprecates
-(see [Deprecations and 1.0](#deprecations-and-10)).
+(see [Deprecations and 1.0](#deprecations-and-10)); 0.5.0 adds node
+profiles ([Profiles](#profiles): what a node runs on, where, a name and an
+icon).
 
 ## Which API?
 
@@ -83,7 +87,7 @@ build but not yet tested. To install from the repositories instead:
 
 ```
 (cd ../asterism-zenoh && rake gem) && rake gem
-gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.0.gem pkg/asterism-0.4.0.gem
+gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.0.gem pkg/asterism-0.5.0.gem
 ```
 
 From the working trees, without installing:
@@ -111,7 +115,16 @@ rake test:msgs        # generator, type hashes, CDR, bundled types (CRuby only; 
 rake test:objects     # objects and Asterism::ROS between CRuby sessions over a local peer link
 rake test:api         # the CRuby API (blocks, receiving threads, Enumerators)
 ASTERISM_TEST_ROUTER=tcp/127.0.0.1:7447 rake test:objects test:api   # the same through a zenohd router
+rake test:mruby       # the shared layer on mruby (builds mruby; not part of `rake`)
 ```
+
+`test:mruby` builds mruby with picoruby-asterism-zenoh and this gem
+(MRB_UTF8_STRING, as on Family mruby's boards) and runs `host_test/`: two
+mruby processes over a local peer link. It takes the mruby and zenoh-pico
+pinned by a picoruby-asterism-zenoh checkout next to this one (its
+`rake mruby:fetch zenoh:fetch`), or `PICORUBY_ASTERISM_ZENOH_DIR` /
+`MRUBY_DIR`. A small MessagePack for the test is in
+`host_test/msgpack.rb` (the boards bring their own).
 
 `test:objects` and `test:api` need asterism-zenoh: built next to this repository
 (`../asterism-zenoh`, its `rake compile`), or `ASTERISM_ZENOH_DIR`, or the
@@ -238,6 +251,7 @@ end
 | `net.each(pattern = "**")` | the proxies alive now; an Enumerator without a block. With a block it returns their number (1.0: `self`, as Ruby's `each` does; `net.count` is the number) |
 | `net.on_join { \|node\| }` / `net.on_leave { \|node\| }` | `Asterism.on_join` / `on_leave` of the portable API (the same blocks, told from `Asterism.poll`), here on the receiving thread; what they raise goes to `on_error`. `net.off_join(proc)` / `off_leave(proc)` remove one |
 | `net.start` / `stop` / `run` / `running?` / `on_error` | as for Zenoh. A method of an exposed object that raises is answered to its caller as a `RemoteError`, as before; `on_error` gets what `on_join` / `on_leave` raise |
+| `net.profile(**fields)` / `net.profile_of(node, icon: true, timeout: 2.0)` | `Asterism.profile` / `profile_of` ([Profiles](#profiles)); `profile_of` waits for the receiving thread's ticks while it runs |
 | `net.nodes`, `node_id`, `app`, `connected?`, `lost_reason`, `poll`, `close` | |
 
 ### Over TLS (a router on the internet)
@@ -411,6 +425,60 @@ Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 | `Asterism.nodes` | `[String]` | Node IDs alive now, this one first. |
 | `Asterism.connected?` / `node_id` / `app` / `exposed` / `lost_reason` | | |
 | `Asterism.close` | nil | Withdraws every exposed object. Idempotent. |
+| `Asterism.profile(kind:, name:, host:, icon:)` / `Asterism.profile` | Hash | This node's profile: sets the fields given and returns it; without arguments, returns it. See [Profiles](#profiles). |
+| `Asterism.profile_of(node, icon: true, timeout: 2.0)` | Hash or nil | Another node's profile, nil when it does not answer (an older version, a ROS 2 node). |
+
+## Profiles
+
+A node tells what it is (0.5.0): what Ruby runs it, where, a display name
+and an icon. A console draws it with that; anyone can ask.
+
+```ruby
+Asterism.profile(name: "Rover", icon: File.binread("rover.png"))   # this node's (any time)
+Asterism.profile
+# => {"kind" => "cruby", "name" => "Rover", "icon" => "\x89PNG...", "icon_hash" => "2a8c0626"}
+Asterism.profile_of("fmruby-aaaaaa")
+# => {"kind" => "family_mruby", "host" => "atoms3r", "icon" => "\x89PNG...", "icon_hash" => "..."}
+Asterism.profile_of("fmruby-aaaaaa", icon: false)   # the same without the icon bytes
+Asterism.profile_of("an-older-node")                 # => nil
+```
+
+| Field | Value | Default |
+|---|---|---|
+| `kind` | what Ruby runs the node: `family_mruby`, `picoruby`, `cruby`, `console` (a lower-case word: `a-z`, `0-9`, `_`, up to 32 bytes; other words are allowed) | `cruby` on CRuby, `picoruby` on mruby / PicoRuby; Family mruby's firmware sets `family_mruby` |
+| `host` | where it runs, e.g. `atoms3r`, `tab5`, `p4nano`, `browser`, `sim` (up to 32 bytes) | none; Family mruby's firmware sets it from the board |
+| `name` | a display name (up to 64 bytes) | none |
+| `icon` | the bytes of a PNG: at most 8 KB and 256x256 (32x32 is the size meant). PNG only: an SVG can carry scripts | the file at `Asterism.default_icon_path` when it is there: on CRuby the gem's `data/icon.png` (a ruby), on the boards `/usr/share/asterism/icon.png` |
+| `icon_hash` | set by Asterism, never given: the icon's summary (8 hex digits: the Adler-32 of the PNG's chunk CRCs, so a board computes it from a few bytes) | |
+
+- **Setting.** `Asterism.profile(**fields)` changes the fields given and keeps
+  the others; `nil` leaves `name` / `host` out, goes back to the default
+  `kind`, and means no icon for `icon:`. It raises `ArgumentError` for a
+  field it does not accept (an unknown name, a `kind` that is not a word, an
+  icon that is not a PNG, larger than 8 KB or 256x256). It may be called
+  before connecting and at any time after; the profile belongs to the
+  process (the VM on a board) and survives `close`. A firmware can set its
+  defaults with the same call before the application runs (Family mruby
+  sets `kind`, `host` and, through `/usr/share/asterism/icon.png`, the icon).
+- **Reading.** `Asterism.profile_of(node)` asks `asterism/<node>/@profile`
+  and waits like a call (`timeout:` / `timeout_ms:`); this node's own comes
+  without the network. The answer is cleaned (`Asterism::Profile.check`):
+  only the fields above, each checked; an icon that is not an acceptable
+  PNG is dropped with its hash, an answer without a valid `kind` is `nil`.
+  `icon: false` asks without the icon (the parameter `icon=0`): a reader
+  that already has the icon of that `icon_hash` asks this way.
+- **Following.** At each connect and at each change while connected, the
+  node also puts its profile without the icon on `asterism/<node>/@profile`;
+  subscribe to `asterism/*/@profile` to follow the changes (and fetch the
+  icon again only when `icon_hash` changed). Older nodes neither answer nor
+  put.
+- **Several applications of one node** (a board running two): each answers
+  for the node, and `profile_of` takes the first answer. Give them the same
+  profile (Family mruby's firmware defaults are the same in each), or set it
+  in one and read the notices, where the last change wins.
+- `Asterism::Profile.png_info(bytes)` gives `[width, height, icon_hash]` of
+  an acceptable PNG (nil otherwise), for a tool that wants to check an icon
+  first.
 
 ## Errors
 
@@ -452,6 +520,7 @@ is closed (1.0: `Disconnected`, as the object layer).
 | Receiving interval of the CRuby API | 2 ms | `interval:` |
 | Calls waiting inside each other | 4 | `MAX_NESTING` |
 | Encoding depth of a value | 16 | `Codec::MAX_DEPTH` |
+| A profile icon | 8 KB, 256x256, PNG only | `Asterism::Profile::ICON_MAX`, `ICON_SIDE_MAX` |
 | `get` consolidation | `:none` (every reply; zenoh's own default is `:auto`, but services and the object layer want every reply) | `consolidation:` |
 
 ### Queues
@@ -541,8 +610,10 @@ caller gets `RemoteError` (`Asterism::EncodeError`). Nesting is limited to
 | `asterism/<node>/<app>/<object>/meta` | get / queryable | reply: `{"methods" => [[name, arity], ...]}` (arity `-1` when not declared). The object may be `*` in the query: one reply per object |
 | `asterism/<node>` | liveliness | the node is connected |
 | `asterism/<node>/<app>/<object>` | liveliness | the object is exposed |
+| `asterism/<node>/@profile` | get / queryable, and put | query (parameter `icon=0` for no icon): reply the node's profile, a Hash (`kind`, `host`, `name`, `icon`, `icon_hash`; [Profiles](#profiles)). The node also puts the profile without the icon at connect and on each change. `@profile` is a verbatim chunk, so `asterism/**` does not match it: the object layer's wildcards never see it. An application's own profile would go at `asterism/<node>/<app>/@profile` (not in 0.5.0) |
 
-One queryable per application (`asterism/<node>/<app>/**`). A call whose
+One queryable per application (`asterism/<node>/<app>/**`), and one for the
+profile (`asterism/<node>/@profile`). A call whose
 node or app is a wildcard reaches every application that exposes that
 object, each answering with its own key; `Asterism` itself only sends calls
 to one object.
@@ -612,7 +683,7 @@ nested type (`geometry_msgs/msg/Twist`) at start-up took 0.6 KB more.
   different on Family mruby's PicoRuby: `^x` of an outer local inside a
   block, `^(expr)`, `Const[...]` and `**rest` next to another key. The full
   list of what the boards' Ruby can and cannot do is in
-  [docs/ruby_profile.md](docs/ruby_profile.md).
+  [docs/ruby_features.md](docs/ruby_features.md) (the Ruby feature table).
 
 ## ROS 2 (rmw_zenoh): `Asterism::ROS` and `Asterism::CDR`
 

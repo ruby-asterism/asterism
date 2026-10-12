@@ -1,4 +1,4 @@
-# Ruby profile runner: parses probes.txt and runs each probe on the Ruby it
+# Ruby feature table runner: parses probes.txt and runs each probe on the Ruby it
 # is loaded in. The same file runs on CRuby, on mruby (the `mruby` command)
 # and in Family mruby's app VM (the PicoRuby compiler plus the mruby VM), so
 # it keeps to what all of them have: no Regexp, no defined?, while loops,

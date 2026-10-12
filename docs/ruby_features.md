@@ -1,4 +1,9 @@
-# The Ruby profile of Asterism's shared layer
+# The Ruby feature table of Asterism's shared layer
+
+(Called "the Ruby profile" up to 0.4.x, as were its file and its probes'
+directory `profile/`. Renamed in 0.5.0 so that it is not taken for
+`Asterism.profile`, a node's profile. The directory and the code keep
+their names.)
 
 Asterism's shared layer (`mrblib/`) is one set of Ruby files that runs on
 CRuby (the gem `asterism`) and on the boards (the mrbgem

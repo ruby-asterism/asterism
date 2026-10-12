@@ -26,7 +26,8 @@ module Asterism
   # The portable API, entered under LOCK. Prepended to the Asterism module's
   # singleton class, so the shared methods themselves are not changed.
   module Locked
-    %i[expose unexpose poll nodes [] call_async meta connected? exposed on_join on_leave off_join off_leave].each do |m|
+    %i[expose unexpose poll nodes [] call_async meta connected? exposed on_join on_leave off_join off_leave
+       profile profile_async].each do |m|
       define_method(m) do |*args, **kw, &blk|
         ::Asterism::LOCK.synchronize { super(*args, **kw, &blk) }
       end
@@ -145,6 +146,17 @@ module Asterism
 
     def unexpose(name)
       ::Asterism.unexpose(name)
+    end
+
+    # Asterism.profile: this node's profile (with keywords, sets fields).
+    def profile(**fields)
+      ::Asterism.profile(**fields)
+    end
+
+    # Asterism.profile_of: another node's profile, or nil. Waits like a
+    # call (for the receiving thread's ticks while it runs).
+    def profile_of(node, icon: true, timeout: nil, timeout_ms: nil)
+      ::Asterism.profile_of(node, icon: icon, timeout: timeout, timeout_ms: timeout_ms)
     end
 
     # A proxy for <node>/<app>/<object>; timeout: in seconds (or

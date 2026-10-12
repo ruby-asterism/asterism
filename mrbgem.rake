@@ -9,13 +9,16 @@
 # Asterism::Zenoh). The message types (data/msgs) are not compiled in: put
 # them on the device's file system (Asterism::ROS::TYPE_PATH, by default
 # /usr/share/asterism/msgs) and they are loaded at run time (require_type).
-# The other directories (lib/, tools/, test/) are for CRuby and are not part
-# of an mruby build; test/ holds CRuby tests, so mrbtest must not pick them up.
+# The other directories (lib/, tools/, test/, host_test/) are not part of an
+# mruby build: lib/, tools/ and test/ are for CRuby (mrbtest must not pick up
+# test/), host_test/ is `rake test:mruby` (a build of its own). The default
+# profile icon of the boards is a file (/usr/share/asterism/icon.png), not
+# compiled in.
 MRuby::Gem::Specification.new('picoruby-asterism') do |spec|
   spec.license = 'MIT'
   spec.authors = ['Katsuhiko Kageyama']
   spec.summary = 'Asterism: proxies for Ruby objects on other machines, over Zenoh'
-  spec.version = '0.4.0'
+  spec.version = '0.5.0'
   spec.add_dependency 'picoruby-asterism-zenoh'
   spec.test_rbfiles = []
 end

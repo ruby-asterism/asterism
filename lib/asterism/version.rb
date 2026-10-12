@@ -1,5 +1,6 @@
 module Asterism
-  # The gem's version (the CRuby gem asterism; it depends on asterism-zenoh
-  # of the same version).
-  VERSION = "0.4.1"
+  # The gem's version (the CRuby gem asterism). The Zenoh binding it needs
+  # is in asterism.gemspec (asterism-zenoh ~> 0.4.0 for 0.5.0: the bindings
+  # did not change; see CHANGELOG.md).
+  VERSION = "0.5.0"
 end

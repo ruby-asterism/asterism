@@ -8,6 +8,10 @@
 #          installed first), then test/installed_check.rb from outside the
 #          checkouts.
 #
+# mruby:   rake test:mruby: mruby (pinned by picoruby-asterism-zenoh) built
+#          with picoruby-asterism-zenoh and this gem, the profile checks and
+#          profiles between two mruby processes.
+#
 # Runners: ubuntu-latest with Ruby 3.2 / 3.3 / 3.4 / 4.0, and one macOS leg
 # (macos-latest, arm64). The other CPUs and macOS on Intel are covered by
 # asterism-zenoh's own CI, where the native code is; this gem is pure Ruby.
@@ -117,3 +121,26 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: ruby "$GITHUB_WORKSPACE/asterism/test/installed_check.rb"
         timeout-minutes: 5
+
+  mruby:
+    name: test:mruby (mruby with picoruby-asterism-zenoh)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: asterism
+      - uses: actions/checkout@v4
+        with:
+          repository: ruby-asterism/picoruby-asterism-zenoh
+          ref: main
+          path: picoruby-asterism-zenoh
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+      - name: mruby and zenoh-pico (the pins of picoruby-asterism-zenoh)
+        working-directory: picoruby-asterism-zenoh
+        run: rake mruby:fetch zenoh:fetch
+      - name: rake test:mruby
+        working-directory: asterism
+        run: rake test:mruby
+        timeout-minutes: 15

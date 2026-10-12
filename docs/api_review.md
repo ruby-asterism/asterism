@@ -1142,3 +1142,16 @@ have been moved off the deprecated forms.
 11. **D11 Board work**: which C-binding changes (U1 `get` keywords, N1,
     N7, E1, E2, I2) go into the next board release, given each needs a
     firmware rebuild and reflash.
+
+## Added after this review
+
+- **0.5.0, node profiles** (README "Profiles"): `Asterism.profile(**fields)`
+  (keywords; returns the profile, as a setter that is also the reader),
+  `Asterism.profile_of(node, icon: true, timeout: 2.0)` (seconds by the
+  unit rule of 3.1; `nil` when nobody answers, as the profile is
+  optional, rather than `TimeoutError`), `net.profile` / `net.profile_of`
+  on the CRuby API, and `Asterism::Profile` (the checks and the limits).
+  The key `asterism/<node>/@profile` is a verbatim chunk, so no wildcard of
+  the object layer meets it. Left for later: an application's own profile
+  (`asterism/<node>/<app>/@profile`), and whether 1.0 should resolve the
+  answers of several applications of one node (today the first answer).

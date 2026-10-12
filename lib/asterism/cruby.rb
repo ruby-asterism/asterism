@@ -24,6 +24,44 @@ module Asterism
     Process.clock_gettime(Process::CLOCK_MONOTONIC, :millisecond)
   end
 
+  # The profile's defaults on CRuby (mrblib/profile.rb): kind "cruby" and
+  # the icon bundled with the gem (replace it with Asterism.profile(icon:)).
+  ICON_FILE = File.expand_path("../../data/icon.png", __dir__)
+
+  def self.default_profile_kind
+    "cruby"
+  end
+
+  def self.default_icon_path
+    ICON_FILE
+  end
+
+  def self.read_icon_file(path)
+    File.binread(path)
+  rescue SystemCallError
+    nil
+  end
+
+  module Profile
+    # Icons come out of MessagePack as UTF-8 Strings: hand them out as the
+    # bytes they are.
+    class << self
+      alias_method :check_portable, :check
+
+      def check(h)
+        out = check_portable(h)
+        out["icon"] = out["icon"].b if out&.key?("icon")
+        out
+      end
+
+      alias_method :icon_portable!, :icon!
+
+      def icon!(v)
+        icon_portable!(v).b.freeze
+      end
+    end
+  end
+
   def self.error_reply(klass, message)
     ::MessagePack.pack(["error", klass.to_s, message.to_s], compatibility_mode: true)
   end
