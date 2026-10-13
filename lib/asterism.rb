@@ -18,6 +18,6 @@ end
 require_relative "asterism/cruby"
 # The CRuby API on top (blocks, a receiving thread, Enumerators,
 # pattern matching): CRuby only, see README "The CRuby API".
-%w[runner zenoh objects ros].each do |f|
+%w[runner credentials zenoh objects ros].each do |f|
   require_relative "asterism/cruby/#{f}"
 end

@@ -19,6 +19,9 @@
 #                      PICORUBY_ASTERISM_ZENOH_DIR) provides the pinned mruby
 #                      and zenoh-pico (its `rake mruby:fetch zenoh:fetch`).
 #                      Not part of `rake` (it builds a C toolchain's worth)
+#   rake test:credentials  a zenohd asking for client certificates (docker)
+#                      and two CRuby nodes connecting with a console's .tar
+#                      each (credentials:). Not part of `rake`
 #   rake test:protocol the conformance samples (test/protocol/samples.json,
 #                      docs/protocol.md 7) and the driver against a CRuby
 #                      node; needs asterism-zenoh
@@ -246,6 +249,16 @@ namespace :test do
     reconnect_check("cruby", ->(i) { [RbConfig.ruby, *i, "-r", "asterism"] })
     bin = File.join(MRUBY_BUILD_DIR, "host", "bin", "mruby")
     reconnect_check("mruby", ->(_) { [bin, "-r", File.join(ROOT, "host_test", "msgpack.rb")] })
+  end
+end
+
+namespace :test do
+  desc "credentials: a zenohd with mutual TLS (docker) and two CRuby nodes with a console's .tar each"
+  task :credentials do
+    lib = asterism_zenoh_lib
+    incs = ["-I", File.join(ROOT, "lib")]
+    incs += ["-I", lib] if lib
+    sh RbConfig.ruby, *incs, File.join(ROOT, "test/credentials_router.rb")
   end
 end
 

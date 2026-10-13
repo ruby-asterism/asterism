@@ -69,8 +69,13 @@ module Asterism
 
     # Opens a session (the arguments of Session.open) and wraps it in a
     # Connection. With a block: yields it, closes it when the block ends
-    # (also on an exception) and returns the block's value.
-    def self.open(locator = nil, interval: Runner::DEFAULT_INTERVAL, **opts)
+    # (also on an exception) and returns the block's value. credentials: a
+    # .tar from an Asterism console (Asterism::Credentials): mutual TLS with
+    # its certificates, to its router unless a locator is given.
+    def self.open(locator = nil, interval: Runner::DEFAULT_INTERVAL, credentials: nil, **opts)
+      if credentials
+        locator, opts[:config], = ::Asterism::Credentials.merge(credentials, locator, opts[:config])
+      end
       conn = Connection.new(Session.open(locator, **opts), interval: interval)
       return conn unless block_given?
       begin

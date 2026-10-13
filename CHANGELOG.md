@@ -8,6 +8,16 @@ version (a patch release of one may come without the other).
 
 ## Unreleased
 
+- `credentials:` on CRuby (`Asterism.connect`, `Asterism::Zenoh.open`,
+  `Asterism::ROS.connect`): the one `.tar` an Asterism console's
+  certificate page saves (key, certificate, CA, `asterism.json`). It is read
+  in memory (`Asterism::Credentials`, no temporary files) and handed to
+  zenoh as `transport/link/tls/*_base64` with `enable_mtls`; the locator and
+  `node:` default to the router and the name in `asterism.json` (given ones
+  win). A tar the group or others may read is warned about. `rake
+  test:credentials` (docker) connects two nodes to a mutual-TLS zenohd with
+  a tar each.
+
 - A client of a router keeps its connection across a router restart: the
   bindings reopen it and declare everything again, and Asterism no longer
   closes the connection on a Zenoh error while the session is reconnecting.

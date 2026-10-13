@@ -293,6 +293,28 @@ Asterism.connect("tls/router.example.org:7448", node: "cruby", app: "demo", conf
 end
 ```
 
+With an Asterism console, the certificate page saves everything as one
+file ("Save all (.tar)": the key, the certificate, the CA, an example
+configuration and `asterism.json` with the name and the router). Connect
+with that one file:
+
+```ruby
+Asterism.connect(credentials: "alice.tar", app: "game") do |net|
+  net["fmruby-aaaaaa/game/board"].state
+end
+Asterism::Zenoh.open(credentials: "alice.tar") { |s| s.put("asterism/alice/game/hello", "hi") }
+Asterism::ROS.connect(credentials: "alice.tar") { |ros| ros.node("ruby_talker") }
+```
+
+The gem reads the tar in memory (nothing is written; `Asterism::Credentials`)
+and gives zenoh the CA, the certificate and the key as
+`transport/link/tls/root_ca_certificate_base64`,
+`connect_certificate_base64` and `connect_private_key_base64`, with
+`enable_mtls`. The locator defaults to the router in `asterism.json` and
+`node:` to the certificate's name; give either to use another. `config:`
+(a Hash) is laid over these keys. A tar that the group or others may read
+is warned about, as ssh does with a key: `chmod 600 alice.tar`.
+
 The router checks the certificate against its CA, and its ACL can tell the
 nodes apart by the certificate's common name. The name in the locator must
 be one the router's certificate is valid for (zenoh checks it; it is
@@ -430,7 +452,7 @@ Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 
 | Call | Returns | Raises / notes |
 |---|---|---|
-| `Asterism.connect(locator, node:, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil, check_timeout: 1.5)` | `Asterism` | `locator`, `mode:`, `listen:` (and `config:` / `connect_timeout:` when given, CRuby only: TLS and the rest of zenoh's configuration; the boards raise `ArgumentError`) go to `Asterism::Zenoh::Session.open` (client of a router by default; `mode: :peer` with or without `listen:` without one). `node:` is this machine's ID, `app:` the application's name (one key chunk each: no `/ * $ ? #`, not starting with `@`; else `ArgumentError`). `Disconnected` when it cannot connect; `Error` when objects of the same `<node>/<app>` are already alive (a second copy of the application), or when already connected. Waits up to `check_timeout:` seconds for that check (a router answers at once; give more over a slow relay). Returns the module itself: on a board the module is the connection (one per application). The default is plain text without authentication; see [Over TLS](#over-tls-a-router-on-the-internet). |
+| `Asterism.connect(locator, node:, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil, check_timeout: 1.5)` (CRuby also `credentials:`, see [Over TLS](#over-tls-a-router-on-the-internet)) | `Asterism` | `locator`, `mode:`, `listen:` (and `config:` / `connect_timeout:` when given, CRuby only: TLS and the rest of zenoh's configuration; the boards raise `ArgumentError`) go to `Asterism::Zenoh::Session.open` (client of a router by default; `mode: :peer` with or without `listen:` without one). `node:` is this machine's ID, `app:` the application's name (one key chunk each: no `/ * $ ? #`, not starting with `@`; else `ArgumentError`). `Disconnected` when it cannot connect; `Error` when objects of the same `<node>/<app>` are already alive (a second copy of the application), or when already connected. Waits up to `check_timeout:` seconds for that check (a router answers at once; give more over a slow relay). Returns the module itself: on a board the module is the connection (one per application). The default is plain text without authentication; see [Over TLS](#over-tls-a-router-on-the-internet). |
 | `Asterism.expose(name, obj, methods:, caller: nil)` | `"<node>/<app>/<name>"` | `methods:` is an Array of names, or a Hash `name => number of arguments` (checked before the call; `-1` or the Array form: any). `ArgumentError` when `obj` has no such public method. Exposing a name again replaces it. `caller: :from` passes the calling node's ID to every method as the keyword `from:` and refuses a call that brings `from:` itself ([Who called](#who-called)). |
 | `Asterism.current_call` | `Asterism::CurrentCall` or nil | While an exposed method runs for a call: `from` (the calling node's ID), `verified` (`:claimed`, or `:local` for a call from this application), `object`, `method`. nil outside a call ([Who called](#who-called)). |
 | `Asterism.unexpose(name)` | true / false | |

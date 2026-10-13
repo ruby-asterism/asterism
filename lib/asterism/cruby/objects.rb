@@ -36,8 +36,16 @@ module Asterism
     # With a block: yields an Asterism::Net and closes when the block ends
     # (also on an exception); returns the block's value. Without a block,
     # as before (returns Asterism).
-    def connect(locator, node:, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil, check_timeout: nil,
-                &blk)
+    #
+    # credentials: a .tar from an Asterism console (Asterism::Credentials):
+    # its certificates go to zenoh (mutual TLS), and the locator and node:
+    # default to its router and name (given ones win).
+    def connect(locator = nil, node: nil, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil,
+                check_timeout: nil, credentials: nil, &blk)
+      if credentials
+        locator, config, creds = ::Asterism::Credentials.merge(credentials, locator, config)
+        node ||= creds.name
+      end
       ::Asterism::LOCK.synchronize do
         super(locator, node: node, app: app, mode: mode, listen: listen, config: config,
                        connect_timeout: connect_timeout, check_timeout: check_timeout)

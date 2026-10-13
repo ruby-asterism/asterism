@@ -27,7 +27,7 @@ module Asterism
     # Opens a Zenoh session and makes a Connection for nodes on it. domain:
     # the ROS domain of the nodes made by ros.node. type_path: directories
     # with generated types to add to Asterism::ROS::TYPE_PATH. The other
-    # options go to Asterism::Zenoh::Session.open. With a block: yields the
+    # options (credentials: among them) go to Asterism::Zenoh.open. With a block: yields the
     # Connection, closes it when the block ends and returns its value.
     def self.connect(locator = nil, domain: 0, type_path: nil, interval: Runner::DEFAULT_INTERVAL, **opts)
       Array(type_path).each { |d| TYPE_PATH << File.expand_path(d) unless TYPE_PATH.include?(File.expand_path(d)) }
