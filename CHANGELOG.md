@@ -6,7 +6,10 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
-## Unreleased
+## 0.7.1
+
+Needs asterism-zenoh 0.4.1 or later (`Session#reconnecting?`).
+
 
 - `credentials:` on CRuby (`Asterism.connect`, `Asterism::Zenoh.open`,
   `Asterism::ROS.connect`): the one `.tar` an Asterism console's

@@ -24,6 +24,6 @@ Gem::Specification.new do |s|
   s.files = Dir["lib/**/*.rb", "mrblib/*.rb", "data/msgs/**/*", "data/icon.png", "tools/asterism_msggen.rb",
                 "README.md", "CHANGELOG.md", "LICENSE", "NOTICE"]
   s.require_paths = ["lib"]
-  s.add_dependency "asterism-zenoh", "~> 0.4.0"
+  s.add_dependency "asterism-zenoh", "~> 0.4", ">= 0.4.1"
   s.add_dependency "msgpack", "~> 1.7"
 end

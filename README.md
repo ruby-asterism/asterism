@@ -87,7 +87,7 @@ time is taken, on both APIs and every Ruby; giving one twice raises
 CRuby (needs CRuby 3.2+ and a C compiler):
 
 ```
-gem install asterism          # also installs asterism-zenoh (~> 0.4.0) and msgpack
+gem install asterism          # also installs asterism-zenoh (>= 0.4.1, < 1.0) and msgpack
 ruby -e 'require "asterism"'
 ```
 
@@ -100,7 +100,7 @@ build but not yet tested. To install from the repositories instead:
 
 ```
 (cd ../asterism-zenoh && rake gem) && rake gem
-gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.0.gem pkg/asterism-0.7.0.gem
+gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.1.gem pkg/asterism-0.7.1.gem
 ```
 
 From the working trees, without installing:
