@@ -282,7 +282,7 @@ module Asterism
     begin
       g = session!.get("#{ROOT}/#{path}", timeout_ms: ms, params: icon ? nil : "icon=0")
     rescue Asterism::Zenoh::Error => e
-      lost(e.message)
+      lost_if_closed(e.message)
       raise Disconnected, e.message
     end
     Future.new(path, "profile", g, now_ms + ms, ms)

@@ -6,6 +6,15 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
+## Unreleased
+
+- A client of a router keeps its connection across a router restart: the
+  bindings reopen it and declare everything again, and Asterism no longer
+  closes the connection on a Zenoh error while the session is reconnecting.
+  `Asterism.reconnecting?` (and `net.reconnecting?`) is true meanwhile; the
+  profile is told again once it is back. `rake test:reconnect` (docker)
+  restarts a zenohd under a CRuby and an mruby node.
+
 ## 0.7.0
 
 **This release breaks compatibility: it speaks wire protocol 1 only.** A

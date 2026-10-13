@@ -189,6 +189,66 @@ namespace :test do
   end
 end
 
+# A node that stays while its router restarts, then is called by a newcomer
+# (rake test:reconnect): node_cmd runs host_test/reconnect_node.rb.
+def reconnect_check(name, node_cmd)
+  require "socket"
+  require "timeout"
+  lib = asterism_zenoh_lib
+  incs = ["-I", File.join(ROOT, "lib")]
+  incs += ["-I", lib] if lib
+  port = TCPServer.new("127.0.0.1", 0).then { |sv| sv.addr[1].tap { sv.close } }
+  image = ENV["ZENOHD_IMAGE"] || "eclipse/zenoh:1.10.1"
+  ctr = "asterism-reconnect-#{Process.pid}-#{name}"
+  sh "docker run -d --rm --name #{ctr} -p 127.0.0.1:#{port}:7447 #{image} " \
+     "--no-multicast-scouting -l tcp/0.0.0.0:7447 > /dev/null"
+  locator = "tcp/127.0.0.1:#{port}"
+  node = nil
+  begin
+    sleep 1.5
+    node = IO.popen([*node_cmd.call(incs), File.join(ROOT, "host_test", "reconnect_node.rb"), locator],
+                    err: [:child, :out])
+    line = Timeout.timeout(10) { node.gets }
+    abort "#{name}: reconnect_node.rb did not start: #{line.inspect}" unless line&.start_with?("ready")
+    t = Time.now
+    sh "docker restart -t 1 #{ctr} > /dev/null"
+    puts "#{name}: router restarted (#{(Time.now - t).round(2)} s)"
+    out = []
+    Timeout.timeout(30) do
+      while (l = node.gets)
+        puts "#{name}: #{l}"
+        out << l
+        break if l.start_with?("back", "closed")
+      end
+    end
+    abort "#{name}: no reconnection" unless out.last.to_s.start_with?("back")
+    ok = system(RbConfig.ruby, *incs, "-r", "asterism", File.join(ROOT, "host_test", "reconnect_caller.rb"), locator)
+    rest = Timeout.timeout(15) { node.read }
+    puts rest.lines.map { "#{name}: #{_1}" }.join
+    abort "#{name}: not called after the reconnection" unless ok && rest.include?("summary 2 1 true")
+    puts "#{name}: reconnection ok"
+  ensure
+    if node
+      begin
+        Process.kill("TERM", node.pid)
+      rescue Errno::ESRCH
+        nil
+      end
+      node.close
+    end
+    system("docker rm -f #{ctr} > /dev/null 2>&1")
+  end
+end
+
+namespace :test do
+  desc "Reconnection: a node (CRuby and mruby) keeps its objects while its router restarts (needs docker)"
+  task reconnect: "mruby:build" do
+    reconnect_check("cruby", ->(i) { [RbConfig.ruby, *i, "-r", "asterism"] })
+    bin = File.join(MRUBY_BUILD_DIR, "host", "bin", "mruby")
+    reconnect_check("mruby", ->(_) { [bin, "-r", File.join(ROOT, "host_test", "msgpack.rb")] })
+  end
+end
+
 namespace :bench do
   desc "How long one Asterism.poll takes, by the nodes and objects alive (CRuby; prints a table)"
   task :poll do

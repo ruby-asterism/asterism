@@ -447,6 +447,7 @@ Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 | `Asterism.each(pattern = "**") { \|proxy\| }` | count (Array without a block) | The exposed objects alive now (this application's own included) whose `<node>/<app>/<object>` matches; `*` is one chunk, `**` any number. 1.0 returns the proxies from the block form instead of their number (Ruby's `each` returns its receiver); write `Asterism.each(pattern).size` for the count. |
 | `Asterism.nodes` | `[String]` | Node IDs alive now, this one first. |
 | `Asterism.connected?` / `node_id` / `app` / `exposed` / `lost_reason` | | |
+| `Asterism.reconnecting?` | true / false | True while the router is away and the binding opens the connection again ([When the connection is lost](#when-the-connection-is-lost)). |
 | `Asterism.session` | `Asterism::Zenoh::Session` | The connection's own session, for put / subscribe / a ROS 2 node on the same connection ([One connection](#one-connection-asterismsession)). The same object until the connection closes. `Disconnected` when not connected. Its `close` does nothing (warns once); `Asterism.close` closes it. |
 | `Asterism.close` | nil | Withdraws every exposed object. Idempotent. |
 | `Asterism.profile(kind:, name:, host:, icon:)` / `Asterism.profile` | Hash | This node's profile: sets the fields given and returns it; without arguments, returns it. See [Profiles](#profiles). |
@@ -669,8 +670,21 @@ a field, as before.
 
 ### When the connection is lost
 
-Asterism follows `Asterism::Zenoh`: the connection is closed when the router
-(or the only peer) goes away, and is not reopened by itself. From then on
+A client of a router keeps its connection when the router goes away for a
+while (it restarts, the line drops): the Zenoh binding opens the connection
+again by itself (zenoh-c on CRuby; zenoh-pico built with reconnection on
+the boards) and declares again everything that was declared, so the
+application token, the exposed objects, the liveliness watch and what the
+application declared on `Asterism.session` are all back without the
+application doing anything. Meanwhile `Asterism.reconnecting?` is true,
+`connected?` stays true, the other nodes leave (`on_leave`) and join again
+after it (`on_join`), calls raise `Asterism::Disconnected` or time out, and
+puts reach nobody. The profile is told again once it is back. Measured
+with zenohd 1.10.1 restarted by `docker restart` (`rake test:reconnect`,
+CRuby and mruby): back about 1 s after the router.
+
+A peer connection (or a build without reconnection) is closed when the
+peer (or the router) goes away, and is not reopened by itself. From then on
 `Asterism.poll` returns `false`, `connected?` is false, `lost_reason` says
 why, and calls raise `Asterism::Disconnected`. **`Asterism::Zenoh::Error`
 never comes out of Asterism; it is always wrapped in `Disconnected`** (the

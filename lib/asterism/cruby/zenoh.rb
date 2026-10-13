@@ -358,6 +358,12 @@ module Asterism
         @session.closed?
       end
 
+      # True while the router is away and zenoh-c opens the connection
+      # again (a client session; what was declared comes back with it).
+      def reconnecting?
+        @session.reconnecting?
+      end
+
       def zid
         @session.zid
       end

@@ -289,6 +289,7 @@ module Asterism
     @known_set = {} # the same, as node => true
     @node_list = [node] # what nodes returns (this node first), rebuilt on a change
     @nodes_changed = false # liveliness changed since tell_nodes last compared
+    @was_reconnecting = false
     tell_profile   # for those who follow the profiles (the reply is the queryable's)
     self
   end
@@ -318,6 +319,20 @@ module Asterism
       return false
     end
     true
+  end
+
+  # True while the connection is lost and the Zenoh binding opens it again
+  # by itself (a client of a router: zenoh-pico built with reconnection on
+  # the boards, zenoh-c on CRuby). connected? stays true meanwhile, and once
+  # the router is back everything declared before is there again: the
+  # application token, the exposed objects, the liveliness watch, and what
+  # the application declared on Asterism.session. Meanwhile the other nodes
+  # leave (on_leave) and join again after it, calls raise Disconnected or
+  # time out, and puts reach nobody.
+  def self.reconnecting?
+    s = @session
+    return false if s.nil?
+    s.respond_to?(:reconnecting?) ? s.reconnecting? : false
   end
 
   def self.node_id
@@ -594,13 +609,33 @@ module Asterism
       lost("the connection was lost")
       return false
     end
+    back_again(s)
     answer_calls
     answer_profile
     follow_liveliness
     !@session.nil?
   rescue Asterism::Zenoh::Error => e
-    lost(e.message)
-    false
+    lost_if_closed(e.message)
+    !@session.nil?
+  end
+
+  # After the binding opened a lost connection again: tell the profile
+  # again (a put made while the router was away reached nobody).
+  # @api private
+  def self.back_again(s)
+    now = s.respond_to?(:reconnecting?) && s.reconnecting?
+    was = @was_reconnecting
+    @was_reconnecting = now
+    tell_profile if was && !now
+  end
+
+  # A Zenoh error during a call or a poll: the connection is gone only when
+  # the session says it is closed. While the binding reconnects, the
+  # session (and everything declared on it) stays.
+  # @api private
+  def self.lost_if_closed(reason)
+    s = @session
+    lost(reason) if s.nil? || s.closed?
   end
 
   # Polls until the block is true. Answers incoming calls meanwhile.
@@ -764,7 +799,7 @@ module Asterism
       # The caller's node ID is the key's last chunk (docs/protocol.md 4.1).
       g = s.get("#{ROOT}/#{path}/call/#{@node}", timeout_ms: timeout_ms, payload: payload)
     rescue Asterism::Zenoh::Error => e
-      lost(e.message)
+      lost_if_closed(e.message)
       raise Disconnected, e.message
     end
     Future.new(path, method, g, now_ms + timeout_ms, timeout_ms)
@@ -797,7 +832,7 @@ module Asterism
     begin
       g = session!.get("#{ROOT}/#{path}/meta", timeout_ms: timeout_ms)
     rescue Asterism::Zenoh::Error => e
-      lost(e.message)
+      lost_if_closed(e.message)
       raise Disconnected, e.message
     end
     f = Future.new(path, "meta", g, now_ms + timeout_ms, timeout_ms)
