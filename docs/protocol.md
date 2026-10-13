@@ -393,7 +393,16 @@ query only keys whose last chunk is its own name, for example
 `asterism/*/*/*/call/<its name>`, and deny the rest. With such a rule on
 every router a client reaches, the caller chunk is the client's
 certificate name. Without it, `from` guards against mistakes, not against
-someone pretending. Zenoh's source info (the querier's session ID that a
+someone pretending.
+
+When the ACL binds it: a router that connects on behalf of several nodes
+(a home router in front of boards) has one certificate, so its rule lists
+the caller chunk of each of those nodes; they can then use each other's
+names, and nobody else's. Clients that the router cannot tell apart (all
+WebSocket sessions, which carry no certificate) share one rule, for
+example `asterism/*/*/*/call/wasm-$*`. Meta (5) and profile (7) queries
+need no caller and stay open to whoever may read. asterism-console makes
+such rules from its roles (`asterism/*/<app>/*/call/${node}`). Zenoh's source info (the querier's session ID that a
 get may carry) is written by the querier and not checked by routers; this
 protocol does not use it.
 
