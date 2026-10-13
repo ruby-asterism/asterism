@@ -117,13 +117,19 @@ class TestApiCredentials < Minitest::Test
       assert_equal "alice", net.node_id
       net.expose("echo", Echo.new, methods: [:echo])
       net.start
-      q = @listener.get("asterism/alice/t/echo/call/me", payload: MessagePack.pack({ "method" => "echo", "args" => [41] }),
-                                                          timeout_ms: 3000)
+      # A get reaches only the queryables the listener knows when it is sent,
+      # and the exposed object's declaration may still be on its way (a slow
+      # runner): ask again until the answer comes.
       deadline = Time.now + 5
       until got || Time.now > deadline
-        @listener.poll
-        q.each_reply.each { |r| got = MessagePack.unpack(r[1]) }
-        sleep 0.02
+        q = @listener.get("asterism/alice/t/echo/call/me", payload: MessagePack.pack({ "method" => "echo", "args" => [41] }),
+                                                            timeout_ms: 500)
+        retry_at = Time.now + 0.5
+        until got || Time.now > retry_at
+          @listener.poll
+          q.each_reply.each { |r| got = MessagePack.unpack(r[1]) }
+          sleep 0.02
+        end
       end
     end
     assert_equal({ "value" => 41 }, got)
