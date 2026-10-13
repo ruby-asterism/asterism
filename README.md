@@ -315,6 +315,13 @@ and gives zenoh the CA, the certificate and the key as
 (a Hash) is laid over these keys. A tar that the group or others may read
 is warned about, as ssh does with a key: `chmod 600 alice.tar`.
 
+The boards (mruby / PicoRuby over picoruby-asterism-zenoh) take the same
+file with `Asterism.connect(credentials: "/home/asterism/alice.tar", app: "game")`
+when their Zenoh binding has TLS (`Asterism::Zenoh::TLS`; ESP-IDF builds).
+There `Asterism::Credentials` reads the tar in plain Ruby (no Regexp, no
+`pack`), the boards have no file modes to warn about, and the key pair is
+left for the router to check; `config:` takes the TLS keys only.
+
 The router checks the certificate against its CA, and its ACL can tell the
 nodes apart by the certificate's common name. The name in the locator must
 be one the router's certificate is valid for (zenoh checks it; it is
@@ -452,7 +459,7 @@ Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 
 | Call | Returns | Raises / notes |
 |---|---|---|
-| `Asterism.connect(locator, node:, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil, check_timeout: 1.5)` (CRuby also `credentials:`, see [Over TLS](#over-tls-a-router-on-the-internet)) | `Asterism` | `locator`, `mode:`, `listen:` (and `config:` / `connect_timeout:` when given, CRuby only: TLS and the rest of zenoh's configuration; the boards raise `ArgumentError`) go to `Asterism::Zenoh::Session.open` (client of a router by default; `mode: :peer` with or without `listen:` without one). `node:` is this machine's ID, `app:` the application's name (one key chunk each: no `/ * $ ? #`, not starting with `@`; else `ArgumentError`). `Disconnected` when it cannot connect; `Error` when objects of the same `<node>/<app>` are already alive (a second copy of the application), or when already connected. Waits up to `check_timeout:` seconds for that check (a router answers at once; give more over a slow relay). Returns the module itself: on a board the module is the connection (one per application). The default is plain text without authentication; see [Over TLS](#over-tls-a-router-on-the-internet). |
+| `Asterism.connect(locator = nil, node: nil, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil, check_timeout: 1.5, credentials: nil)` (`credentials:` see [Over TLS](#over-tls-a-router-on-the-internet)) | `Asterism` | `locator`, `mode:`, `listen:` (and `config:` / `connect_timeout:` when given: TLS and the rest of zenoh's configuration on CRuby; the boards take the TLS keys of `config:` only and raise `ArgumentError` for the rest) go to `Asterism::Zenoh::Session.open` (client of a router by default; `mode: :peer` with or without `listen:` without one). `node:` is this machine's ID, `app:` the application's name (one key chunk each: no `/ * $ ? #`, not starting with `@`; else `ArgumentError`). `Disconnected` when it cannot connect; `Error` when objects of the same `<node>/<app>` are already alive (a second copy of the application), or when already connected. Waits up to `check_timeout:` seconds for that check (a router answers at once; give more over a slow relay). Returns the module itself: on a board the module is the connection (one per application). The default is plain text without authentication; see [Over TLS](#over-tls-a-router-on-the-internet). |
 | `Asterism.expose(name, obj, methods:, caller: nil)` | `"<node>/<app>/<name>"` | `methods:` is an Array of names, or a Hash `name => number of arguments` (checked before the call; `-1` or the Array form: any). `ArgumentError` when `obj` has no such public method. Exposing a name again replaces it. `caller: :from` passes the calling node's ID to every method as the keyword `from:` and refuses a call that brings `from:` itself ([Who called](#who-called)). |
 | `Asterism.current_call` | `Asterism::CurrentCall` or nil | While an exposed method runs for a call: `from` (the calling node's ID), `verified` (`:claimed`, or `:local` for a call from this application), `object`, `method`. nil outside a call ([Who called](#who-called)). |
 | `Asterism.unexpose(name)` | true / false | |

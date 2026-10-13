@@ -113,6 +113,41 @@ namespace :mruby do
   end
 end
 
+# A console-style .tar (<name>/ with the key, the certificate, ca.pem and
+# asterism.json) for host_test/test_credentials.rb, and what CRuby reads
+# from it -> [tar path, expected path].
+def write_credentials_fixture
+  require "openssl"
+  require "rubygems/package"
+  require "json"
+  dir = File.join(ROOT, "tmp", "credentials_mruby")
+  FileUtils.mkdir_p(dir)
+  key = OpenSSL::PKey::EC.generate("prime256v1")
+  cert = OpenSSL::X509::Certificate.new
+  cert.version = 2
+  cert.serial = 1
+  cert.subject = cert.issuer = OpenSSL::X509::Name.new([["CN", "fmruby-aaaaaa"]])
+  cert.public_key = key
+  cert.not_before = Time.now - 60
+  cert.not_after = Time.now + 86_400
+  cert.sign(key, "SHA256")
+  files = { "fmruby-aaaaaa.key" => key.private_to_pem, "fmruby-aaaaaa.pem" => cert.to_pem, "ca.pem" => cert.to_pem,
+            "asterism.json" => JSON.generate({ format: 1, name: "fmruby-aaaaaa", kind: "client",
+                                               router: "tls/router.example.org:7448" }) }
+  tar = File.join(dir, "fmruby-aaaaaa.tar")
+  File.open(tar, "wb") do |io|
+    Gem::Package::TarWriter.new(io) do |w|
+      w.mkdir("fmruby-aaaaaa", 0o755)
+      files.each { |n, body| w.add_file_simple("fmruby-aaaaaa/#{n}", n.end_with?(".key") ? 0o600 : 0o644, body.bytesize) { _1.write(body) } }
+    end
+  end
+  expected = File.join(dir, "expected.txt")
+  File.write(expected, ["fmruby-aaaaaa", "tls/router.example.org:7448",
+                        [files["ca.pem"]].pack("m0"), [files["fmruby-aaaaaa.pem"]].pack("m0"),
+                        [files["fmruby-aaaaaa.key"]].pack("m0")].join("\n") + "\n")
+  [tar, expected]
+end
+
 namespace :test do
   desc "The shared layer on mruby: profiles, Asterism.session, on_join / on_leave (builds mruby)"
   task mruby: "mruby:build" do
@@ -139,6 +174,8 @@ namespace :test do
       node.close
     end
     port = TCPServer.new("127.0.0.1", 0).then { |s| s.addr[1].tap { s.close } }
+    tar, expected = write_credentials_fixture
+    abort "test:mruby failed (credentials)" unless system(bin, File.join(ROOT, "host_test", "test_credentials.rb"), tar, expected)
     msgs = File.join(ROOT, "data", "msgs")
     peer = IO.popen([bin, "-r", stub, File.join(ROOT, "host_test", "peer.rb"), port.to_s, msgs], err: [:child, :out])
     begin

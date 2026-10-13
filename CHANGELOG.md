@@ -6,6 +6,18 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
+## Unreleased
+
+- `credentials:` on the boards too: `Asterism::Credentials` moved to
+  `mrblib/credentials.rb` and reads the console's `.tar` in plain Ruby
+  (ustar taken apart with `byteslice` / `getbyte`, base64 without `pack`,
+  `asterism.json` with or without a JSON library). `Asterism.connect` takes
+  `credentials:` on mruby (with picoruby-asterism-zenoh's TLS, ESP-IDF
+  builds); `locator` and `node:` are optional when it is given. CRuby keeps
+  its reading (the standard library's tar reader, the file mode warning,
+  the key pair check) in a module prepended to the class. `rake test:mruby`
+  checks the board's reading against CRuby's.
+
 ## 0.7.1
 
 Needs asterism-zenoh 0.4.1 or later (`Session#reconnecting?`).

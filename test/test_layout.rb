@@ -7,9 +7,9 @@ class TestLayout < Minitest::Test
 
   def test_mrblib_is_what_cruby_loads
     files = Dir.glob(File.join(ROOT, "mrblib/*.rb")).map { |f| File.basename(f, ".rb") }.sort
-    assert_equal %w[asterism cdr future profile proxy ros], files
+    assert_equal %w[asterism cdr credentials future profile proxy ros], files
     loader = File.read(File.join(ROOT, "lib/asterism.rb"))
-    assert_includes loader, '%w[asterism cdr future profile proxy ros].each do |f|'
+    assert_includes loader, '%w[asterism cdr credentials future profile proxy ros].each do |f|'
     assert_includes loader, 'require_relative "../mrblib/#{f}"'
     assert_empty Dir.glob(File.join(ROOT, "lib/**/shared")), "no copies of mrblib under lib/"
   end

@@ -240,16 +240,23 @@ module Asterism
   # Opens the connection. locator, mode: and listen: go to
   # Asterism::Zenoh::Session.open (client of a router by default; mode: :peer
   # with or without listen: for no router), and so do config: (a Hash of
-  # "key/path" => value or a JSON5 String, e.g. TLS certificates) and
-  # connect_timeout: (seconds) when they are given (CRuby's asterism-zenoh
-  # only; the boards raise ArgumentError). node: is this machine's ID and
-  # app: this application's name. check_timeout: how long to look for
-  # another copy of the same <node>/<app> (seconds, CHECK_TIMEOUT). Raises
-  # Disconnected when it cannot connect, and Error when the same
-  # <node>/<app> is already on the network.
-  def self.connect(locator, node:, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil,
-                   check_timeout: nil)
+  # "key/path" => value or a JSON5 String, e.g. TLS certificates; the boards
+  # take the TLS keys only) and connect_timeout: (seconds; CRuby's
+  # asterism-zenoh only, the boards raise ArgumentError) when they are given.
+  # credentials: a .tar from an Asterism console (Asterism::Credentials, a
+  # path or a loaded one): its certificates go to zenoh (mutual TLS), and
+  # locator and node: default to its router and name. node: is this
+  # machine's ID and app: this application's name. check_timeout: how long
+  # to look for another copy of the same <node>/<app> (seconds,
+  # CHECK_TIMEOUT). Raises Disconnected when it cannot connect, and Error
+  # when the same <node>/<app> is already on the network.
+  def self.connect(locator = nil, node: nil, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil,
+                   check_timeout: nil, credentials: nil)
     raise Error, "already connected (Asterism.close first)" if connected?
+    if credentials
+      locator, config, creds = Credentials.merge(credentials, locator, config)
+      node ||= creds.name
+    end
     release
     node = check_name("node", node)
     app = check_name("app", app)
