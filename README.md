@@ -163,7 +163,7 @@ ruby examples/node_polled.rb --router tcp/192.0.2.2:7447    # the same, polled
 ruby examples/ros2_talker.rb --router tcp/192.0.2.2:7447 [--service NAME]
 
 # ROS 2: drive a robot (made for family-mruby's MuJoCo rover,
-# docker-compose.mujoco.yml): 1 m forward and 90 degrees left by /odom,
+# docker/asterism/docker-compose.mujoco.yml): 1 m forward and 90 degrees left by /odom,
 # compared with /ground_truth/odom; or the keyboard
 ruby examples/ros2_rover.rb --router tcp/192.0.2.2:7447 [--keys]
 

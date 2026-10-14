@@ -1,6 +1,6 @@
 # CRuby driving a ROS 2 robot: sends geometry_msgs/Twist on /cmd_vel and
 # shows nav_msgs/Odometry (/odom) and sensor_msgs/Imu (/imu). Made for the
-# MuJoCo rover of family-mruby (docker-compose.mujoco.yml), which also
+# MuJoCo rover of family-mruby (docker/asterism/docker-compose.mujoco.yml), which also
 # publishes the simulator's true pose on /ground_truth/odom; any robot with
 # a diff_drive_controller-like /cmd_vel and /odom works (without the ground
 # truth the comparison is left out).
