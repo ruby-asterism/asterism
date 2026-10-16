@@ -402,7 +402,22 @@ names, and nobody else's. Clients that the router cannot tell apart (all
 WebSocket sessions, which carry no certificate) share one rule, for
 example `asterism/*/*/*/call/wasm-$*`. Meta (5) and profile (7) queries
 need no caller and stay open to whoever may read. asterism-console makes
-such rules from its roles (`asterism/*/<app>/*/call/${node}`). Zenoh's source info (the querier's session ID that a
+such rules from its roles (`asterism/*/<app>/*/call/${node}`).
+
+Clients that come through a gateway that holds the certificates for them
+can still be told apart if the names are fixed beforehand. asterism-console
+0.3.0 does so for the browsers in its rooms: each room slot has a number of
+seats, each with a certificate made in advance, and the rooms' door gives
+each page a seat and connects with that seat's certificate. The seat's
+node ID is fixed by the seat (`wasm-0103`: slot 01, seat 03), and the ACL
+lets the seat write only under `room/<slot>/asterism/<its node>` and call
+only with `.../call/<its node>`. zenohd lets a deny win over an allow
+within one subject and any subject's allow win over the others, so the
+rule "no call but as yourself" takes two subjects for one certificate: one
+(the common name) with a deny on `.../call/**`, one (the common name and
+the link protocol) with an allow on `.../call/<its node>`. A callee in such
+a room can take `from` as bound, as for a client with a certificate of its
+own. Zenoh's source info (the querier's session ID that a
 get may carry) is written by the querier and not checked by routers; this
 protocol does not use it.
 
