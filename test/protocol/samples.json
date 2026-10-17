@@ -1,6 +1,6 @@
 {
   "format": "asterism-protocol-samples",
-  "version": 3,
+  "version": 4,
   "protocol": 1,
   "describes": "the Asterism wire protocol 1 as asterism 0.7.0 speaks it (docs/protocol.md)",
   "names": {
@@ -98,7 +98,14 @@
               "int": "0"
             }
           ]
-        ]
+        ],
+        "doc": "Another object.",
+        "method_docs": {
+          "ping": {
+            "args": [],
+            "doc": "Answers pong."
+          }
+        }
       }
     ]
   },
@@ -2247,15 +2254,28 @@
                         {
                           "int": "0"
                         }
+                      ],
+                      [
+                        "args",
+                        []
+                      ],
+                      [
+                        "doc",
+                        "Answers pong."
                       ]
                     ]
                   }
                 ]
+              ],
+              [
+                "doc",
+                "Another object."
               ]
             ]
           }
         }
       ],
+      "note": "the arguments' names and the descriptions given at expose (args, doc; the object's own doc)",
       "portable": true
     },
     {
@@ -2408,10 +2428,22 @@
                         {
                           "int": "0"
                         }
+                      ],
+                      [
+                        "args",
+                        []
+                      ],
+                      [
+                        "doc",
+                        "Answers pong."
                       ]
                     ]
                   }
                 ]
+              ],
+              [
+                "doc",
+                "Another object."
               ]
             ]
           }

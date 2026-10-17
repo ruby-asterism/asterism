@@ -77,6 +77,7 @@ namespace :test do
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_asterism.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_profile.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_status.rb")
+    sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_meta_apps.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_session.rb")
   end
 

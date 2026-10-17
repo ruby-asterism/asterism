@@ -442,7 +442,8 @@ A get on `asterism/<node>/<app>/<object>/meta` (no payload, no parameters;
 a payload is ignored) is answered with:
 
 ```
-{"methods" => [{"name" => name, "arity" => n}, ...]}
+{"methods" => [{"name" => name, "arity" => n, "args" => [names], "doc" => text}, ...],
+ "doc" => text}
 ```
 
 - `name` is a str, `arity` an int: the number of positional arguments
@@ -451,6 +452,23 @@ a payload is ignored) is answered with:
   checked", and other negative numbers do not occur. Entries are maps so
   that fields can be added (optional arguments, keywords, a description);
   readers ignore fields they do not know.
+- `args` (optional): an array of str, the names of the positional
+  arguments in order (non-empty, at most 64 bytes each, at most 16). When
+  `arity` is not `-1`, there are exactly `arity` names; with `-1` they name
+  the leading arguments. Keywords and the caller keyword (4.7) are not in
+  it.
+- `doc` (optional) in an entry: a str, what the method does and what it
+  answers (at most 2048 bytes); the first line is a summary. `doc` at the
+  top of the reply: the same for the object.
+- Both are given at `expose`: `methods: { "move" => { args: %w[token n
+  square], doc: "..." } }` (the names give the arity; `arity:` overrides it,
+  `-1` for any), mixed freely with `name => n`; `doc: "..."` for the
+  object. They are for people and tools that show them (`asterism mcp`
+  makes a tool's inputs and description from them, the command line prints
+  them); nothing checks a call against the names. A reader drops an `args`
+  that is not an array of str or whose size does not match `arity`, and a
+  `doc` that is not a str. Added in protocol 1 without changing its
+  number: older nodes send neither, older readers ignore both.
 - The entries are in the order they were exposed; readers MUST NOT rely
   on it.
 - The reply key is the object's own meta key.

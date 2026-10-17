@@ -27,7 +27,7 @@ module Asterism
   # singleton class, so the shared methods themselves are not changed.
   module Locked
     %i[expose unexpose poll nodes [] call_async meta connected? reconnecting? exposed on_join on_leave off_join off_leave
-       profile profile_async status status_async apps session].each do |m|
+       on_app_join on_app_leave off_app_join off_app_leave profile profile_async status status_async apps session].each do |m|
       define_method(m) do |*args, **kw, &blk|
         ::Asterism::LOCK.synchronize { super(*args, **kw, &blk) }
       end
@@ -73,9 +73,10 @@ module Asterism
       ::Asterism::LOCK.synchronize { super }
     end
 
-    # The on_join / on_leave blocks (called from Asterism.poll): with a Net,
-    # what they raise goes to its on_error and the other blocks still run.
-    def tell(where, blk, node)
+    # The on_join / on_leave (and on_app_*) blocks (called from
+    # Asterism.poll): with a Net, what they raise goes to its on_error and
+    # the other blocks still run.
+    def tell(where, blk, node, app = nil)
       net = @net
       return super unless net
       net.runner.guard(where) { super }
@@ -162,11 +163,12 @@ module Asterism
     def exposed = ::Asterism.exposed
 
     # Asterism.expose: methods: an Array of names or a Hash name => number
-    # of arguments; caller: :from passes the calling node's ID as that
+    # of arguments (or => {args: [names], doc: "text"}); doc: the object's
+    # own text (both go to the meta); caller: :from passes the calling node's ID as that
     # keyword. The object's methods run on the receiving thread (or in
     # run, or in whatever polls).
-    def expose(name, obj, methods:, caller: nil)
-      ::Asterism.expose(name, obj, methods: methods, caller: caller)
+    def expose(name, obj, methods:, caller: nil, doc: nil)
+      ::Asterism.expose(name, obj, methods: methods, caller: caller, doc: doc)
     end
 
     # Asterism.current_call: the call being answered on this thread, or nil.
@@ -242,6 +244,29 @@ module Asterism
 
     def on_leave(&blk)
       ::Asterism.on_leave(&blk)
+      self
+    end
+
+    # on_app_join { |node, app| } / on_app_leave { |node, app| }: an
+    # application appeared on the network / is gone (Asterism.on_app_join),
+    # on the receiving thread. What they raise goes to on_error.
+    def on_app_join(&blk)
+      ::Asterism.on_app_join(&blk)
+      self
+    end
+
+    def on_app_leave(&blk)
+      ::Asterism.on_app_leave(&blk)
+      self
+    end
+
+    def off_app_join(blk)
+      ::Asterism.off_app_join(blk)
+      self
+    end
+
+    def off_app_leave(blk)
+      ::Asterism.off_app_leave(blk)
       self
     end
 

@@ -81,7 +81,7 @@ else
 end
 Asterism.expose("subject", Subject.new,
                 methods: { echo: 1, kw: 1, add: 2, boom: 0, any: -1, "ok?" => 0, unsendable: 0, whoami: 0 })
-Asterism.expose("other", Other.new, methods: { ping: 0 })
+Asterism.expose("other", Other.new, methods: { ping: { args: [], doc: "Answers pong." } }, doc: "Another object.")
 puts "ready"
 
 # The driver declares its object rec once it has sent its own calls.

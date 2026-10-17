@@ -83,7 +83,8 @@ class TestCLI < Minitest::Test
       Asterism.connect(nil, node: "calcnode", app: "calc", mode: :peer, listen: loc)
     end
     Asterism.expose("calc", Calc.new, methods: { add: 2, whoami: 0, any: -1, kw: 1, boom: 0 }, caller: :from)
-    Asterism.expose("other", Calc.new, methods: { add: 2 }, caller: :from)
+    Asterism.expose("other", Calc.new, methods: { add: { args: %w[a b], doc: "Adds a and b." } }, caller: :from,
+                    doc: "The other calculator.")
     STDOUT.puts "ready"
     STDOUT.flush
     loop do
@@ -141,7 +142,13 @@ class TestCLI < Minitest::Test
       assert_equal 0, code, err
       apps = JSON.parse(out).find { _1["node"] == "calcnode" }["apps"]
       assert_equal %w[calc other], apps[0]["objects"].map { _1["name"] }
-      assert_equal [{ "name" => "add", "arity" => 2 }], apps[0]["objects"][1]["methods"]
+      assert_equal [{ "name" => "add", "arity" => 2, "args" => %w[a b], "doc" => "Adds a and b." }],
+                   apps[0]["objects"][1]["methods"]
+      assert_equal "The other calculator.", apps[0]["objects"][1]["doc"]
+
+      out, err, code = cli("objects", "calcnode/*/other")
+      assert_equal 0, code, err
+      assert_equal "calcnode/calc/other  add(a, b)\n  The other calculator.\n    add(a, b)  Adds a and b.", out.strip
 
       out, err, code = cli("ping", "calcnode/calc/calc", "--count", "3", "--interval", "0.05", "--json")
       assert_equal 0, code, err
@@ -198,17 +205,24 @@ class TestCLI < Minitest::Test
     with_node do |_node|
       t = MCP::Client::Stdio.new(command: RbConfig.ruby,
                                  args: [*LIB, EXE, "mcp", *@where, "--settle", "1.0", "--allow", "calc/calc.add",
-                                        "--allow", "calc/calc.any", "--allow", "calc/calc.boom"],
+                                        "--allow", "calc/calc.any", "--allow", "calc/calc.boom",
+                                        "--allow", "calc/other.add"],
                                  read_timeout: 30)
       c = MCP::Client.new(transport: t)
       c.connect
       tools = c.tools.to_h { [_1.name, _1] }
       assert_equal %w[asterism_nodes asterism_objects asterism_status calcnode.calc.calc.add calcnode.calc.calc.any
-                      calcnode.calc.calc.boom].sort, tools.keys.sort, "only the allowed methods are tools"
+                      calcnode.calc.calc.boom calcnode.calc.other.add].sort, tools.keys.sort,
+                   "only the allowed methods are tools"
+      named = tools["calcnode.calc.other.add"]
+      assert_equal %w[a b], named.input_schema["required"], "the names the meta tells are the inputs"
+      assert_match(/\AAdds a and b\. \(calcnode\/calc\/other: The other calculator\.\)\n/, named.description)
       assert_equal %w[arg1 arg2], tools["calcnode.calc.calc.add"].input_schema["required"]
       text = ->(r) { JSON.parse(r["result"]["content"][0]["text"]) }
       r = c.call_tool(tool: tools["calcnode.calc.calc.add"], arguments: { arg1: 20, arg2: 22 })
       assert_equal({ "value" => 42 }, text.(r))
+      r = c.call_tool(tool: named, arguments: { a: 1, b: 2 })
+      assert_equal({ "value" => 3 }, text.(r))
       r = c.call_tool(tool: tools["calcnode.calc.calc.any"], arguments: { args: [1, 2, 3] })
       assert_equal({ "value" => 3 }, text.(r))
       r = c.call_tool(tool: tools["calcnode.calc.calc.boom"], arguments: {})

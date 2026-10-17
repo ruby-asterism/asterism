@@ -176,12 +176,21 @@ module Asterism
         paths = sv.objects(pattern)
         metas = sv.metas(paths)
         if @opts[:json]
-          emit_json(paths.map { |p| { "path" => p, "methods" => metas[p] } })
+          emit_json(paths.map do |p|
+            h = { "path" => p, "methods" => metas[p] }
+            h["doc"] = sv.object_doc(p) if sv.object_doc(p)
+            h
+          end)
         elsif paths.empty?
           @out.puts "(no object matches #{pattern})"
         else
           paths.each do |p|
             @out.puts "#{p}  #{metas.key?(p) ? methods_text(metas[p]) : '(no meta: not answered in time, or not allowed)'}"
+            @out.puts "  #{sv.object_doc(p)}" if sv.object_doc(p)
+            # The methods that tell what they do, one a line (doc's first line).
+            (metas[p] || []).each do |m|
+              @out.puts "    #{signature(m)}  #{m['doc'].lines.first.strip}" if m["doc"]
+            end
           end
         end
       end
@@ -389,7 +398,13 @@ module Asterism
     end
 
     def methods_text(list)
-      list.map { |m| m["arity"].negative? ? "#{m['name']}(*)" : "#{m['name']}(#{m['arity']})" }.join(" ")
+      list.map { |m| signature(m) }.join(" ")
+    end
+
+    # name(arg, arg) with the names the meta tells, else name(2) / name(*).
+    def signature(m)
+      return "#{m['name']}(#{m['args'].join(', ')}#{', *' if m['arity'].negative?})" if m["args"]
+      m["arity"].negative? ? "#{m['name']}(*)" : "#{m['name']}(#{m['arity']})"
     end
 
     def compact(v)

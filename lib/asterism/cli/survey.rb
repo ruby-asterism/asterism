@@ -27,6 +27,7 @@ module Asterism
       def initialize(timeout: 2.0, own: nil)
         @timeout = timeout
         @own = own || "#{::Asterism.node_id}/#{::Asterism.app}"
+        @object_docs = {}
       end
 
       # Waits for the tokens alive at connect to come in (they come in one
@@ -74,15 +75,16 @@ module Asterism
         gets(apps.map { "asterism/#{_1}/*/meta" }).each_value do |replies|
           replies.each do |key, payload|
             path = key.delete_prefix("asterism/").delete_suffix("/meta")
-            m = meta_list(payload)
+            m = meta_list(payload, path)
             out[path] = m if m && paths.include?(path)
           end
         end
         missing = paths - out.keys
         unless missing.empty?
           gets(missing.map { "asterism/#{_1}/meta" }).each do |key, replies|
-            m = replies.first && meta_list(replies.first[1])
-            out[key.delete_prefix("asterism/").delete_suffix("/meta")] = m if m
+            path = key.delete_prefix("asterism/").delete_suffix("/meta")
+            m = replies.first && meta_list(replies.first[1], path)
+            out[path] = m if m
           end
         end
         out
@@ -136,6 +138,8 @@ module Asterism
             h["objects"] = by_node[n][ap].sort.map do |name|
               e = { "name" => name }
               e["methods"] = met["#{n}/#{ap}/#{name}"] if met.key?("#{n}/#{ap}/#{name}")
+              d = object_doc("#{n}/#{ap}/#{name}")
+              e["doc"] = d if d
               e
             end
             h
@@ -167,13 +171,29 @@ module Asterism
         raise ::Asterism::Disconnected, e.message
       end
 
-      def meta_list(payload)
+      # A meta reply's methods: [{"name", "arity"} and, when the object
+      # tells them (docs/protocol.md 5), "args" (names) and "doc"]. Fields
+      # of another shape are left out, unknown ones ignored.
+      def meta_list(payload, path = nil)
         m = ::Asterism::Codec.unpack(payload)
         list = m.is_a?(Hash) ? m["methods"] : nil
         return nil unless list.is_a?(Array)
+        @object_docs[path] = m["doc"] if path && m["doc"].is_a?(String)
         list.filter_map do |e|
-          { "name" => e["name"].to_s, "arity" => e["arity"].to_i } if e.is_a?(Hash) && e["name"]
+          next unless e.is_a?(Hash) && e["name"]
+          h = { "name" => e["name"].to_s, "arity" => e["arity"].to_i }
+          args = e["args"]
+          h["args"] = args if args.is_a?(Array) && args.all? { _1.is_a?(String) } &&
+                              (h["arity"].negative? || args.size == h["arity"])
+          h["doc"] = e["doc"] if e["doc"].is_a?(String)
+          h
         end
+      end
+
+      # The text an object tells about itself in its meta (read by metas),
+      # or nil.
+      def object_doc(path)
+        @object_docs[path]
       end
 
       def now

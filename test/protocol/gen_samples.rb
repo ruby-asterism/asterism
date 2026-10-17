@@ -203,12 +203,14 @@ meth = ->(name, n) { m(["name", name], ["arity", i(n)]) }
 meta_subject = m(["methods", { "unordered" => [meth.("echo", 1), meth.("kw", 1), meth.("add", 2), meth.("boom", 0),
                                                 meth.("any", -1), meth.("ok?", 0), meth.("unsendable", 0),
                                                 meth.("whoami", 0)] }])
-meta_other = m(["methods", [meth.("ping", 0)]])
+meta_other = m(["methods", [m(["name", "ping"], ["arity", i(0)], ["args", []], ["doc", "Answers pong."])]],
+               ["doc", "Another object."])
 q.("meta", "#{base}/subject/meta", nil,
   [{ "key" => "#{base}/subject/meta", "payload" => meta_subject }],
   note: "arity -1: any number of arguments (exposed without counts)")
 q.("meta ignores a payload", "#{base}/other/meta", req.("x"),
-  [{ "key" => "#{base}/other/meta", "payload" => meta_other }])
+  [{ "key" => "#{base}/other/meta", "payload" => meta_other }],
+  note: "the arguments' names and the descriptions given at expose (args, doc; the object's own doc)")
 q.("meta of every object", "#{base}/*/meta", nil,
   [{ "key" => "#{base}/subject/meta", "payload" => meta_subject },
    { "key" => "#{base}/other/meta", "payload" => meta_other }],
@@ -344,7 +346,7 @@ o.("the same status again", { "set_status" => m(["st", "play"], ["n", i(1)]) }, 
 
 samples = {
   "format" => "asterism-protocol-samples",
-  "version" => 3,
+  "version" => 4,
   "protocol" => 1,
   "describes" => "the Asterism wire protocol 1 as asterism 0.7.0 speaks it (docs/protocol.md)",
   "names" => { "iut" => IUT, "app" => APP, "driver" => DRV },
@@ -355,7 +357,8 @@ samples = {
     "objects" => [
       { "name" => "subject", "methods" => [["echo", i(1)], ["kw", i(1)], ["add", i(2)], ["boom", i(0)],
                                            ["any", i(-1)], ["ok?", i(0)], ["unsendable", i(0)], ["whoami", i(0)]] },
-      { "name" => "other", "methods" => [["ping", i(0)]] }
+      { "name" => "other", "methods" => [["ping", i(0)]], "doc" => "Another object.",
+        "method_docs" => { "ping" => { "args" => [], "doc" => "Answers pong." } } }
     ]
   },
   "values" => values,

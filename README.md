@@ -14,7 +14,7 @@ repository holds the pure Ruby layers, written once for every Ruby:
 | `data/msgs/` | ROS 2 message types generated from ROS 2 Jazzy's definitions (Apache-2.0; tf2_msgs BSD-3-Clause; see NOTICE) |
 | `tools/` | The type generator `asterism_msggen.rb`, the Jazzy definitions it reads, `ros2_types.rb` (refreshes them from a ROS 2 image) |
 | `exe/asterism`, `lib/asterism/cli*` | The command line: look at a network, call an object, an MCP server ([The command line](#the-command-line); CRuby only) |
-| `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_profile.rb` (node profiles), `test_status.rb` (application statuses), `test_cli.rb` (the command line), `test_session.rb` (`Asterism.session`, `on_join` / `on_leave`), `test_api_*.rb` (the CRuby API), `bench_poll.rb` (`rake bench:poll`) |
+| `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_profile.rb` (node profiles), `test_status.rb` (application statuses), `test_meta_apps.rb` (the meta's args / doc, on_app_join / on_app_leave), `test_cli.rb` (the command line), `test_session.rb` (`Asterism.session`, `on_join` / `on_leave`), `test_api_*.rb` (the CRuby API), `bench_poll.rb` (`rake bench:poll`) |
 | `test/protocol/` | the conformance samples of the wire protocol (`samples.json`), the driver that checks an implementation against them, and the Ruby node it checks (`rake test:protocol`, `rake test:protocol_mruby`; [docs/protocol.md](docs/protocol.md)) |
 | `host_test/` | `rake test:mruby`: the shared layer on mruby (profiles between two mruby processes; `Asterism.session`, `on_join` / `on_leave` and the time of a poll against `peer.rb`) |
 | `examples/` | CRuby: `node.rb` (objects with a board), `node_polled.rb` (the same with the portable API of the boards), `ros2_talker.rb` (topics, a timer, services with ROS 2), `ros2_rover.rb` (drive a ROS 2 robot: `/cmd_vel`, `/odom`, `/imu`), `zenoh.rb` (plain Zenoh), `mujoco/` (MuJoCo run from CRuby through Fiddle, its robot exposed as Asterism objects; see its README) |
@@ -481,7 +481,7 @@ claude mcp add asterism -- asterism mcp --credentials admin.tar --allow 'games/o
 | `asterism_nodes` | the nodes, their profiles, applications (with their statuses) and objects |
 | `asterism_objects` | the objects and their methods (meta); `callable_as` names the tool for an allowed method |
 | `asterism_status` | the applications' statuses (`node` / `app` narrow it) |
-| `<node>.<app>.<object>.<method>` | one per method an `--allow` pattern names, made from the meta: arity n gives the inputs `arg1` .. `argN` (any JSON value), arity -1 an array `args`; `kwargs` is an object of keyword arguments. The answer is `{"value": ...}`, or an error with its kind |
+| `<node>.<app>.<object>.<method>` | one per method an `--allow` pattern names, made from the meta: the arguments' names it tells are the inputs and its doc the description (with the object's doc after it); without names, arity n gives the inputs `arg1` .. `argN` (any JSON value), arity -1 an array `args`; `kwargs` is an object of keyword arguments. The answer is `{"value": ...}`, or an error with its kind |
 
 - `--allow PATTERN` (repeatable): `[node/][app/]object.method`, `*` within
   a part as a wildcard. A pattern with fewer parts matches the last parts
@@ -492,7 +492,12 @@ claude mcp add asterism -- asterism mcp --credentials admin.tar --allow 'games/o
   (`notifications/tools/list_changed`).
 - The calls are made as this node (`--node`, or the certificate's name), so
   an object exposed with `caller: :from` sees who called; a game table
-  gives the MCP client its own seat.
+  gives the MCP client its own seat. `--app` names this application (a
+  game host that follows its players by the application `game` sees an
+  MCP client started with `--app game` come and go).
+- An object that describes its methods at `expose` (`args:` and `doc:`,
+  "Describing the methods" below) gives the AI assistant the names and the
+  texts; without them it sees only the number of arguments.
 
 ## License
 
@@ -546,10 +551,11 @@ Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 | Call | Returns | Raises / notes |
 |---|---|---|
 | `Asterism.connect(locator = nil, node: nil, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil, check_timeout: 1.5, credentials: nil)` (`credentials:` see [Over TLS](#over-tls-a-router-on-the-internet)) | `Asterism` | `locator`, `mode:`, `listen:` (and `config:` / `connect_timeout:` when given: TLS and the rest of zenoh's configuration on CRuby; the boards take the TLS keys of `config:` only and raise `ArgumentError` for the rest) go to `Asterism::Zenoh::Session.open` (client of a router by default; `mode: :peer` with or without `listen:` without one). `node:` is this machine's ID, `app:` the application's name (one key chunk each: no `/ * $ ? #`, not starting with `@`; else `ArgumentError`). `Disconnected` when it cannot connect; `Error` when objects of the same `<node>/<app>` are already alive (a second copy of the application), or when already connected. Waits up to `check_timeout:` seconds for that check (a router answers at once; give more over a slow relay). Returns the module itself: on a board the module is the connection (one per application). The default is plain text without authentication; see [Over TLS](#over-tls-a-router-on-the-internet). |
-| `Asterism.expose(name, obj, methods:, caller: nil)` | `"<node>/<app>/<name>"` | `methods:` is an Array of names, or a Hash `name => number of arguments` (checked before the call; `-1` or the Array form: any). `ArgumentError` when `obj` has no such public method. Exposing a name again replaces it. `caller: :from` passes the calling node's ID to every method as the keyword `from:` and refuses a call that brings `from:` itself ([Who called](#who-called)). |
+| `Asterism.expose(name, obj, methods:, caller: nil, doc: nil)` | `"<node>/<app>/<name>"` | `methods:` is an Array of names, or a Hash `name => number of arguments` (checked before the call; `-1` or the Array form: any) or `name => { args: [names], doc: "text" }` ([Describing the methods](#describing-the-methods)); `doc:` the object's own text. `ArgumentError` when `obj` has no such public method. Exposing a name again replaces it. `caller: :from` passes the calling node's ID to every method as the keyword `from:` and refuses a call that brings `from:` itself ([Who called](#who-called)). |
 | `Asterism.current_call` | `Asterism::CurrentCall` or nil | While an exposed method runs for a call: `from` (the calling node's ID), `verified` (`:claimed`, or `:local` for a call from this application), `object`, `method`. nil outside a call ([Who called](#who-called)). |
 | `Asterism.unexpose(name)` | true / false | |
 | `Asterism.poll` | true / false | Call from the update loop: polls Zenoh, answers the calls that came in, follows who is alive and calls the `on_join` / `on_leave` blocks. `false` once the connection is closed or lost. Cheap when nothing came (0.6.0): each queue is looked at by its count, and the list of nodes is made again only after a liveliness change. |
+| `Asterism.on_app_join { \|node, app\| }` / `Asterism.on_app_leave { \|node, app\| }` | `Asterism` | An application of another node appeared (its token `asterism/<node>/<app>`) / is gone. A node may run several: each comes and goes on its own while the node stays. Told like `on_join` (from `Asterism.poll`; at connect for those there; all leave when the connection is lost); `off_app_join(proc)` / `off_app_leave(proc)`; CRuby `net.on_app_join` / `net.on_app_leave` |
 | `Asterism.on_join { \|node\| }` / `Asterism.on_leave { \|node\| }` | `Asterism` | Another node appeared (one of its applications or objects) / is gone (no application and no object left). The nodes there already join on the first polls after connecting; when the connection is lost, every node known until then leaves (on the next `Asterism.poll`). The blocks run from `Asterism.poll` only, never from the polling inside a waiting call; what they raise comes out of `Asterism.poll`. Each call adds a block; `Asterism.off_join(proc)` / `off_leave(proc)` remove one; `Asterism.close` forgets them (a lost connection does not). |
 | `Asterism[path, timeout: 2.0]` | `Proxy` | `path` is `<node>/<app>/<object>` without wildcards (`ArgumentError`). `timeout:` (seconds) or `timeout_ms:` is the time limit of its calls. Nothing is sent until a method is called. |
 | `proxy.<method>(*args, **kw)` | the remote return value | Waits for the answer (the proxy's time limit). `RemoteError` when it raised there or could not be called (`remote_kind` says which: `raised`, or not exposed `not_exposed` (`NoMethodError`), wrong number of arguments `arguments` (`ArgumentError`), no such object `no_object` (`NameError`); [Errors](#errors)), `TimeoutError` when no answer came in time (also at once when nobody answers that key), `Disconnected`, `EncodeError` (before anything is sent) for a value MessagePack cannot carry. A block cannot be sent (`ArgumentError`). |
@@ -570,6 +576,30 @@ Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 | `Asterism.profile_of(node, icon: true, timeout: 2.0)` | Hash or nil | Another node's profile, nil when it does not answer (an older version, a ROS 2 node). |
 | `Asterism.status(hash = nil, **fields)` / `Asterism.status` | Hash or nil | This application's status: a Hash is the whole status, keywords change those fields (nil removes one); put on the network when it changes. Without arguments, returns it. See [Status](#status). |
 | `Asterism.status_of(node, app, timeout: 2.0)` | Hash or nil | Another application's status, nil when it has none or does not answer. |
+
+## Describing the methods
+
+The meta (what `proxy.respond_to?` reads) can carry the arguments' names
+and what each method does, for the people and the tools that show them
+(`asterism mcp` turns them into an AI assistant's tool inputs and
+descriptions; `asterism objects` prints them). Give them at `expose`, next
+to the numbers:
+
+```ruby
+Asterism.expose("othello1", table, caller: :from, doc: "An othello table. Call view for the board.",
+                methods: { join: 1,                                   # a number, as before
+                           "move" => { args: %w[token n square],
+                                       doc: "Plays square (\"d3\") on the board version n of view." },
+                           view: { args: [:token], doc: "The board as this member sees it." } })
+```
+
+- The names give the number of arguments checked (`args: %w[a b]` is 2);
+  `arity: -1` keeps it unchecked (the names are then the leading ones).
+- The texts are at most 2048 bytes, the names at most 16 of 64 bytes; the
+  first line of a doc is its summary. They travel in every meta reply, so
+  keep them short on a board.
+- Old readers ignore them and old nodes do not send them
+  (docs/protocol.md 5); a proxy works the same either way.
 
 ## Profiles
 

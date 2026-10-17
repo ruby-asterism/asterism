@@ -86,6 +86,9 @@ check(Asterism.poll, "Asterism still polls")
 events = []
 Asterism.on_join { |n| events << "+#{n}" }
 Asterism.on_leave { |n| events << "-#{n}" }
+apps = []
+Asterism.on_app_join { |n, a| apps << "+#{n}/#{a}" }
+Asterism.on_app_leave { |n, a| apps << "-#{n}/#{a}" }
 poll_some
 token("asterism/n1/main", true)
 check(until_true { events.size == 1 }, "n1 joins")
@@ -94,6 +97,7 @@ token("asterism/n1/app/o2", true)
 until_true { Asterism.each("*/app/*").size == 2 }
 poll_some
 check(events == ["+n1", "+n2"], "joins: #{events.inspect}")
+check(apps == ["+n1/main"], "on_app_join: the application token only (objects are not applications): #{apps.inspect}")
 check(Asterism.nodes == ["me", "n1", "n2"], "nodes: #{Asterism.nodes.inspect}")
 poll_some(50)
 check(events.size == 2, "nothing more while nothing changes")
@@ -101,6 +105,7 @@ token("asterism/n1/main", false)
 until_true { !Asterism.nodes.include?("n1") || Asterism.nodes[1] == "n2" }
 poll_some
 check(events.size == 2 && Asterism.nodes == ["me", "n2", "n1"], "n1 stays by its object: #{Asterism.nodes.inspect}")
+check(apps == ["+n1/main", "-n1/main"], "on_app_leave while the node stays: #{apps.inspect}")
 token("asterism/n1/app/o2", false)
 check(until_true { events.size == 3 }, "n1 leaves with its last object")
 check(events[2] == "-n1", "leave: #{events.inspect}")

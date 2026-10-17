@@ -11,9 +11,11 @@
 #   asterism_status    the applications' statuses           (always; reads)
 #   <node>.<app>.<object>.<method>
 #                      one per method that an --allow pattern names, made
-#                      from the object's meta: arity n gives the inputs
-#                      arg1 .. argN (any JSON value), arity -1 an array
-#                      "args"; "kwargs" (an object) is the keyword
+#                      from the object's meta: the arguments' names the
+#                      meta tells (docs/protocol.md 5) are the inputs and
+#                      its doc the description; without names, arity n
+#                      gives arg1 .. argN (any JSON value), arity -1 an
+#                      array "args"; "kwargs" (an object) is the keyword
 #                      arguments. Nothing is callable without --allow.
 #
 # The call tools follow the network: when objects appear or go, the list is
@@ -38,7 +40,7 @@ module Asterism
         @survey = survey
         @allow = Allow.new(allow)
         @log = log
-        @call_tools = {}  # tool name => [path, method, arity]
+        @call_tools = {}  # tool name => [path, method, arity, meta entry]
         @signature = nil
         @lock = Mutex.new
       end
@@ -81,7 +83,7 @@ module Asterism
           methods.each do |m|
             next unless @allow.method?(path, m["name"])
             name = unique_name(tool_name(path, m["name"]), tools)
-            tools[name] = [path, m["name"], m["arity"]]
+            tools[name] = [path, m["name"], m["arity"], m]
           end
         end
         # Keep trying the objects whose meta did not come.
@@ -89,7 +91,7 @@ module Asterism
         changed = @lock.synchronize do
           next false if tools == @call_tools
           @call_tools = tools
-          list = read_tools + tools.map { |name, (path, method, arity)| call_tool(name, path, method, arity) }
+          list = read_tools + tools.map { |name, (path, _method, _arity, m)| call_tool(name, path, m) }
           @server.tools = list.to_h { [_1.name_value, _1] }
           @server.instance_variable_set(:@tool_names, @server.tools.keys)
           true
@@ -128,7 +130,8 @@ module Asterism
           ::MCP::Tool.define(
             name: "asterism_objects",
             description: "The exposed objects (<node>/<app>/<object>) and their methods with the number of " \
-                         "arguments (-1: any). callable_as names the tool that calls a method, when this server " \
+                         "arguments (-1: any), and the arguments' names and what each method does when the object " \
+                         "tells them (args, doc). callable_as names the tool that calls a method, when this server " \
                          "allows it.",
             input_schema: { properties: { pattern: { type: "string",
                                                      description: "node/app/object with * (one part) and ** " \
@@ -163,14 +166,25 @@ module Asterism
             name = by[[p, m["name"]]]
             name ? m.merge("callable_as" => name) : m
           end
-          { "path" => p, "methods" => methods }
+          h = { "path" => p, "methods" => methods }
+          h["doc"] = @survey.object_doc(p) if @survey.object_doc(p)
+          h
         end
       end
 
-      def call_tool(name, path, method, arity)
+      def call_tool(name, path, meta)
+        method = meta["name"]
+        arity = meta["arity"]
+        names = input_names(meta)
         props = {}
         required = []
-        if arity.negative?
+        if names
+          names.each do |n|
+            props[n.to_sym] = { description: "the argument #{n}" }
+            required << n if arity >= 0
+          end
+          props[:args] = { type: "array", description: "more positional arguments, if any" } if arity.negative?
+        elsif arity.negative?
           props[:args] = { type: "array", description: "the positional arguments (any number)" }
         else
           arity.times do |i|
@@ -181,24 +195,41 @@ module Asterism
         props[:kwargs] = { type: "object", description: "keyword arguments, if the method takes any" }
         schema = { properties: props }
         schema[:required] = required unless required.empty?
+        about = [meta["doc"], (d = @survey.object_doc(path)) && "(#{path}: #{d})"].compact
+        count = names ? "" : " (#{arity.negative? ? 'any number of' : arity} arguments)"
         bridge = self
         ::MCP::Tool.define(
           name: name,
-          description: "Calls #{method} on the Asterism object #{path} " \
-                       "(#{arity.negative? ? 'any number of' : arity} arguments) and returns {\"value\": ...}.",
+          description: "#{about.empty? ? '' : "#{about.join(' ')}\n"}Calls #{method} on the Asterism object " \
+                       "#{path}#{count} and returns {\"value\": ...}.",
           input_schema: schema
         ) do |server_context:, **args|
-          bridge.invoke(path, method, arity, args)
+          bridge.invoke(path, method, arity, args, names)
         end
       end
 
+      # The meta's argument names as inputs, or nil (none, or a name the
+      # inputs cannot take: "args", "kwargs", a repeated one).
+      def input_names(meta)
+        names = meta["args"]
+        return nil unless names.is_a?(Array) && !names.empty?
+        return nil if names.uniq.size != names.size || names.any? { %w[args kwargs].include?(_1) }
+        names
+      end
+
       # A call tool's call.
-      def invoke(path, method, arity, args)
-        pos = if arity.negative?
+      def invoke(path, method, arity, args, names = nil)
+        pos = if names
+                names.map { args[_1.to_sym] } + (arity.negative? ? Array(args[:args]) : [])
+              elsif arity.negative?
                 Array(args[:args])
               else
                 (1..arity).map { args[:"arg#{_1}"] }
               end
+        if names && arity.negative?
+          # Optional named arguments: the trailing ones not given are left out.
+          pos.pop while !pos.empty? && pos.last.nil? && args[:args].nil?
+        end
         kw = (args[:kwargs] || {}).to_h.transform_keys(&:to_sym)
         unless @lock.synchronize { @call_tools.any? { |_, t| t[0] == path && t[1] == method } }
           return error("#{path}.#{method} is not callable here (not allowed, or gone)")

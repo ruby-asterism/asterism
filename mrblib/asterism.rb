@@ -13,7 +13,8 @@
 #                     reply {"value" => v} or
 #                     {"error" => {"kind" => k, "class" => c, "message" => m}}
 #   asterism/<node>/<app>/<object>/meta
-#                     get: reply {"methods" => [{"name" => n, "arity" => a}, ...]}
+#                     get: reply {"methods" => [{"name" => n, "arity" => a,
+#                     "args" => [...], "doc" => "..."}, ...], "doc" => "..."}
 #   asterism/<node>/<app>             liveliness: the application is up
 #   asterism/<node>/<app>/<object>    liveliness: the object is exposed
 #   asterism/<node>/@profile          get: reply the node's profile (profile.rb)
@@ -287,7 +288,8 @@ module Asterism
     @session = s
     @node = node
     @app = app
-    @objects = {}  # name => [object, {method name => arity}, token, caller keyword or nil]
+    @objects = {}  # name => [object, {method name => arity}, token, caller keyword or nil,
+                   #          {method name => meta fields}, the object's doc or nil]
     @alive = {}    # "node/app/object" => node (from liveliness)
     @apps = {}     # "node/app" => node (from liveliness)
     @proxies = {}
@@ -295,6 +297,7 @@ module Asterism
     @lost = nil
     @known = []    # the other nodes told to on_join so far
     @known_set = {} # the same, as node => true
+    @known_apps = {} # "node/app" => true: the other applications told to on_app_join
     @node_list = [node] # what nodes returns (this node first), rebuilt on a change
     @nodes_changed = false # liveliness changed since tell_nodes last compared
     @was_reconnecting = false
@@ -363,8 +366,11 @@ module Asterism
   def self.close
     release
     @known = nil
+    @known_apps = nil
     @on_join = nil
     @on_leave = nil
+    @on_app_join = nil
+    @on_app_leave = nil
     nil
   end
 
@@ -450,21 +456,39 @@ module Asterism
 
   # Makes obj callable from other machines as <node>/<app>/<name>. Only the
   # listed methods can be called. methods: is an Array of names, or a Hash
-  # name => number of arguments (checked before calling; -1 for any).
+  # name => number of arguments (checked before calling; -1 for any), or
+  # name => {args: [names], doc: "text"} (docs/protocol.md 5): the
+  # arguments' names (their number is the number checked, unless arity:
+  # says otherwise) and what the method does, both told in the meta for
+  # the readers that show them (asterism mcp, the command line). doc: a
+  # text about the object itself, also in the meta.
   # caller: a keyword name (caller: :from): each call passes the calling
   # node's ID (Asterism.current_call.from) to the method as that keyword,
   # and a call that brings the keyword itself is refused (an "arguments"
   # error), so the value is always the one Asterism took from the call.
-  def self.expose(name, obj, methods:, caller: nil)
+  def self.expose(name, obj, methods:, caller: nil, doc: nil)
     s = session!
     name = check_name("object", name)
     table = {}
+    info = {}
     if methods.is_a?(Hash)
-      methods.each { |m, n| table[m.to_s] = n.to_i }
+      methods.each do |m, n|
+        if n.is_a?(Hash)
+          d = method_doc(m, n)
+          table[m.to_s] = d[0]
+          info[m.to_s] = d[1]
+        else
+          table[m.to_s] = n.to_i
+        end
+      end
     else
       methods.each { |m| table[m.to_s] = -1 }
     end
     raise ArgumentError, "no method to expose" if table.empty?
+    unless doc.nil?
+      raise ArgumentError, "doc: expects a String, got #{doc.class}" unless doc.is_a?(String)
+      raise ArgumentError, "doc: at most #{DOC_MAX} bytes" if doc.bytesize > DOC_MAX
+    end
     table.each_key do |m|
       raise ArgumentError, "#{obj.class} has no public method #{m}" unless obj.respond_to?(m)
     end
@@ -478,10 +502,58 @@ module Asterism
     end
     unexpose(name)
     token = s.liveliness("#{ROOT}/#{@node}/#{@app}/#{name}")
-    @objects[name] = [obj, table, token, kw]
+    @objects[name] = [obj, table, token, kw, info, doc]
     "#{@node}/#{@app}/#{name}"
   rescue Asterism::Zenoh::Error => e
     raise Disconnected, e.message
+  end
+
+  # The longest doc text (bytes) and the most argument names a method may
+  # tell in its meta (docs/protocol.md 5).
+  DOC_MAX = 2048
+  ARGS_MAX = 16
+
+  # A method's {args:, doc:, arity:} at expose: [the number of arguments
+  # checked, its meta fields {"args", "doc"}].
+  # @api private
+  def self.method_doc(m, h)
+    args = nil
+    doc = nil
+    arity = nil
+    h.each do |k, v|
+      ks = k.to_s
+      if ks == "args" then args = v
+      elsif ks == "doc" then doc = v
+      elsif ks == "arity" then arity = v
+      else raise ArgumentError, "#{m}: unknown key #{ks} (args:, doc:, arity:)"
+      end
+    end
+    out = {}
+    unless args.nil?
+      raise ArgumentError, "#{m}: args: expects an Array of names" unless args.is_a?(Array)
+      raise ArgumentError, "#{m}: args: at most #{ARGS_MAX} names" if args.size > ARGS_MAX
+      names = []
+      args.each do |a|
+        raise ArgumentError, "#{m}: args: expects names, got #{a.inspect}" unless a.is_a?(String) || a.is_a?(Symbol)
+        a = a.to_s
+        raise ArgumentError, "#{m}: args: an empty name" if a.empty? || a.bytesize > 64
+        names << a
+      end
+      out["args"] = names
+    end
+    unless doc.nil?
+      raise ArgumentError, "#{m}: doc: expects a String" unless doc.is_a?(String)
+      raise ArgumentError, "#{m}: doc: at most #{DOC_MAX} bytes" if doc.bytesize > DOC_MAX
+      out["doc"] = doc
+    end
+    n = if !arity.nil? then arity.to_i
+        elsif !args.nil? then args.size
+        else -1
+        end
+    if n >= 0 && !args.nil? && args.size != n
+      raise ArgumentError, "#{m}: #{args.size} names in args: for #{n} arguments"
+    end
+    [n, out]
   end
 
   def self.unexpose(name)
@@ -544,6 +616,88 @@ module Asterism
     self
   end
 
+  # on_app_join { |node, app| }: an application of another node appeared
+  # (its token asterism/<node>/<app>); on_app_leave { |node, app| }: it is
+  # gone. A node may run several applications: each comes and goes on its
+  # own, and the node stays (on_join / on_leave) while one of them or an
+  # object is there. The applications there already join on the first
+  # polls after connecting; when the connection is lost, every application
+  # known until then leaves. Called from Asterism.poll, as on_join;
+  # Asterism.close forgets them.
+  def self.on_app_join(&blk)
+    raise ArgumentError, "on_app_join needs a block" unless blk
+    (@on_app_join ||= []) << blk
+    self
+  end
+
+  def self.on_app_leave(&blk)
+    raise ArgumentError, "on_app_leave needs a block" unless blk
+    (@on_app_leave ||= []) << blk
+    self
+  end
+
+  def self.off_app_join(blk)
+    @on_app_join.delete(blk) if @on_app_join
+    self
+  end
+
+  def self.off_app_leave(blk)
+    @on_app_leave.delete(blk) if @on_app_leave
+    self
+  end
+
+  # Compares the applications alive now with those told before and calls
+  # the on_app_* blocks for the difference (this application left out).
+  # @api private
+  def self.tell_apps
+    known = @known_apps
+    return if known.nil?
+    now = {}
+    if @session
+      own = "#{@node}/#{@app}"
+      keys = @apps.keys
+      i = 0
+      while i < keys.size
+        now[keys[i]] = true unless keys[i] == own
+        i += 1
+      end
+    end
+    joined = []
+    left = []
+    keys = now.keys
+    i = 0
+    while i < keys.size
+      joined << keys[i] unless known[keys[i]]
+      i += 1
+    end
+    keys = known.keys
+    i = 0
+    while i < keys.size
+      left << keys[i] unless now[keys[i]]
+      i += 1
+    end
+    @known_apps = @session ? now : nil
+    tell_apps_each("on_app_join", @on_app_join, joined)
+    tell_apps_each("on_app_leave", @on_app_leave, left)
+  end
+
+  # @api private
+  def self.tell_apps_each(where, blocks, names)
+    return if blocks.nil? || names.empty?
+    i = 0
+    while i < names.size
+      cut = names[i].index("/")
+      node = names[i][0, cut]
+      app = names[i][cut + 1, names[i].size]
+      j = 0
+      while j < blocks.size
+        tell(where, blocks[j], node, app)
+        j += 1
+      end
+      i += 1
+    end
+  end
+
   # Compares the nodes alive now with those told before and calls the
   # blocks for the difference.
   # @api private
@@ -554,6 +708,7 @@ module Asterism
     # the connection is neither new nor lost): nothing can have changed.
     return unless @nodes_changed
     @nodes_changed = false
+    tell_apps
     now = []
     now_set = {}
     if @session
@@ -607,10 +762,15 @@ module Asterism
     end
   end
 
-  # One block for one node (CRuby routes what it raises to on_error).
+  # One block for one node, or one application (CRuby routes what it
+  # raises to on_error).
   # @api private
-  def self.tell(_where, blk, node)
-    blk.call(node)
+  def self.tell(_where, blk, node, app = nil)
+    if app.nil?
+      blk.call(node)
+    else
+      blk.call(node, app)
+    end
   end
 
   # @api private
@@ -939,8 +1099,16 @@ module Asterism
     entry = @objects[name]
     return nil unless entry
     list = []
-    entry[1].each { |m, n| list << { "name" => m, "arity" => n } }
-    { "methods" => list }
+    info = entry[4] || {}
+    entry[1].each do |m, n|
+      e = { "name" => m, "arity" => n }
+      extra = info[m]
+      extra.each { |k, v| e[k] = v } if extra
+      list << e
+    end
+    out = { "methods" => list }
+    out["doc"] = entry[5] if entry[5]
+    out
   end
 
   MALFORMED = "malformed call (expected a map {\"method\" => name, \"args\" => [...], \"kwargs\" => {...}})"

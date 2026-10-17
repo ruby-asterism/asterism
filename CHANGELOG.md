@@ -33,6 +33,19 @@ version (a patch release of one may come without the other).
   Read-only tools (`asterism_nodes`, `asterism_objects`, `asterism_status`)
   always; a tool per method that `--allow` names, its inputs made from the
   meta's arity; the list follows the network (tools/list_changed).
+- The meta tells the arguments' names and what a method does (protocol 1,
+  an addition: docs/protocol.md 5). `expose` takes
+  `methods: { "move" => { args: %w[token n square], doc: "..." } }` next to
+  the numbers (`{ add: 2 }`), and `doc:` for the object itself; the names
+  give the number of arguments checked (`arity:` says otherwise, -1 for
+  any). Readers ignore the fields (old nodes and new ones mix). `asterism
+  mcp` makes the tools' inputs from the names and their descriptions from
+  the docs; `objects` and `tree` show them. The conformance samples are
+  version 4 (the object `other` of the node under test has them).
+- `on_app_join { |node, app| }` / `on_app_leave { |node, app| }`: an
+  application of another node came or went (its token
+  `asterism/<node>/<app>`), while the node may stay with others; on mruby
+  too. CRuby: `net.on_app_join` / `net.on_app_leave`, and `off_*`.
 
 - `credentials:` on the boards too: `Asterism::Credentials` moved to
   `mrblib/credentials.rb` and reads the console's `.tar` in plain Ruby
