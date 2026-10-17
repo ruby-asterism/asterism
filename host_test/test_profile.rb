@@ -92,6 +92,44 @@ check(renamed && renamed["name"] == "renamed", "a change shows")
 check(Asterism.profile_of("nobody", timeout: 1.0).nil?, "nil when nobody answers")
 own = Asterism.profile_of("mtest")
 check(own && own["kind"] == "family_mruby" && own["name"] == "app", "own profile without the network")
+
+# --- statuses (status.rb), on mruby and from node.rb
+S = Asterism::Status
+check(S.check({ "a" => 1, 5 => 2 }) == { "a" => 1 }, "status check drops a non-str key")
+check(S.check([1]).nil?, "status check: not a map")
+check(S.check({ "big" => "x" * 1100 }).nil?, "status check: too large")
+check(Asterism.status(tables: 3) == { "tables" => 3 }, "status set: #{Asterism.status.inspect}")
+check(Asterism.status(humans: 1) == { "tables" => 3, "humans" => 1 }, "status fields merge")
+check(Asterism.status({ "x" => [1, { "y" => nil }] }) == { "x" => [1, { "y" => nil }] }, "a Hash is the whole status")
+raises(ArgumentError, "status: too deep") { Asterism.status(d: [[[[[1]]]]]) }
+raises(ArgumentError, "status: too large") { Asterism.status(big: "x" * 1100) }
+raises(ArgumentError, "status: not a Hash") { Asterism.status([1]) }
+check(Asterism.status_of("mtest", "t") == { "x" => [1, { "y" => nil }] }, "own status without the network")
+check(Asterism.apps.include?("mnode/t") && Asterism.apps("mtest/*") == ["mtest/t"], "apps: #{Asterism.apps.inspect}")
+st = Asterism.status_of("mnode", "t")
+check(st == { "n" => 1, "st" => "wait" }, "status_of: #{st.inspect}")
+notices = s.subscribe("asterism/*/*/@status")
+t = Time.now
+Asterism.poll while Time.now - t < 0.3
+s.put("test/status", "2")
+got = nil
+t = Time.now
+while got.nil? && Time.now - t < 3
+  Asterism.poll
+  notices.each_pending { |k, pl| got = S.parse(k, pl) if k == "asterism/mnode/t/@status" }
+  usleep 2000
+end
+check(got == ["mnode", "t", { "n" => 2, "st" => "wait" }], "a status change is put: #{got.inspect}")
+s.put("test/status", "2")
+t = Time.now
+again = 0
+while Time.now - t < 0.5
+  Asterism.poll
+  notices.each_pending { |k, _| again += 1 if k == "asterism/mnode/t/@status" }
+  usleep 2000
+end
+check(again == 0, "the same status again puts nothing (#{again})")
+check(Asterism.status_of("mnode", "nothing", timeout: 1.0).nil?, "no status: nil")
 s.put("test/stop", "")
 Asterism.poll
 Asterism.close

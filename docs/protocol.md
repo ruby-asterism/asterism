@@ -5,7 +5,7 @@ node puts on the network and what it expects back, so that an
 implementation in another language (Python, MicroPython, TypeScript, C,
 ...) can join the same network. asterism 0.7.0 (CRuby, and the mrbgem
 picoruby-asterism on mruby / PicoRuby, the same `mrblib/`) implements it,
-and the conformance tests (section 10) check implementations against it.
+and the conformance tests (section 11) check implementations against it.
 
 **Protocol 1 is the only protocol.** asterism 0.7.0 does not speak the
 protocol of the 0.x releases before it (protocol 0, appendix A): a node of
@@ -19,7 +19,8 @@ say what kind they are, and each application has its own liveliness token.
 The number is told in each node's profile (`"protocol" => 1`, section 7).
 A change that a protocol 1 reader would misread gets a new number; an
 addition that protocol 1 readers ignore (a field in a map: requests,
-replies, errors, meta entries, profiles) does not.
+replies, errors, meta entries, profiles; a new key such as the status, 8)
+does not.
 
 The ROS 2 side of Asterism (`Asterism::ROS`) is not part of this protocol:
 it speaks rmw_zenoh's format, described in the README ("ROS 2
@@ -36,10 +37,11 @@ Contents:
 5. [Meta](#5-meta)
 6. [Liveliness](#6-liveliness)
 7. [Profiles](#7-profiles)
-8. [What Zenoh must provide](#8-what-zenoh-must-provide)
-9. [Differences between the implementations](#9-differences-between-the-implementations)
-10. [Conformance tests](#10-conformance-tests)
-11. [Examples](#11-examples)
+8. [Status](#8-status)
+9. [What Zenoh must provide](#9-what-zenoh-must-provide)
+10. [Differences between the implementations](#10-differences-between-the-implementations)
+11. [Conformance tests](#11-conformance-tests)
+12. [Examples](#12-examples)
 - [Appendix A. Protocol 0 (discarded)](#appendix-a-protocol-0-discarded)
 
 ## 1. Model
@@ -58,13 +60,15 @@ Contents:
   **Presence** is told with Zenoh liveliness tokens, one per application
   and one per exposed object. A node's **profile** (the protocol it
   speaks, what it is, a name, an icon) is a query to the node's profile
-  key, and is also put there on each change.
+  key, and is also put there on each change. An application's **status**
+  (a small map of its own that changes while it runs) is a query to the
+  application's status key, and is also put there when it changes.
 - There is no server: every application answers the queries for its own
   objects. A Zenoh router (zenohd) usually connects them; a direct peer
   link works the same.
 - Payloads are MessagePack, each exactly one value. Nothing else is used:
   no Zenoh encoding, no attachment, no Zenoh error reply, no timestamp, no
-  source info (section 8).
+  source info (section 9).
 
 ## 2. Names and keys
 
@@ -105,6 +109,8 @@ write or its proxies cannot forward.
 | `asterism/<node>/<app>/<object>/meta` | get | a caller | 5 |
 | `asterism/<node>/@profile` | queryable | every application of the node (each its own) | 7 |
 | `asterism/<node>/@profile` | put | every application of the node, at connect and on each change | 7 |
+| `asterism/<node>/<app>/@status` | queryable | the application, once it has a status | 8 |
+| `asterism/<node>/<app>/@status` | put | the application, at connect and when its status changes | 8 |
 
 - The root chunk is `asterism`.
 - There is no token for the node alone: a node is present while any of
@@ -114,12 +120,21 @@ write or its proxies cannot forward.
   reply, a subscriber on `asterism/**` does not see the profile puts;
   `asterism/*/@profile` does match). The object layer's wildcards and its
   liveliness watch never see it.
+- `@status` is a verbatim chunk too: `asterism/**`, `asterism/<node>/**`
+  and `asterism/<node>/<app>/**` do **not** match it (the application's
+  queryable on `asterism/<node>/<app>/**` does not get its status
+  queries); `asterism/*/*/@status` and `asterism/<node>/*/@status` do. An
+  access control rule written for `asterism/**` does not reach the
+  statuses either: a router lets them through only with a rule of their
+  own (a reader: query and subscription on `asterism/*/*/@status`; a
+  writer: put, queryable and reply on `asterism/<node>/*/@status`).
 - The application's own keys under `asterism/<node>/<app>/<object>/<more>`
   (puts, subscriptions: a state, a log) do not meet the object layer: puts
   and subscriptions are not queries, and the queryable answers only the
   key shapes of 4.3.
 - Reserved for later: `asterism/<node>/<app>/@profile` (an application's
-  own profile).
+  own profile). Other verbatim chunks under `asterism/` are reserved for
+  this protocol.
 
 ## 3. Values
 
@@ -162,7 +177,7 @@ something it cannot read into nil or another value.
 - **Byte forms**: every implementation reads every valid form of a value
   (fixint and the 8/16/32/64-bit int forms, str8/16/32, bin8/16/32,
   array16/32, map16/32); none may depend on the form a sender chose.
-  Conformance is about values, not bytes (section 10).
+  Conformance is about values, not bytes (section 11).
 
 ### 3.2 Map keys
 
@@ -468,7 +483,7 @@ history (the tokens alive when it is declared come first) and reads each
 change by the number of chunks after `asterism/`: two is an application
 token, three an object token; anything else is ignored. `Asterism.nodes`,
 `Asterism.each` and `on_join` / `on_leave` come from this. ROS 2's tokens
-(`@ros2_lv/...`) and the profile are outside `asterism/**`.
+(`@ros2_lv/...`), the profile and the status are outside `asterism/**`.
 
 ### 6.3 The duplicate check
 
@@ -552,7 +567,75 @@ The reader cleans what it gets (`Asterism::Profile.check`):
 A node that does not answer (a ROS 2 node) has no profile; that is not an
 error.
 
-## 8. What Zenoh must provide
+## 8. Status
+
+A node's profile (7) says once what the node is; an application's status
+says what changes while it runs: how many tables a game host has open and
+who sits at them, a battery level, the mode a robot is in. Its content is
+the application's own. Readers show it (a console's details, a command
+line `watch`) and do not interpret it unless they know the application.
+
+Statuses came after asterism 0.7.1, within protocol 1: an older node
+neither answers nor puts one, and its readers see "no status".
+
+### 8.1 Keys
+
+- An application that has a status declares a queryable on
+  `asterism/<node>/<app>/@status` (depth 4) and answers every query there
+  with its status, on the same key. An application without a status
+  declares nothing there, and nothing answers (a reader sees no reply:
+  "no status").
+- It puts its status on the same key at connect (when it already has
+  one), each time the status **changes**, and after a lost connection
+  comes back (a put made while the router was away reached nobody).
+  Setting the same status again puts nothing: an implementation compares
+  the encoded map with the one it last put on this connection.
+- The status belongs to the application (one per `<node>/<app>`), not to
+  the node: two applications of one node have a status each.
+- There is no delete: when the application goes, its tokens go (6), and
+  readers forget its status with them.
+
+### 8.2 The query
+
+The query has no payload and no parameters (both are ignored).
+
+### 8.3 The reply and the put
+
+A MessagePack **map with str keys** (not empty strings). The values are any
+values of the protocol (3.1), nested at most **4 levels below the map**
+(the map is level 0; `{"a" => [[[[1]]]]}` is the deepest allowed). The
+encoded map is at most **1024 bytes**. The sender refuses a status that
+breaks these rules before sending (Ruby: `ArgumentError` from
+`Asterism.status`).
+
+Example, a game host (asterism-games) with two tables:
+
+```
+put    asterism/games/games/@status
+       {"mahjong1" => {"st" => "play", "members" => 4, "humans" => 1, "cpus" => 3, "away" => 0},
+        "othello1" => {"st" => "wait", "members" => 0, "humans" => 0, "cpus" => 0, "away" => 0}}
+```
+
+A status SHOULD hold counts and states, not secrets: whoever may read
+`asterism/*/*/@status` reads it (a game host leaves out the members' names,
+their node IDs and their tokens).
+
+### 8.4 Reading a status
+
+The reader cleans what it gets (`Asterism::Status.check`):
+
+- not a map, or a map that encodes into more than 1024 bytes: **no
+  status** (nil);
+- entries whose key is not a non-empty str are dropped;
+- the nesting is not checked.
+
+A follower subscribes to `asterism/*/*/@status` (or
+`asterism/<node>/*/@status`) and takes the last put of each
+`<node>/<app>`; it asks the key once for an application that appeared
+(only changes are put). An application that does not answer has no
+status; that is not an error.
+
+## 9. What Zenoh must provide
 
 Zenoh 1.x. Checked with zenoh-c 1.10.1 (CRuby), zenoh-pico 1.10.1 (boards,
 mruby, the browser build over WebSocket) and zenohd 1.10.1.
@@ -560,12 +643,12 @@ mruby, the browser build over WebSocket) and zenohd 1.10.1.
 | Feature | Used for |
 |---|---|
 | Session, client mode (a router) or peer mode (a direct link) | everything |
-| Get with payload, parameters, timeout, target ALL, consolidation NONE | calls, meta, profiles |
+| Get with payload, parameters, timeout, target ALL, consolidation NONE | calls, meta, profiles, statuses |
 | Queryable (not complete) and replies on a key of the replier's choosing (the object's own key under a wildcard query) | answering |
 | Liveliness token | presence |
 | Liveliness subscriber with history | following presence |
 | Liveliness get | the duplicate check |
-| Put and subscriber | profile notices |
+| Put and subscriber | profile notices, status changes |
 
 Not used, and not to be relied on: encodings (left at the default),
 attachments, Zenoh error replies, delete replies, timestamps, source info,
@@ -573,9 +656,9 @@ complete queryables, queriers, advanced publishers/subscribers. An
 implementation MAY set an encoding; the receivers ignore it. TLS and
 access control are a deployment's choice (4.7); boards have no TLS.
 
-## 9. Differences between the implementations
+## 10. Differences between the implementations
 
-Checked with the conformance tests (section 10) and the Family mruby
+Checked with the conformance tests (section 11) and the Family mruby
 simulation:
 
 | | CRuby | Boards (Family mruby, msgpack-c) | mruby test build |
@@ -592,9 +675,9 @@ The mruby test build's MessagePack (`host_test/msgpack.rb`) is a stand-in;
 what the boards do is the msgpack-c column (fmruby-core
 `lib/add/picoruby-fmrb-msgpack`).
 
-## 10. Conformance tests
+## 11. Conformance tests
 
-### 10.1 What there is
+### 11.1 What there is
 
 | File | What |
 |---|---|
@@ -615,7 +698,7 @@ Through a router, use one that no other Asterism node is connected to:
 the sample "profile not under *" asks `asterism/*/@profile`, and every
 node there answers it.
 
-### 10.2 Typed values
+### 11.2 Typed values
 
 JSON cannot tell an int from a float or a str from a bin, so values are
 written as typed values:
@@ -635,19 +718,20 @@ Expected values may also hold matchers: `{"any": "str"}` (or `"int"`,
 `"float"`, `"value"`), `{"match": "<regex>"}` (a str matching it),
 `{"unordered": [v, ...]}` (an array with these elements in any order).
 
-### 10.3 samples.json
+### 11.3 samples.json
 
 ```
 {
-  "format": "asterism-protocol-samples", "version": 2, "protocol": 1,
+  "format": "asterism-protocol-samples", "version": 3, "protocol": 1,
   "names":  {"iut": "iut", "app": "conf", "driver": "drv"},
   "icon":   {"hex": "<the PNG>", "icon_hash": "2a8c0626"},
-  "iut":    {"profile": ..., "objects": [{"name": "subject", "methods": [[name, arity], ...]}, ...]},
+  "iut":    {"profile": ..., "status": ..., "objects": [{"name": "subject", "methods": [[name, arity], ...]}, ...]},
   "values":   [{"id", "value", "encodings": [hex, ...], "portable", "expect"?, "note"?}, ...],
   "incoming": [{"id", "key", "params", "payload_hex", "replies": [{"key", "payload"}], "portable", "note"?}, ...],
   "outgoing": [{"id", "do", "request": {"key", "params", "call" | "payload"} | null, "reply_hex": [hex, ...], "outcome"}, ...],
   "liveliness":   {"alive": [key, ...], "gone_after_close": [key, ...]},
-  "profile_puts": [{"when", "key", "payload"}, ...]
+  "profile_puts": [{"when", "key", "payload"}, ...],
+  "status_puts":  [{"when", "key", "payload"}, ...]
 }
 ```
 
@@ -663,23 +747,29 @@ Expected values may also hold matchers: `{"any": "str"}` (or `"int"`,
 - **outgoing**: what the implementation under test does, in order (`do`):
   `{"call": method, "args": [...], "kwargs": {"map": ...}}` on
   `drv/conf/rec`; `{"respond_to": [names]}` (from the object's meta);
-  `{"profile_of": "drv", "icon": bool}`; `{"set_profile": {"map": ...}}`.
+  `{"profile_of": "drv", "icon": bool}`; `{"set_profile": {"map": ...}}`;
+  `{"status_of": ["drv", "conf"]}`; `{"set_status": {"map": ...}}` (the
+  whole status).
   The driver checks the request it receives against `request` (for a
   call, `call` is the request map with absent `args` / `kwargs` read as
   empty), answers with the replies in `reply_hex` (none: it finishes the
   query without a reply) and then expects the implementation's report of
   the `outcome`.
+- **profile_puts**, **status_puts**: the puts the implementation must make
+  on its profile key and its status key, in this order, and no others (the
+  same status set again puts nothing).
 - **portable: false** samples are where the implementations may differ
-  (section 9): the driver prints what came back and does not fail.
+  (section 10): the driver prints what came back and does not fail.
 
-### 10.4 The implementation under test
+### 11.4 The implementation under test
 
 An implementation in another language writes its own node program; the
 driver runs it as `COMMAND LOCATOR MODE ICON_FILE` (MODE is `peer`: connect
 to the driver, which listens on LOCATOR; or `client`: both are clients of
 the router at LOCATOR). The program:
 
-1. sets its profile name to `iut` and its icon to the PNG in ICON_FILE;
+1. sets its profile name to `iut` and its icon to the PNG in ICON_FILE,
+   and its status to `{"st" => "wait", "n" => 1}`;
 2. connects as node `iut`, application `conf`;
 3. exposes `subject` with `echo(v) -> v` (1), `kw(a, b: nil, c: nil) ->
    [a, b, c]` (1), `add(a, b) -> a + b` (2), `boom` raising a `RuntimeError`
@@ -707,7 +797,7 @@ The driver needs CRuby with asterism-zenoh and msgpack. Another language
 may also read samples.json directly for its own unit tests (the values,
 and the request and reply payloads, are all there).
 
-## 11. Examples
+## 12. Examples
 
 Node `linux`, app `demo` (Family mruby's asterism_demo in the simulation),
 called by a CRuby node `mypc`:

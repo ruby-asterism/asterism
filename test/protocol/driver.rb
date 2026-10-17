@@ -1,4 +1,4 @@
-# The conformance driver (docs/protocol.md 10): checks an implementation of
+# The conformance driver (docs/protocol.md 11): checks an implementation of
 # the Asterism wire protocol 1 against test/protocol/samples.json, over Zenoh.
 # It uses only the plain Zenoh API (asterism-zenoh) and msgpack, never
 # Asterism's object layer, so what it checks is what goes on the wire.
@@ -137,6 +137,8 @@ s.liveliness_watch("asterism/**") do |key, up|
   end
 end
 s.subscribe("asterism/#{IUT}/@profile") { |sm| lock.synchronize { profile_puts << sm.payload.b } }
+status_puts = []
+s.subscribe("asterism/#{IUT}/*/@status") { |sm| lock.synchronize { status_puts << [sm.key, sm.payload.b] } }
 
 icon_file = File.join(Dir.mktmpdir("asterism-protocol"), "icon.png")
 File.binwrite(icon_file, hexbytes(SAMPLES["icon"]["hex"]))
@@ -205,6 +207,7 @@ begin
   by_call = outs.select { |o| o["do"].key?("call") }.to_h { |o| [o["do"]["call"], o] }
   meta = outs.find { |o| o["do"].key?("respond_to") }
   profile_steps = outs.select { |o| o["do"].key?("profile_of") }
+  status_steps = outs.select { |o| o["do"].key?("status_of") }
   requests = {} # id => [ok, detail]
   reports = []
   done = false
@@ -274,6 +277,15 @@ begin
       answer.(o, q)
     end
   end
+  status_n = 0
+  s.queryable("asterism/#{DRV}/#{APP}/@status") do |q|
+    o = status_steps[status_n]
+    status_n += 1
+    if o
+      lock.synchronize { requests[o["id"]] = check_request.(o, q) }
+      answer.(o, q)
+    end
+  end
   tokens = [s.liveliness("asterism/#{DRV}"), s.liveliness(rec_key)]
   finished = wait(90) { lock.synchronize { done } }
   R.add("outgoing", "all steps reported", finished, finished ? nil : "#{reports.size} of #{outs.size} reported")
@@ -320,6 +332,22 @@ begin
     end
   end
   R.add("profile puts", "no other puts", puts_now.size == SAMPLES["profile_puts"].size, "#{puts_now.size} puts")
+
+  # ---------------------------------------------------------- status puts
+  st_now = lock.synchronize { status_puts.dup }
+  SAMPLES["status_puts"].each_with_index do |p, n|
+    k, b = st_now[n]
+    if b.nil?
+      R.add("status puts", p["when"], false, "#{st_now.size} puts came")
+    else
+      st, v = decode(b)
+      why = k == p["key"] ? nil : "key #{k}, expected #{p['key']}"
+      why ||= st == :ok ? TV.mismatch(p["payload"], v) : "not MessagePack"
+      R.add("status puts", p["when"], why.nil?, why)
+    end
+  end
+  R.add("status puts", "no other puts (none for the same status again)", st_now.size == SAMPLES["status_puts"].size,
+        "#{st_now.size} puts")
 ensure
   begin
     exited = wait(5) { Process.waitpid(pid, Process::WNOHANG) }

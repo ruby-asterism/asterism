@@ -1,6 +1,6 @@
 # The implementation under test for the conformance driver (driver.rb), in
 # Ruby: the portable API only, so the same file runs on CRuby and on mruby
-# (docs/protocol.md 10.4 says what an implementation in another language
+# (docs/protocol.md 11.4 says what an implementation in another language
 # does in its place).
 #
 #   ruby -I lib node.rb LOCATOR MODE ICON_FILE            (CRuby, -r asterism)
@@ -73,6 +73,7 @@ rescue Asterism::Error => e
 end
 
 Asterism.profile(name: "iut", icon: icon)
+Asterism.status({ "st" => "wait", "n" => 1 })
 if mode == "peer"
   Asterism.connect(locator, node: "iut", app: "conf", mode: :peer)
 else
@@ -119,7 +120,13 @@ steps = [
   ["profile with the icon", -> { Asterism.profile_of("drv", timeout: 1.5) }],
   ["profile without a protocol", -> { Asterism.profile_of("drv", icon: false, timeout: 1.5) }],
   ["profile that is not one", -> { Asterism.profile_of("drv", icon: false, timeout: 1.5) }],
-  ["change the profile", -> { Asterism.profile(name: "iut 2"); nil }]
+  ["change the profile", -> { Asterism.profile(name: "iut 2"); nil }],
+  ["status of another app", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
+  ["status that is not one", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
+  ["status too large", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
+  ["no status", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
+  ["change the status", -> { Asterism.status({ "st" => "play", "n" => 1 }); nil }],
+  ["the same status again", -> { Asterism.status({ "st" => "play", "n" => 1 }); nil }]
 ]
 fails = 0
 i = 0

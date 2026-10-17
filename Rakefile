@@ -6,11 +6,14 @@
 #   rake               all the test suites (the default)
 #   rake test:msgs     the generator, the type hashes, CDR, the bundled
 #                      types and the layout (CRuby only: no Zenoh, no docker)
-#   rake test:objects  the object layer, node profiles and Asterism::ROS
+#   rake test:objects  the object layer, node profiles, statuses and Asterism::ROS
 #                      between CRuby sessions; needs asterism-zenoh (below)
 #   rake test:api      the Ruby-like API of CRuby (lib/asterism/cruby/):
 #                      blocks, receiving threads, Enumerators; needs
 #                      asterism-zenoh too
+#   rake test:cli      the command line (exe/asterism) against a node in
+#                      another process, and its MCP bridge (with the mcp
+#                      gem's client; skipped without the mcp gem)
 #   rake test:mruby    the shared layer on mruby (MRB_UTF8_STRING, as on the
 #                      boards): node profiles between two mruby processes,
 #                      Asterism.session and on_join / on_leave in one.
@@ -73,6 +76,7 @@ namespace :test do
     incs += ["-I", lib] if lib
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_asterism.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_profile.rb")
+    sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_status.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_session.rb")
   end
 
@@ -88,6 +92,20 @@ namespace :test do
     Dir.glob(File.join(ROOT, "test/test_api_*.rb")).sort.each do |t|
       sh RbConfig.ruby, *incs, t
     end
+  end
+end
+
+namespace :test do
+  desc "The command line (exe/asterism): nodes, objects, tree, watch, ping, call, and the MCP bridge (needs asterism-zenoh; the mcp gem for the bridge)"
+  task :cli do
+    lib = asterism_zenoh_lib
+    unless lib || asterism_zenoh_gem?
+      abort "asterism-zenoh not found: build it next to this repository " \
+            "(../asterism-zenoh, rake compile), set ASTERISM_ZENOH_DIR, or install the gem"
+    end
+    incs = ["-I", File.join(ROOT, "lib")]
+    incs += ["-I", lib] if lib
+    sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_cli.rb")
   end
 end
 
@@ -310,7 +328,7 @@ namespace :bench do
 end
 
 desc "Run the test suites"
-task test: ["test:msgs", "test:objects", "test:api", "test:protocol"]
+task test: ["test:msgs", "test:objects", "test:api", "test:cli", "test:protocol"]
 
 def ros2_image!
   img = ENV["ASTERISM_ROS2_IMAGE"].to_s

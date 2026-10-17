@@ -13,7 +13,8 @@ repository holds the pure Ruby layers, written once for every Ruby:
 | `data/icon.png` | CRuby's default profile icon (32x32 PNG; [Profiles](#profiles)) |
 | `data/msgs/` | ROS 2 message types generated from ROS 2 Jazzy's definitions (Apache-2.0; tf2_msgs BSD-3-Clause; see NOTICE) |
 | `tools/` | The type generator `asterism_msggen.rb`, the Jazzy definitions it reads, `ros2_types.rb` (refreshes them from a ROS 2 image) |
-| `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_profile.rb` (node profiles), `test_session.rb` (`Asterism.session`, `on_join` / `on_leave`), `test_api_*.rb` (the CRuby API), `bench_poll.rb` (`rake bench:poll`) |
+| `exe/asterism`, `lib/asterism/cli*` | The command line: look at a network, call an object, an MCP server ([The command line](#the-command-line); CRuby only) |
+| `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_profile.rb` (node profiles), `test_status.rb` (application statuses), `test_cli.rb` (the command line), `test_session.rb` (`Asterism.session`, `on_join` / `on_leave`), `test_api_*.rb` (the CRuby API), `bench_poll.rb` (`rake bench:poll`) |
 | `test/protocol/` | the conformance samples of the wire protocol (`samples.json`), the driver that checks an implementation against them, and the Ruby node it checks (`rake test:protocol`, `rake test:protocol_mruby`; [docs/protocol.md](docs/protocol.md)) |
 | `host_test/` | `rake test:mruby`: the shared layer on mruby (profiles between two mruby processes; `Asterism.session`, `on_join` / `on_leave` and the time of a poll against `peer.rb`) |
 | `examples/` | CRuby: `node.rb` (objects with a board), `node_polled.rb` (the same with the portable API of the boards), `ros2_talker.rb` (topics, a timer, services with ROS 2), `ros2_rover.rb` (drive a ROS 2 robot: `/cmd_vel`, `/odom`, `/imu`), `zenoh.rb` (plain Zenoh), `mujoco/` (MuJoCo run from CRuby through Fiddle, its robot exposed as Asterism objects; see its README) |
@@ -129,6 +130,7 @@ rake                  # every suite
 rake test:msgs        # generator, type hashes, CDR, bundled types (CRuby only; no Zenoh, no docker)
 rake test:objects     # objects and Asterism::ROS between CRuby sessions over a local peer link
 rake test:api         # the CRuby API (blocks, receiving threads, Enumerators)
+rake test:cli         # the command line (exe/asterism) and its MCP bridge (the mcp gem's client; skipped without it)
 ASTERISM_TEST_ROUTER=tcp/127.0.0.1:7447 rake test:objects test:api   # the same through a zenohd router
 rake test:mruby       # the shared layer on mruby (builds mruby; not part of `rake`)
 rake test:protocol    # the wire protocol's conformance samples and driver against CRuby (docs/protocol.md)
@@ -408,6 +410,90 @@ What may be shared between threads:
 | The boards | one thread (the application's update loop) |
 | Ractors | not supported |
 
+## The command line
+
+The gem has a command, `asterism`, that looks at a network from a terminal
+(CRuby). It is one more node: it connects, reads the liveliness tokens,
+the meta, the profiles and the statuses, and calls a method only when told
+to with `call`.
+
+```
+asterism nodes   --router tcp/192.0.2.2:7447        # nodes, their apps (with their status), profiles
+asterism objects --router tcp/192.0.2.2:7447 'games/games/*'   # objects and their methods
+asterism tree    --credentials admin.tar             # nodes > apps > objects, with methods and statuses
+asterism watch   --router tcp/192.0.2.2:7447        # nodes, apps and objects coming and going, statuses
+asterism ping    --router tcp/192.0.2.2:7447 games/games/othello1   # round trips (its meta; no method runs)
+asterism ping    ... games/games/othello1 --call view '"<token>"'   # round trips of a call
+asterism call    --router tcp/192.0.2.2:7447 games/games/othello1 join '"Alice"'
+asterism call    ... linux/demo/screen say hello --kwargs '{color: 3}'
+```
+
+```
+$ asterism tree --router tcp/192.0.2.2:7447
+games  (cruby) "asterism-games"
+  games  status {"mahjong1":{"st":"wait","members":0,"humans":0,"cpus":0,"away":0}, ...}
+    mahjong1  join(1) mine(0) leave(1) sit(2) stand(1) ...
+linux  (family_mruby/sim)
+  game
+$ asterism watch --router tcp/192.0.2.2:7447
+12:00:01.204 ~ status games/games {"othello1":{"st":"wait","members":0,...}} (now)
+12:00:04.881 + node wasm-1a2b3c
+12:00:04.881 + app wasm-1a2b3c/game
+12:00:05.120 ~ status games/games {"othello1":{"st":"wait","members":1,...}}
+```
+
+- **Where the network is.** `--router tcp/HOST:7447` (a router without TLS),
+  or `--credentials FILE.tar` (a console's `.tar`: mutual TLS, its router
+  and its name; `--router` overrides the router). `--peer LOCATOR` links
+  straight to a node listening there (no router). The node ID is the
+  certificate's name, otherwise `cli-` and 6 hex digits (`--node`); the
+  application `cli-` and 4 (`--app`).
+- **What it sees** is what the router lets it see. With a console's `.tar`
+  that is the row's roles: a role for looking only is in the console's
+  docs/g1_5.md ("Looking only: a viewer role"): it reads every node, object,
+  profile and status, and the router refuses its calls, so `asterism call`
+  says "nobody answers" and nothing runs. Something the router refuses is
+  left out of a listing; it is not reported as gone.
+- **Arguments** of `call` (and `ping --call`): each is JSON, else a Ruby
+  literal (nil, true, false, numbers, strings, symbols, arrays, hashes; read
+  with Ripper, nothing is evaluated), else the text as written. `--kwargs`
+  is a JSON object or a Ruby Hash.
+- **Output**: text, or `--json` (`watch --json`: one object a line, with
+  the time). `--timeout` (2.0 s) is each get's and call's limit, `--settle`
+  (1.5 s) how long it waits for the tokens after connecting.
+- **watch** shows the applications and objects themselves (their tokens),
+  not only the nodes: a node with two applications stays while one closes,
+  and `watch` shows that one leave.
+
+### MCP: Asterism as tools of an AI assistant
+
+`asterism mcp` is an MCP server on stdio (it needs the `mcp` gem, which
+the asterism gem does not depend on: `gem install mcp`). It reads by
+default, and calls only the methods `--allow` names:
+
+```
+asterism mcp --router tcp/192.0.2.2:7447 --allow 'games/othello1.*'
+claude mcp add asterism -- asterism mcp --credentials admin.tar --allow 'games/othello1.*'
+```
+
+| Tool | What |
+|---|---|
+| `asterism_nodes` | the nodes, their profiles, applications (with their statuses) and objects |
+| `asterism_objects` | the objects and their methods (meta); `callable_as` names the tool for an allowed method |
+| `asterism_status` | the applications' statuses (`node` / `app` narrow it) |
+| `<node>.<app>.<object>.<method>` | one per method an `--allow` pattern names, made from the meta: arity n gives the inputs `arg1` .. `argN` (any JSON value), arity -1 an array `args`; `kwargs` is an object of keyword arguments. The answer is `{"value": ...}`, or an error with its kind |
+
+- `--allow PATTERN` (repeatable): `[node/][app/]object.method`, `*` within
+  a part as a wildcard. A pattern with fewer parts matches the last parts
+  of the path (`games/othello1.*` is `*/games/othello1.*`); without
+  `.method` every method of the object.
+- The call tools follow the network: when an allowed object appears or
+  goes, the list is made again and the client is told
+  (`notifications/tools/list_changed`).
+- The calls are made as this node (`--node`, or the certificate's name), so
+  an object exposed with `caller: :from` sees who called; a game table
+  gives the MCP client its own seat.
+
 ## License
 
 MIT (LICENSE) for Asterism's code. The ROS 2 definitions in
@@ -475,12 +561,15 @@ Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 | `proxy.asterism_meta` / `proxy.asterism_path` | Hash, String | `{"methods" => [{"name" => name, "arity" => n}, ...]}` |
 | `Asterism.each(pattern = "**") { \|proxy\| }` | count (Array without a block) | The exposed objects alive now (this application's own included) whose `<node>/<app>/<object>` matches; `*` is one chunk, `**` any number. 1.0 returns the proxies from the block form instead of their number (Ruby's `each` returns its receiver); write `Asterism.each(pattern).size` for the count. |
 | `Asterism.nodes` | `[String]` | Node IDs alive now, this one first. |
+| `Asterism.apps(pattern = "*/*")` | `[String]` | The applications alive now, `"<node>/<app>"` (from their liveliness tokens; this one first). |
 | `Asterism.connected?` / `node_id` / `app` / `exposed` / `lost_reason` | | |
 | `Asterism.reconnecting?` | true / false | True while the router is away and the binding opens the connection again ([When the connection is lost](#when-the-connection-is-lost)). |
 | `Asterism.session` | `Asterism::Zenoh::Session` | The connection's own session, for put / subscribe / a ROS 2 node on the same connection ([One connection](#one-connection-asterismsession)). The same object until the connection closes. `Disconnected` when not connected. Its `close` does nothing (warns once); `Asterism.close` closes it. |
 | `Asterism.close` | nil | Withdraws every exposed object. Idempotent. |
 | `Asterism.profile(kind:, name:, host:, icon:)` / `Asterism.profile` | Hash | This node's profile: sets the fields given and returns it; without arguments, returns it. See [Profiles](#profiles). |
 | `Asterism.profile_of(node, icon: true, timeout: 2.0)` | Hash or nil | Another node's profile, nil when it does not answer (an older version, a ROS 2 node). |
+| `Asterism.status(hash = nil, **fields)` / `Asterism.status` | Hash or nil | This application's status: a Hash is the whole status, keywords change those fields (nil removes one); put on the network when it changes. Without arguments, returns it. See [Status](#status). |
+| `Asterism.status_of(node, app, timeout: 2.0)` | Hash or nil | Another application's status, nil when it has none or does not answer. |
 
 ## Profiles
 
@@ -534,6 +623,41 @@ Asterism.profile_of("an-older-node")                 # => nil
 - `Asterism::Profile.png_info(bytes)` gives `[width, height, icon_hash]` of
   an acceptable PNG (nil otherwise), for a tool that wants to check an icon
   first.
+
+## Status
+
+An application tells what changes while it runs: how many tables a game
+host has open and who sits at them, a battery level, a mode. The profile
+says once what a node is; the status is the application's and changes.
+
+```ruby
+Asterism.status(tables: 3, humans: 2)           # sets those fields, keeps the others
+Asterism.status(humans: nil)                    # nil removes a field
+Asterism.status({ "mahjong1" => { "st" => "play", "humans" => 1 } })   # a Hash: the whole status
+Asterism.status                                 # => {"mahjong1" => {...}} (nil when none was set)
+Asterism.status_of("games", "games")            # another application's, or nil
+```
+
+- **On the network.** `asterism/<node>/<app>/@status`
+  ([docs/protocol.md](docs/protocol.md) 8): the application answers a get
+  there with its status, and puts it there when it changes (setting the
+  same status again puts nothing), at connect and after a lost connection
+  comes back. An application that never set one answers nothing.
+- **The value.** A Hash with String (or Symbol) keys; the values are
+  anything a call can carry, nested at most 4 levels below the Hash, and
+  the whole packs into 1024 bytes at most. `ArgumentError` otherwise.
+  Whoever may read `asterism/*/*/@status` reads it: counts and states, not
+  secrets.
+- **Following.** Subscribe to `asterism/*/*/@status` and read each put with
+  `Asterism::Status.parse(key, payload)` (`[node, app, status]` or nil); on
+  CRuby, `net.on_status("*/*") { |node, app, status| }`. Only changes are
+  put: ask `status_of` once for an application that appeared.
+- **Behind access control.** `@status` is a verbatim chunk: `asterism/**`
+  does not match it. A router's rules need `asterism/*/*/@status` for a
+  reader (query, subscription) and `asterism/<node>/*/@status` for the
+  application (put, queryable, reply).
+- Kept across `connect` and `close`, like the profile (it belongs to the
+  process, or the VM on a board).
 
 ## One connection: `Asterism.session`
 

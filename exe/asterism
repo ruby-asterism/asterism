@@ -1,0 +1,8 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The command line of the asterism gem: look at an Asterism network, call
+# an object, or serve it to an MCP client (lib/asterism/cli.rb; `asterism
+# help`).
+require "asterism/cli"
+exit Asterism::CLI.start(ARGV)

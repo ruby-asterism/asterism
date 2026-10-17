@@ -27,7 +27,7 @@ module Asterism
   # singleton class, so the shared methods themselves are not changed.
   module Locked
     %i[expose unexpose poll nodes [] call_async meta connected? reconnecting? exposed on_join on_leave off_join off_leave
-       profile profile_async session].each do |m|
+       profile profile_async status status_async apps session].each do |m|
       define_method(m) do |*args, **kw, &blk|
         ::Asterism::LOCK.synchronize { super(*args, **kw, &blk) }
       end
@@ -186,6 +186,34 @@ module Asterism
     def profile_of(node, icon: true, timeout: nil, timeout_ms: nil)
       ::Asterism.profile_of(node, icon: icon, timeout: timeout, timeout_ms: timeout_ms)
     end
+
+    # Asterism.status: this application's status (a Hash: the whole
+    # status; keywords: those fields). Without arguments, returns it.
+    def status(h = nil, **fields)
+      ::Asterism.status(h, **fields)
+    end
+
+    # Asterism.status_of: another application's status, or nil. Waits like
+    # a call (for the receiving thread's ticks while it runs).
+    def status_of(node, app, timeout: nil, timeout_ms: nil)
+      ::Asterism.status_of(node, app, timeout: timeout, timeout_ms: timeout_ms)
+    end
+
+    # on_status(pattern = "*/*") { |node, app, status| }: the statuses put
+    # by the applications whose "<node>/<app>" matches the pattern (Zenoh
+    # wildcards: * one chunk, ** several), as they change, on the receiving
+    # thread. Only changes come: ask status_of for the one there now.
+    # Returns the subscription (close it to stop).
+    def on_status(pattern = "*/*", &blk)
+      raise ArgumentError, "on_status needs a block" unless blk
+      session.subscribe("#{::Asterism::ROOT}/#{pattern}/#{::Asterism::Status::KEY}") do |sample|
+        got = ::Asterism::Status.parse(sample.key, sample.payload)
+        blk.call(*got) if got
+      end
+    end
+
+    # Asterism.apps: the applications alive now, "<node>/<app>".
+    def apps(pattern = "*/*") = ::Asterism.apps(pattern)
 
     # A proxy for <node>/<app>/<object>; timeout: in seconds (or
     # timeout_ms:).

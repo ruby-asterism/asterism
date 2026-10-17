@@ -229,6 +229,14 @@ q.("profile icon=1", "asterism/#{IUT}/@profile", nil, prof.(true), params: "icon
 q.("profile not under **", "asterism/#{IUT}/**", nil, [],
   note: "@profile is a verbatim chunk: ** does not reach it, and nothing else answers asterism/<node>/**")
 q.("profile not under *", "asterism/*/@profile", nil, prof.(true), note: "a wildcard node does reach it")
+status = [{ "key" => "asterism/#{IUT}/#{APP}/@status", "payload" => m(["st", "wait"], ["n", i(1)]) }]
+q.("status", "asterism/#{IUT}/#{APP}/@status", nil, status, note: "a map with str keys, the application's own")
+q.("status ignores parameters", "asterism/#{IUT}/#{APP}/@status", nil, status, params: "x=1")
+q.("status not under **", "#{base}/**", nil, [],
+  note: "@status is a verbatim chunk: asterism/<node>/<app>/** does not reach it")
+q.("status under */*", "asterism/*/*/@status", nil, status, note: "wildcard node and app chunks do reach it")
+q.("status of no such app", "asterism/#{IUT}/nothing/@status", nil, [],
+  note: "an application without a status answers nothing")
 q.("method name as bin", call_key, pk({ "method" => "add".b, "args" => [2, 3] }),
   [{ "key" => call_key, "payload" => { "any" => "value" } }], portable: false,
   note: "the name is a str; the Ruby implementations also take a bin name by its bytes (answered 5)")
@@ -236,7 +244,7 @@ q.("method name as bin", call_key, pk({ "method" => "add".b, "args" => [2, 3] })
 # ------------------------------------------------------------ outgoing
 # What the implementation under test does, in this order, to the driver's
 # node drv (app conf, object rec). After each step it calls
-# rec.report(id, outcome) (docs/protocol.md 10.4). The request is checked
+# rec.report(id, outcome) (docs/protocol.md 11.4). The request is checked
 # after reading absent args / kwargs as empty (a sender may leave them out).
 rec = "asterism/#{DRV}/#{APP}/rec"
 rec_call = "#{rec}/call/#{IUT}"
@@ -315,16 +323,35 @@ o.("profile that is not one", { "profile_of" => DRV, "icon" => false },
   [pk({ "kind" => "Not A Word" })], ["ok", nil], note: "no valid kind: no profile (nil)")
 o.("change the profile", { "set_profile" => m(["name", "iut 2"]) }, nil, [], ["ok", nil],
   note: "the change is put on asterism/iut/@profile (see profile_puts)")
+o.("status of another app", { "status_of" => [DRV, APP] },
+  { "key" => "asterism/#{DRV}/#{APP}/@status", "params" => "", "payload" => nil },
+  [pk({ "seats" => 2, 5 => "x", "" => 1, "list" => [1, { "a" => nil }] })],
+  ["ok", m(["seats", i(2)], ["list", [i(1), m(["a", nil])]])],
+  note: "the reader keeps the entries with a non-empty str key")
+o.("status that is not one", { "status_of" => [DRV, APP] },
+  { "key" => "asterism/#{DRV}/#{APP}/@status", "params" => "", "payload" => nil },
+  [pk([1, 2])], ["ok", nil], note: "not a map: no status (nil)")
+o.("status too large", { "status_of" => [DRV, APP] },
+  { "key" => "asterism/#{DRV}/#{APP}/@status", "params" => "", "payload" => nil },
+  [pk({ "big" => "x" * 1100 })], ["ok", nil], note: "more than 1024 bytes: no status (nil)")
+o.("no status", { "status_of" => [DRV, APP] },
+  { "key" => "asterism/#{DRV}/#{APP}/@status", "params" => "", "payload" => nil },
+  [], ["ok", nil], note: "nobody answers: no status (nil), not an error")
+o.("change the status", { "set_status" => m(["st", "play"], ["n", i(1)]) }, nil, [], ["ok", nil],
+  note: "the change is put on asterism/iut/conf/@status (see status_puts)")
+o.("the same status again", { "set_status" => m(["st", "play"], ["n", i(1)]) }, nil, [], ["ok", nil],
+  note: "nothing is put (see status_puts)")
 
 samples = {
   "format" => "asterism-protocol-samples",
-  "version" => 2,
+  "version" => 3,
   "protocol" => 1,
   "describes" => "the Asterism wire protocol 1 as asterism 0.7.0 speaks it (docs/protocol.md)",
   "names" => { "iut" => IUT, "app" => APP, "driver" => DRV },
   "icon" => { "hex" => ICON.unpack1("H*"), "icon_hash" => ICON_HASH },
   "iut" => {
     "profile" => m(["name", "iut"]),
+    "status" => m(["st", "wait"], ["n", i(1)]),
     "objects" => [
       { "name" => "subject", "methods" => [["echo", i(1)], ["kw", i(1)], ["add", i(2)], ["boom", i(0)],
                                            ["any", i(-1)], ["ok?", i(0)], ["unsendable", i(0)], ["whoami", i(0)]] },
@@ -343,6 +370,11 @@ samples = {
       "payload" => m(["protocol", i(1)], ["kind", KIND_WORD], ["name", "iut"], ["icon_hash", ICON_HASH]) },
     { "when" => "change the profile", "key" => "asterism/#{IUT}/@profile",
       "payload" => m(["protocol", i(1)], ["kind", KIND_WORD], ["name", "iut 2"], ["icon_hash", ICON_HASH]) }
+  ],
+  "status_puts" => [
+    { "when" => "connect", "key" => "asterism/#{IUT}/#{APP}/@status", "payload" => m(["st", "wait"], ["n", i(1)]) },
+    { "when" => "change the status", "key" => "asterism/#{IUT}/#{APP}/@status",
+      "payload" => m(["st", "play"], ["n", i(1)]) }
   ]
 }
 

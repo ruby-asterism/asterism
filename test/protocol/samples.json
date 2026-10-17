@@ -1,6 +1,6 @@
 {
   "format": "asterism-protocol-samples",
-  "version": 2,
+  "version": 3,
   "protocol": 1,
   "describes": "the Asterism wire protocol 1 as asterism 0.7.0 speaks it (docs/protocol.md)",
   "names": {
@@ -18,6 +18,20 @@
         [
           "name",
           "iut"
+        ]
+      ]
+    },
+    "status": {
+      "map": [
+        [
+          "st",
+          "wait"
+        ],
+        [
+          "n",
+          {
+            "int": "1"
+          }
         ]
       ]
     },
@@ -2661,6 +2675,104 @@
       "portable": true
     },
     {
+      "id": "status",
+      "key": "asterism/iut/conf/@status",
+      "params": null,
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/conf/@status",
+          "payload": {
+            "map": [
+              [
+                "st",
+                "wait"
+              ],
+              [
+                "n",
+                {
+                  "int": "1"
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "note": "a map with str keys, the application's own",
+      "portable": true
+    },
+    {
+      "id": "status ignores parameters",
+      "key": "asterism/iut/conf/@status",
+      "params": "x=1",
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/conf/@status",
+          "payload": {
+            "map": [
+              [
+                "st",
+                "wait"
+              ],
+              [
+                "n",
+                {
+                  "int": "1"
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "status not under **",
+      "key": "asterism/iut/conf/**",
+      "params": null,
+      "payload_hex": null,
+      "replies": [],
+      "note": "@status is a verbatim chunk: asterism/<node>/<app>/** does not reach it",
+      "portable": true
+    },
+    {
+      "id": "status under */*",
+      "key": "asterism/*/*/@status",
+      "params": null,
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/conf/@status",
+          "payload": {
+            "map": [
+              [
+                "st",
+                "wait"
+              ],
+              [
+                "n",
+                {
+                  "int": "1"
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "note": "wildcard node and app chunks do reach it",
+      "portable": true
+    },
+    {
+      "id": "status of no such app",
+      "key": "asterism/iut/nothing/@status",
+      "params": null,
+      "payload_hex": null,
+      "replies": [],
+      "note": "an application without a status answers nothing",
+      "portable": true
+    },
+    {
       "id": "method name as bin",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
@@ -3605,6 +3717,169 @@
         null
       ],
       "note": "the change is put on asterism/iut/@profile (see profile_puts)"
+    },
+    {
+      "id": "status of another app",
+      "do": {
+        "status_of": [
+          "drv",
+          "conf"
+        ]
+      },
+      "request": {
+        "key": "asterism/drv/conf/@status",
+        "params": "",
+        "payload": null
+      },
+      "reply_hex": [
+        "84a573656174730205a178a001a46c697374920181a161c0"
+      ],
+      "outcome": [
+        "ok",
+        {
+          "map": [
+            [
+              "seats",
+              {
+                "int": "2"
+              }
+            ],
+            [
+              "list",
+              [
+                {
+                  "int": "1"
+                },
+                {
+                  "map": [
+                    [
+                      "a",
+                      null
+                    ]
+                  ]
+                }
+              ]
+            ]
+          ]
+        }
+      ],
+      "note": "the reader keeps the entries with a non-empty str key"
+    },
+    {
+      "id": "status that is not one",
+      "do": {
+        "status_of": [
+          "drv",
+          "conf"
+        ]
+      },
+      "request": {
+        "key": "asterism/drv/conf/@status",
+        "params": "",
+        "payload": null
+      },
+      "reply_hex": [
+        "920102"
+      ],
+      "outcome": [
+        "ok",
+        null
+      ],
+      "note": "not a map: no status (nil)"
+    },
+    {
+      "id": "status too large",
+      "do": {
+        "status_of": [
+          "drv",
+          "conf"
+        ]
+      },
+      "request": {
+        "key": "asterism/drv/conf/@status",
+        "params": "",
+        "payload": null
+      },
+      "reply_hex": [
+        "81a3626967da044c7878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878"
+      ],
+      "outcome": [
+        "ok",
+        null
+      ],
+      "note": "more than 1024 bytes: no status (nil)"
+    },
+    {
+      "id": "no status",
+      "do": {
+        "status_of": [
+          "drv",
+          "conf"
+        ]
+      },
+      "request": {
+        "key": "asterism/drv/conf/@status",
+        "params": "",
+        "payload": null
+      },
+      "reply_hex": [],
+      "outcome": [
+        "ok",
+        null
+      ],
+      "note": "nobody answers: no status (nil), not an error"
+    },
+    {
+      "id": "change the status",
+      "do": {
+        "set_status": {
+          "map": [
+            [
+              "st",
+              "play"
+            ],
+            [
+              "n",
+              {
+                "int": "1"
+              }
+            ]
+          ]
+        }
+      },
+      "request": null,
+      "reply_hex": [],
+      "outcome": [
+        "ok",
+        null
+      ],
+      "note": "the change is put on asterism/iut/conf/@status (see status_puts)"
+    },
+    {
+      "id": "the same status again",
+      "do": {
+        "set_status": {
+          "map": [
+            [
+              "st",
+              "play"
+            ],
+            [
+              "n",
+              {
+                "int": "1"
+              }
+            ]
+          ]
+        }
+      },
+      "request": null,
+      "reply_hex": [],
+      "outcome": [
+        "ok",
+        null
+      ],
+      "note": "nothing is put (see status_puts)"
     }
   ],
   "liveliness": {
@@ -3672,6 +3947,44 @@
           [
             "icon_hash",
             "2a8c0626"
+          ]
+        ]
+      }
+    }
+  ],
+  "status_puts": [
+    {
+      "when": "connect",
+      "key": "asterism/iut/conf/@status",
+      "payload": {
+        "map": [
+          [
+            "st",
+            "wait"
+          ],
+          [
+            "n",
+            {
+              "int": "1"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "when": "change the status",
+      "key": "asterism/iut/conf/@status",
+      "payload": {
+        "map": [
+          [
+            "st",
+            "play"
+          ],
+          [
+            "n",
+            {
+              "int": "1"
+            }
           ]
         ]
       }

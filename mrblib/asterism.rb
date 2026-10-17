@@ -17,6 +17,7 @@
 #   asterism/<node>/<app>             liveliness: the application is up
 #   asterism/<node>/<app>/<object>    liveliness: the object is exposed
 #   asterism/<node>/@profile          get: reply the node's profile (profile.rb)
+#   asterism/<node>/<app>/@status     get: reply the application's status (status.rb)
 #
 # Everything is polled: nothing runs behind the application's back. A call
 # that waits for its answer keeps polling meanwhile and answers the calls
@@ -297,7 +298,9 @@ module Asterism
     @node_list = [node] # what nodes returns (this node first), rebuilt on a change
     @nodes_changed = false # liveliness changed since tell_nodes last compared
     @was_reconnecting = false
+    @status_put = nil
     tell_profile   # for those who follow the profiles (the reply is the queryable's)
+    tell_status(true) # a status set before connecting (status.rb)
     self
   end
 
@@ -387,6 +390,8 @@ module Asterism
     @queryable = nil
     @watch = nil
     @profile_queryable = nil
+    @status_queryable = nil
+    @status_put = nil
   end
 
   # The Zenoh session of the connection (an Asterism::Zenoh::Session), for
@@ -619,6 +624,7 @@ module Asterism
     back_again(s)
     answer_calls
     answer_profile
+    answer_status
     follow_liveliness
     !@session.nil?
   rescue Asterism::Zenoh::Error => e
@@ -626,14 +632,16 @@ module Asterism
     !@session.nil?
   end
 
-  # After the binding opened a lost connection again: tell the profile
-  # again (a put made while the router was away reached nobody).
+  # After the binding opened a lost connection again: tell the profile and
+  # the status again (a put made while the router was away reached nobody).
   # @api private
   def self.back_again(s)
     now = s.respond_to?(:reconnecting?) && s.reconnecting?
     was = @was_reconnecting
     @was_reconnecting = now
-    tell_profile if was && !now
+    return unless was && !now
+    tell_profile
+    tell_status(true)
   end
 
   # A Zenoh error during a call or a poll: the connection is gone only when

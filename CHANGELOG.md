@@ -8,6 +8,32 @@ version (a patch release of one may come without the other).
 
 ## Unreleased
 
+- Application statuses (protocol 1, an addition: docs/protocol.md 8).
+  `Asterism.status(tables: 3)` / `Asterism.status({ ... })` sets this
+  application's status, a small Hash that changes while it runs (String
+  keys, nested 4 levels at most, 1024 bytes packed at most); it is put on
+  `asterism/<node>/<app>/@status` when it changes (the same status again
+  puts nothing), at connect and after a lost connection comes back, and a
+  get there answers it. `Asterism.status_of(node, app)` reads another
+  application's (nil when it has none). `Asterism::Status.check` /
+  `.parse` clean what comes in. CRuby: `net.status`, `net.status_of`,
+  `net.on_status(pattern) { |node, app, status| }`. Both on mruby too
+  (`rake test:mruby`). `@status` is a verbatim chunk like `@profile`:
+  `asterism/**` does not reach it. The conformance samples are version 3
+  (status queries, `status_of`, `status_puts`).
+- `Asterism.apps(pattern = "*/*")`: the applications alive now
+  (`"<node>/<app>"`, from their liveliness tokens).
+- The command line `asterism` (exe/asterism, CRuby): `nodes`, `objects`,
+  `tree`, `watch` (nodes, applications and objects coming and going, and
+  statuses), `ping` (alias `echo`: round trips of the meta, a profile or a
+  call), `call` (arguments as JSON or Ruby literals, read with Ripper), with
+  `--router` or `--credentials` (a console's `.tar`) and `--json`.
+  README "The command line". `rake test:cli`.
+- `asterism mcp`: an MCP server on stdio (the mcp gem, not a dependency).
+  Read-only tools (`asterism_nodes`, `asterism_objects`, `asterism_status`)
+  always; a tool per method that `--allow` names, its inputs made from the
+  meta's arity; the list follows the network (tools/list_changed).
+
 - `credentials:` on the boards too: `Asterism::Credentials` moved to
   `mrblib/credentials.rb` and reads the console's `.tar` in plain Ruby
   (ustar taken apart with `byteslice` / `getbyte`, base64 without `pack`,
