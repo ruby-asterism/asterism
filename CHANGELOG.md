@@ -6,7 +6,12 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
-## Unreleased
+## 0.8.0
+
+Needs asterism-zenoh 0.4.1 or later, as 0.7.1. Wire protocol 1 as before:
+the statuses and the methods' texts in the meta are additions that older
+nodes ignore. The command line comes with the gem (`exe/asterism`); its MCP
+server needs the mcp gem, which is not a dependency.
 
 - Application statuses (protocol 1, an addition: docs/protocol.md 8).
   `Asterism.status(tables: 3)` / `Asterism.status({ ... })` sets this

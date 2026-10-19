@@ -101,7 +101,7 @@ build but not yet tested. To install from the repositories instead:
 
 ```
 (cd ../asterism-zenoh && rake gem) && rake gem
-gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.1.gem pkg/asterism-0.7.1.gem
+gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.1.gem pkg/asterism-0.8.0.gem
 ```
 
 From the working trees, without installing:

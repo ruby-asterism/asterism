@@ -593,7 +593,7 @@ who sits at them, a battery level, the mode a robot is in. Its content is
 the application's own. Readers show it (a console's details, a command
 line `watch`) and do not interpret it unless they know the application.
 
-Statuses came after asterism 0.7.1, within protocol 1: an older node
+Statuses came with asterism 0.8.0, within protocol 1: an older node
 neither answers nor puts one, and its readers see "no status".
 
 ### 8.1 Keys
