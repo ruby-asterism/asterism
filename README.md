@@ -101,7 +101,7 @@ build but not yet tested. To install from the repositories instead:
 
 ```
 (cd ../asterism-zenoh && rake gem) && rake gem
-gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.1.gem pkg/asterism-0.8.0.gem
+gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.1.gem pkg/asterism-0.8.1.gem
 ```
 
 From the working trees, without installing:
@@ -420,7 +420,7 @@ to with `call`.
 ```
 asterism nodes   --router tcp/192.0.2.2:7447        # nodes, their apps (with their status), profiles
 asterism objects --router tcp/192.0.2.2:7447 'games/games/*'   # objects and their methods
-asterism tree    --credentials admin.tar             # nodes > apps > objects, with methods and statuses
+asterism tree    --credentials admin.tar             # nodes > apps > objects, with statuses (--methods: the methods)
 asterism watch   --router tcp/192.0.2.2:7447        # nodes, apps and objects coming and going, statuses
 asterism ping    --router tcp/192.0.2.2:7447 games/games/othello1   # round trips (its meta; no method runs)
 asterism ping    ... games/games/othello1 --call view '"<token>"'   # round trips of a call
@@ -431,15 +431,38 @@ asterism call    ... linux/demo/screen say hello --kwargs '{color: 3}'
 ```
 $ asterism tree --router tcp/192.0.2.2:7447
 games  (cruby) "asterism-games"
-  games  status {"mahjong1":{"st":"wait","members":0,"humans":0,"cpus":0,"away":0}, ...}
-    mahjong1  join(1) mine(0) leave(1) sit(2) stand(1) ...
+  games
+    status:
+      mahjong1: st=wait members=0 humans=0 cpus=0 ais=0 away=0
+      othello1: st=wait members=0 humans=0 cpus=0 away=0
+    mahjong1  18 methods
+    othello1  11 methods
 linux  (family_mruby/sim)
   game
+$ asterism tree --methods ...
+    ...
+    othello1  11 methods
+      join(name)  mine()  sit(token, seat)  stand(token)  cpu(token, seat, on)
+      start(token)  move(token, n, square)  resign(token)  view(token)  table()
+      leave(token)
+$ asterism objects ... games/games/othello1
+games/games/othello1
+  An othello table (two seats). join, sit, then view / move in a loop.
+  join(name)              Joins the table as name (or gets this node's
+                          membership back). Returns {"token", ...}: every later
+                          call brings the token. {"error" => why} when the table
+                          is full.
+  mine()                  This node's membership ({"token", ...}), or nil when
+                          it has not joined.
+  ...
 $ asterism watch --router tcp/192.0.2.2:7447
-12:00:01.204 ~ status games/games {"othello1":{"st":"wait","members":0,...}} (now)
+12:00:01.204 ~ status games/games (now)
+               mahjong1: st=wait members=0 humans=0 cpus=0 ais=0 away=0
+               othello1: st=wait members=0 humans=0 cpus=0 away=0
 12:00:04.881 + node wasm-1a2b3c
 12:00:04.881 + app wasm-1a2b3c/game
-12:00:05.120 ~ status games/games {"othello1":{"st":"wait","members":1,...}}
+12:00:05.120 ~ status games/games mahjong1.members 0→1
+12:00:05.133 ~ status games/games mahjong1.humans 0→1
 ```
 
 - **Where the network is.** `--router tcp/HOST:7447` (a router without TLS),
@@ -464,7 +487,17 @@ $ asterism watch --router tcp/192.0.2.2:7447
   with Ripper, nothing is evaluated), else the text as written. `--kwargs`
   is a JSON object or a Ruby Hash.
 - **Output**: text, or `--json` (`watch --json`: one object a line, with
-  the time). `--timeout` (2.0 s) is each get's and call's limit, `--settle`
+  the time; the JSON is the same whatever the output is). The text is for
+  people: on a terminal it has colours (nodes, applications, objects, the
+  `+` `-` `~` of watch; `NO_COLOR=1` turns them off) and is wrapped to the
+  terminal's width; written to a pipe or a file it is plain and 80 columns
+  wide (or `COLUMNS`). A status is shown as `key=value`, a line for each
+  level that holds Hashes (a long text or array is cut with `…`; `--json`
+  has it whole). `tree` tells how many methods an object has, `tree
+  --methods` lists them; `objects` lists each method with its description.
+  `watch` shows a status whole the first time (and when its application
+  comes back), then only what changed: `a.b 0→1`, `+a.c=…` (a key came),
+  `-a.d` (a key went). `--timeout` (2.0 s) is each get's and call's limit, `--settle`
   (1.5 s) how long it waits for the tokens after connecting.
 - **watch** shows the applications and objects themselves (their tokens),
   not only the nodes: a node with two applications stays while one closes,

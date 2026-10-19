@@ -6,8 +6,21 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
-## Unreleased
+## 0.8.1
 
+The command line only; the library and the wire are as in 0.8.0.
+
+- The command line's text is easier to read (`--json` is unchanged): a
+  status is shown as indented `key=value` lines instead of one line of
+  JSON (`tree`, `nodes`, the first status of `watch`); `tree` shows how
+  many methods each object has and `tree --methods` lists them, wrapped to
+  the width; `objects` wraps the objects' and methods' descriptions to the
+  width in one column, the signatures in bold; `watch` shows only what
+  changed in a status (`~ status games/games mahjong1.members 0→1`, keys
+  that came with `+`, keys that went with `-`). On a terminal the text has
+  colours and the terminal's width; to a pipe or a file it is plain and 80
+  columns wide (or `COLUMNS`); `NO_COLOR` turns the colours off. Standard
+  library only. README "The command line".
 - The command line takes `ASTERISM_CREDENTIALS` and `ASTERISM_ROUTER`
   from the environment when none of `--router`, `--credentials`, `--peer`
   is given (all or nothing). README "The command line".

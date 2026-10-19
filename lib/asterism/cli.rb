@@ -2,7 +2,7 @@
 # from CRuby, and call an object when asked to.
 #
 #   asterism nodes   --router tcp/192.0.2.2:7447
-#   asterism tree    --credentials admin.tar
+#   asterism tree    --credentials admin.tar   # --methods: each object's methods
 #   asterism objects 'games/games/*'
 #   asterism watch                         # joins, leaves, statuses as they come
 #   asterism ping    games/games/othello1  # the time of a round trip (meta)
@@ -21,6 +21,7 @@ require "securerandom"
 require_relative "cli/literal"
 require_relative "cli/survey"
 require_relative "cli/allow"
+require_relative "cli/text"
 
 module Asterism
   class CLI
@@ -30,7 +31,8 @@ module Asterism
       Commands (they only read, except call):
         nodes                the nodes, their applications and profiles
         objects [PATTERN]    the objects and their methods (PATTERN: node/app/object, * and **)
-        tree                 nodes > applications (with their status) > objects (with their methods)
+        tree                 nodes > applications (with their status) > objects (how many methods;
+                             --methods lists them)
         watch                nodes, applications and objects coming and going, and status changes
         ping PATH            round trips: PATH node/app/object (its meta), or node (its profile);
                              --call METHOD [ARG...] times a call instead (echo is the same command)
@@ -45,15 +47,21 @@ module Asterism
         --credentials TAR    a console's .tar (mutual TLS; its router and name)
       With none of --router, --credentials, --peer, the environment's
       ASTERISM_CREDENTIALS and ASTERISM_ROUTER are used instead.
+
+      On a terminal the text has colours (NO_COLOR=1: none) and the terminal's
+      width; otherwise it is plain, 80 columns wide (or COLUMNS).
     TEXT
 
-    def self.start(argv, out: $stdout, err: $stderr)
-      new(out: out, err: err).run(argv.dup)
+    def self.start(argv, out: $stdout, err: $stderr, env: ENV)
+      new(out: out, err: err, env: env).run(argv.dup)
     end
 
-    def initialize(out: $stdout, err: $stderr)
+    def initialize(out: $stdout, err: $stderr, env: ENV)
       @out = out
       @err = err
+      @env = env
+      @lock = Mutex.new
+      @last_status = {}
       @opts = { timeout: 2.0, settle: 1.5, json: false, count: 5, interval: 0.2, allow: [] }
     end
 
@@ -98,6 +106,8 @@ module Asterism
         o.on("--timeout SECONDS", Float, "time limit of each get or call (2.0)") { @opts[:timeout] = _1 }
         o.on("--settle SECONDS", Float, "how long to wait for the tokens at connect (1.5)") { @opts[:settle] = _1 }
         case cmd
+        when "tree"
+          o.on("--methods", "list each object's methods (else how many)") { @opts[:methods] = true }
         when "watch"
           o.on("--duration SECONDS", Float, "stop after this long (default: until Ctrl-C)") { @opts[:duration] = _1 }
         when "ping", "echo"
@@ -119,7 +129,7 @@ module Asterism
     # none of them, ASTERISM_ROUTER and ASTERISM_CREDENTIALS from the
     # environment (all or nothing, so a router given on the line never meets
     # a .tar from the environment).
-    def network(env = ENV)
+    def network(env = @env)
       given = [@opts[:router], @opts[:credentials], @opts[:peer]]
       return given if given.any?
 
@@ -171,10 +181,11 @@ module Asterism
           @out.puts "(no other node is visible)"
         else
           tree.each do |n|
-            @out.puts "#{n['node']}#{profile_text(n['profile'])}"
+            @out.puts node_line(n)
             n["apps"].each do |a|
-              @out.puts "  #{a['app']}#{"  #{a['objects'].size} objects" unless a['objects'].empty?}" \
-                        "#{"  status #{compact(a['status'])}" if a.key?('status')}"
+              k = a["objects"].size
+              @out.puts "  #{paint(a['app'], :app)}#{paint("  #{count(k, 'object')}", :note) unless k.zero?}"
+              status_block(a, 4)
             end
           end
         end
@@ -198,14 +209,7 @@ module Asterism
         elsif paths.empty?
           @out.puts "(no object matches #{pattern})"
         else
-          paths.each do |p|
-            @out.puts "#{p}  #{metas.key?(p) ? methods_text(metas[p]) : '(no meta: not answered in time, or not allowed)'}"
-            @out.puts "  #{sv.object_doc(p)}" if sv.object_doc(p)
-            # The methods that tell what they do, one a line (doc's first line).
-            (metas[p] || []).each do |m|
-              @out.puts "    #{signature(m)}  #{m['doc'].lines.first.strip}" if m["doc"]
-            end
-          end
+          paths.each { |p| object_entry(p, metas[p], sv.object_doc(p)) }
         end
       end
       0
@@ -222,11 +226,14 @@ module Asterism
           @out.puts "(no other node is visible)"
         else
           tree.each do |n|
-            @out.puts "#{n['node']}#{profile_text(n['profile'])}"
+            @out.puts node_line(n)
             n["apps"].each do |a|
-              @out.puts "  #{a['app']}#{"  status #{compact(a['status'])}" if a.key?('status')}"
+              @out.puts "  #{paint(a['app'], :app)}"
+              status_block(a, 4)
               a["objects"].each do |o|
-                @out.puts "    #{o['name']}  #{o['methods'] ? methods_text(o['methods']) : '(no meta)'}"
+                ms = o["methods"]
+                @out.puts "    #{paint(o['name'], :object)}  #{paint(ms ? count(ms.size, 'method') : '(no meta)', :note)}"
+                method_list(ms, 6) if ms && @opts[:methods] && !ms.empty?
               end
             end
           end
@@ -287,15 +294,53 @@ module Asterism
         h["now"] = true if now
         @out.puts JSON.generate(h)
       else
-        mark = { "join" => "+", "leave" => "-", "status" => "~", "profile" => "*" }[kind]
-        text = case kind
-               when "status" then "status #{path} #{compact(status)}#{' (now)' if now}"
-               when "profile" then "profile #{path}#{profile_text(profile)}"
-               else "#{what} #{path}"
-               end
-        @out.puts "#{t.strftime('%H:%M:%S.%L')} #{mark} #{text}"
+        @lock.synchronize do
+          text = event_text(t, kind, path, what, status, profile, now)
+          @out.puts text if text
+        end
       end
       @out.flush
+    end
+
+    # The lines of one event (nil: nothing to tell). A status is told whole
+    # (indented under the event) the first time it is seen, else only what
+    # changed, a line for each change. An application or a node that leaves
+    # takes its statuses along, so they are told whole when they are back.
+    def event_text(t, kind, path, what, status, profile, now)
+      head = "#{paint(t.strftime('%H:%M:%S.%L'), :time)} #{paint(EVENT_MARKS[kind], kind.to_sym)} "
+      case kind
+      when "status"
+        status = json_safe(status)
+        old = @last_status[path]
+        @last_status[path] = status
+        label = "status #{paint(path, :app)}"
+        if old.nil? || !old.is_a?(Hash) || !status.is_a?(Hash)
+          lines = Text.status_lines(status, style.width, Text.width(head))
+          return "#{head}#{label}#{paint(' (now)', :note) if now}\n#{lines.join("\n")}"
+        end
+        changes = Text.status_diff(old, status)
+        return nil if changes.empty?
+        changes.map { |c| "#{head}#{label} #{change_text(c)}" }.join("\n")
+      when "profile" then "#{head}profile #{paint(path, :node)}#{profile_text(profile)}"
+      else
+        forget_statuses(path) if kind == "leave"
+        "#{head}#{what} #{paint(path, WHAT_ROLES.fetch(what, :object))}"
+      end
+    end
+
+    EVENT_MARKS = { "join" => "+", "leave" => "-", "status" => "~", "profile" => "*" }.freeze
+    WHAT_ROLES = { "node" => :node, "app" => :app, "object" => :object }.freeze
+
+    def change_text(c)
+      case c[0]
+      when "+" then paint(c, :join)
+      when "-" then paint(c, :leave)
+      else c
+      end
+    end
+
+    def forget_statuses(path)
+      @last_status.delete_if { |k, _| k == path || k.start_with?("#{path}/") }
     end
 
     # ------------------------------------------------------------ ping
@@ -404,25 +449,81 @@ module Asterism
 
     # ------------------------------------------------------------ text
 
+    def style
+      @style ||= Style.new(@out, @env)
+    end
+
+    def paint(text, *styles)
+      style.paint(text, *styles)
+    end
+
+    def count(n, what)
+      "#{n} #{what}#{'s' unless n == 1}"
+    end
+
     def profile_text(pr)
       return "" unless pr
       parts = [pr["kind"], pr["host"]].compact.join("/")
       name = pr["name"] ? " \"#{pr['name']}\"" : ""
-      "  (#{parts})#{name}"
+      "  #{paint("(#{parts})", :note)}#{name}"
     end
 
-    def methods_text(list)
-      list.map { |m| signature(m) }.join(" ")
+    def node_line(n)
+      "#{paint(n['node'], :node)}#{profile_text(n['profile'])}"
     end
+
+    # An application's status (when it has one) under "status:", indented.
+    def status_block(app, indent)
+      return unless app.key?("status")
+      @out.puts "#{' ' * indent}#{paint('status:', :note)}"
+      Text.status_lines(json_safe(app["status"]), style.width, indent + 2).each { @out.puts _1 }
+    end
+
+    # The methods' signatures wrapped to the width, indented.
+    def method_list(list, indent)
+      sigs = list.map { paint(signature(_1), :method) }
+      Text.wrap(sigs, style.width, first: " " * indent, sep: "  ").each { @out.puts _1 }
+    end
+
+    # One object of `objects`: its path, its description, then its methods:
+    # one a line with their descriptions, the descriptions in one column and
+    # wrapped (a signature too long for the column has its description on
+    # the next line); or, when none has one, the signatures wrapped.
+    def object_entry(path, methods, doc)
+      @out.puts paint(path, :object)
+      Text.wrap_text(doc, style.width, first: "  ").each { @out.puts _1 } if doc
+      unless methods
+        @out.puts "  #{paint('(no meta: not answered in time, or not allowed)', :note)}"
+        return
+      end
+      return method_list(methods, 2) unless methods.any? { _1["doc"] }
+
+      sigs = methods.map { signature(_1) }
+      col = 2 + [sigs.map { Text.width(_1) }.max, SIGNATURE_COLUMN].min + 2
+      methods.zip(sigs).each do |m, sig|
+        head = "  #{paint(sig, :method)}"
+        unless m["doc"]
+          @out.puts head
+          next
+        end
+        sw = 2 + Text.width(sig)
+        if sw + 2 > col
+          @out.puts head
+          head = " " * col
+        else
+          head += " " * (col - sw)
+        end
+        Text.wrap_text(m["doc"], style.width, first: head, rest: " " * col).each { @out.puts _1 }
+      end
+    end
+
+    # The widest signature the description column makes room for.
+    SIGNATURE_COLUMN = 24
 
     # name(arg, arg) with the names the meta tells, else name(2) / name(*).
     def signature(m)
       return "#{m['name']}(#{m['args'].join(', ')}#{', *' if m['arity'].negative?})" if m["args"]
       m["arity"].negative? ? "#{m['name']}(*)" : "#{m['name']}(#{m['arity']})"
-    end
-
-    def compact(v)
-      JSON.generate(json_safe(v))
     end
 
     # A value as JSON can hold it (bytes as a note).
