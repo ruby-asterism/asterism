@@ -6,6 +6,12 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
+## Unreleased
+
+- The command line takes `ASTERISM_CREDENTIALS` and `ASTERISM_ROUTER`
+  from the environment when none of `--router`, `--credentials`, `--peer`
+  is given (all or nothing). README "The command line".
+
 ## 0.8.0
 
 Needs asterism-zenoh 0.4.1 or later, as 0.7.1. Wire protocol 1 as before:

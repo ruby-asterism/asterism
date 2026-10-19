@@ -447,7 +447,12 @@ $ asterism watch --router tcp/192.0.2.2:7447
   and its name; `--router` overrides the router). `--peer LOCATOR` links
   straight to a node listening there (no router). The node ID is the
   certificate's name, otherwise `cli-` and 6 hex digits (`--node`); the
-  application `cli-` and 4 (`--app`).
+  application `cli-` and 4 (`--app`). With none of `--router`,
+  `--credentials`, `--peer` on the line, `ASTERISM_CREDENTIALS` and
+  `ASTERISM_ROUTER` from the environment are used instead (all or nothing:
+  a router on the line never meets a `.tar` from the environment), so
+  `export ASTERISM_CREDENTIALS=~/me.tar` makes `asterism tree` enough, and
+  an MCP client can pass it in the server's environment.
 - **What it sees** is what the router lets it see. With a console's `.tar`
   that is the row's roles: a role for looking only is in the console's
   docs/g1_5.md ("Looking only: a viewer role"): it reads every node, object,

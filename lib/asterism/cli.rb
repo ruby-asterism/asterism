@@ -43,6 +43,8 @@ module Asterism
       Where the network is (one of them):
         --router LOCATOR     a router without TLS, e.g. tcp/192.0.2.2:7447
         --credentials TAR    a console's .tar (mutual TLS; its router and name)
+      With none of --router, --credentials, --peer, the environment's
+      ASTERISM_CREDENTIALS and ASTERISM_ROUTER are used instead.
     TEXT
 
     def self.start(argv, out: $stdout, err: $stderr)
@@ -113,14 +115,26 @@ module Asterism
 
     # ------------------------------------------------------------ connecting
 
+    # [router, credentials, peer]: the command line's, or, when it names
+    # none of them, ASTERISM_ROUTER and ASTERISM_CREDENTIALS from the
+    # environment (all or nothing, so a router given on the line never meets
+    # a .tar from the environment).
+    def network(env = ENV)
+      given = [@opts[:router], @opts[:credentials], @opts[:peer]]
+      return given if given.any?
+
+      router = env["ASTERISM_ROUTER"].to_s
+      creds = env["ASTERISM_CREDENTIALS"].to_s
+      [router.empty? ? nil : router, creds.empty? ? nil : creds, nil]
+    end
+
     # Connects, starts the receiving thread, waits for the tokens and yields
     # the Net and a Survey.
     def connect(app_prefix: "cli")
-      router = @opts[:router]
-      creds = @opts[:credentials]
-      peer = @opts[:peer]
+      router, creds, peer = network
       if router.nil? && creds.nil? && peer.nil?
-        raise ArgumentError, "where is the network? --router tcp/HOST:7447 or --credentials FILE.tar"
+        raise ArgumentError, "where is the network? --router tcp/HOST:7447 or --credentials FILE.tar " \
+                             "(or ASTERISM_CREDENTIALS / ASTERISM_ROUTER)"
       end
       node = @opts[:node]
       node ||= "#{app_prefix}-#{SecureRandom.hex(3)}" unless creds

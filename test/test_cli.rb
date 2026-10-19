@@ -54,6 +54,16 @@ class TestCLI < Minitest::Test
     assert_raises(ArgumentError) { Asterism::CLI::Allow.new(["a."]) }
   end
 
+  def test_network_from_the_environment
+    env = { "ASTERISM_CREDENTIALS" => "/x/me.tar", "ASTERISM_ROUTER" => "tls/r.example.org:7448" }
+    cli = Asterism::CLI.new
+    assert_equal ["tls/r.example.org:7448", "/x/me.tar", nil], cli.network(env)
+    assert_equal [nil, nil, nil], cli.network({ "ASTERISM_CREDENTIALS" => "" })
+    # Anything on the line wins, and the environment is then not read at all.
+    cli.instance_variable_get(:@opts)[:router] = "tcp/192.0.2.2:7447"
+    assert_equal ["tcp/192.0.2.2:7447", nil, nil], cli.network(env)
+  end
+
   def test_usage
     out, err = capture_io { assert_equal 2, Asterism::CLI.start(%w[nodes]) }
     assert_match(/--router/, err)
