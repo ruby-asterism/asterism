@@ -1,10 +1,12 @@
 # The command line (exe/asterism, lib/asterism/cli.rb): the arguments
 # (JSON or Ruby literals), the --allow patterns, and the commands against a
 # node in another process over a peer link (or ASTERISM_TEST_ROUTER):
-# nodes, objects, tree, ping, call, watch, and the MCP bridge with the mcp
-# gem's client (skipped when the mcp gem is not installed). The text's
-# layout (statuses, wrapping, colours, watch's differences) without a
-# network too.
+# nodes, objects, tree, ping, call, watch, the noun-verb commands (node,
+# app, object, status; -o json / yaml), the Tab completion (__complete),
+# and the MCP bridge with the mcp gem's client (skipped when the mcp gem is
+# not installed). The text's layout (statuses, wrapping, colours, watch's
+# differences), status hz's arithmetic, the completion's candidates and its
+# cache without a network too.
 require_relative "helper"
 require "asterism/cli"
 require "rbconfig"
@@ -12,6 +14,8 @@ require "open3"
 require "json"
 require "timeout"
 require "stringio"
+require "tmpdir"
+require "yaml"
 
 class TestCLI < Minitest::Test
   include TestHelper
@@ -74,6 +78,202 @@ class TestCLI < Minitest::Test
     assert_match(/Commands/, out)
     _, err = capture_io { assert_equal 2, Asterism::CLI.start(%w[frobnicate]) }
     assert_match(/unknown command/, err)
+    # Grouped by noun, the older names at the end.
+    assert_match(/^  node list +the nodes/, out)
+    assert_match(/^  status hz NODE\/APP +how often/, out)
+    assert_match(/Older names, kept: nodes .*\n.*echo \(ping\)/, out)
+    # A noun alone: its verbs.
+    out, = capture_io { assert_equal 2, Asterism::CLI.start(%w[object]) }
+    assert_match(/^  object find METHOD +the objects that have the method/, out)
+    out, = capture_io { assert_equal 2, Asterism::CLI.start(%w[status --router tcp/192.0.2.2:7447]) }
+    assert_match(/status echo/, out)
+    out, = capture_io { assert_equal 0, Asterism::CLI.start(%w[help node]) }
+    assert_match(/node info NODE/, out)
+    _, err = capture_io { assert_equal 2, Asterism::CLI.start(%w[node frob]) }
+    assert_match(/node has no verb "frob"/, err)
+    _, err = capture_io { assert_equal 2, Asterism::CLI.start(%w[node list -o xml --router tcp/192.0.2.2:7447]) }
+    assert_match(/invalid argument: -o xml/, err)
+    _, err = capture_io { assert_equal 2, Asterism::CLI.start(%w[status get games --router tcp/192.0.2.2:7447]) }
+    assert_match(/NODE\/APP/, err)
+    _, err = capture_io { assert_equal 2, Asterism::CLI.start(%w[object info a/*/c --router tcp/192.0.2.2:7447]) }
+    assert_match(/object list PATTERN/, err)
+    out, = capture_io { assert_equal 0, Asterism::CLI.start(%w[completion bash]) }
+    assert_includes out, "complete -F _asterism asterism"
+    out, = capture_io { assert_equal 0, Asterism::CLI.start(%w[completion zsh]) }
+    assert_includes out, "compdef _asterism asterism"
+  end
+
+  # ------------------------------------------------------------ status hz
+
+  def test_hz
+    t = 0.0
+    hz = Asterism::CLI::Hz.new(window: 3, clock: -> { t })
+    hz.seed({ "n" => 0 })
+    refute hz.put({ "n" => 0 }), "the status there at the start again is no change"
+    assert_nil hz.report
+    t = 10.0
+    assert hz.put({ "n" => 1 })
+    assert_nil hz.stats, "one change: no interval yet"
+    assert_nil hz.report
+    t = 10.5
+    hz.put({ "n" => 2 })
+    t = 11.5
+    hz.put({ "n" => 3 })
+    refute hz.put({ "n" => 3 }), "the same status twice counts once"
+    s = hz.report
+    assert_equal 2, s["window"]
+    assert_equal 3, s["count"]
+    assert_in_delta 0.5, s["min_s"]
+    assert_in_delta 1.0, s["max_s"]
+    assert_in_delta 1 / 0.75, s["rate_hz"]
+    assert_in_delta 0.25, s["std_s"]
+    assert_nil hz.report, "nothing new since the last report"
+    # The window keeps the last intervals only.
+    [13.5, 15.5, 17.5].each { |x| t = x; hz.put({ "n" => x }) }
+    s = hz.report
+    assert_equal 3, s["window"]
+    assert_equal 6, s["count"]
+    assert_in_delta 2.0, s["min_s"]
+    assert_in_delta 0.5, s["rate_hz"]
+    assert_equal ["average rate: 0.500 Hz", "  min: 2.000 s  max: 2.000 s  std dev: 0.000 s  window: 3"],
+                 Asterism::CLI::Hz.text(s)
+  end
+
+  # ------------------------------------------------------------ status echo's text
+
+  def test_echo_text
+    cli = Asterism::CLI.new(out: StringIO.new, env: {})
+    t = Time.at(0)
+    ts = t.strftime("%H:%M:%S.%L")
+    pad = " " * 13
+    assert_equal "#{ts} a/b (now)\n#{pad}n=0 st=wait", cli.echo_text(t, "a/b", { "n" => 0, "st" => "wait" }, true)
+    assert_equal "#{ts} n 0\u21921", cli.echo_text(t, "a/b", { "n" => 1, "st" => "wait" }, false)
+    assert_nil cli.echo_text(t, "a/b", { "n" => 1, "st" => "wait" }, false), "no change, no line"
+    assert_equal "#{ts} +m=2\n#{ts} -st", cli.echo_text(t, "a/b", { "n" => 1, "m" => 2 }, false)
+  end
+
+  # ------------------------------------------------------------ completion
+
+  # What the network names, for the completion's tests (counts the asks).
+  class FakeSource
+    attr_reader :asked
+
+    def initialize(names = nil, methods = {})
+      @names = names
+      @methods = methods
+      @asked = []
+    end
+
+    def names
+      @asked << :names
+      @names
+    end
+
+    def methods(path)
+      @asked << [:methods, path]
+      @methods[path]
+    end
+
+    def all_methods
+      @asked << :all_methods
+      @methods.values.flatten.uniq
+    end
+  end
+
+  def complete(line, source = nil)
+    source ||= FakeSource.new({ "apps" => %w[games/games linux/demo], "objects" => %w[games/games/mahjong1
+                                                                                     games/games/othello1
+                                                                                     linux/demo/screen] },
+                              { "games/games/othello1" => %w[join view move], "linux/demo/screen" => %w[say] })
+    words = Asterism::CLI::Complete.split_line("asterism #{line}")
+    Asterism::CLI::Complete.new(Asterism::CLI.new, source).candidates(words)
+  end
+
+  def test_complete_words
+    src = FakeSource.new
+    assert_equal %w[app call completion echo help mcp node nodes object objects ping status tree version watch],
+                 complete("", src)
+    assert_equal %w[node nodes], complete("no", src)
+    assert_equal %w[info list], complete("node ", src)
+    assert_equal %w[echo get hz], complete("status ", src)
+    assert_equal %w[find], complete("object f", src)
+    assert_equal %w[json yaml], complete("node list -o ", src)
+    assert_equal %w[yaml], complete("tree --output y", src)
+    assert_equal [":files"], complete("tree --credentials ", src)
+    assert_equal %w[--router], complete("node list --rou", src)
+    assert_includes complete("status echo --", src), "--once"
+    refute_includes complete("status get --", src), "--once"
+    assert_includes complete("tree --", src), "--methods"
+    assert_includes complete("watch --", src), "--json"
+    assert_equal %w[bash zsh], complete("completion ", src)
+    assert_empty complete("frob ", src)
+    assert_empty src.asked, "commands, verbs and options without the network"
+  end
+
+  def test_complete_names
+    assert_equal %w[games/ linux/], complete("status echo ")
+    assert_equal %w[games/], complete("status echo ga")
+    assert_equal %w[games/games], complete("status echo --router tcp/192.0.2.2:7447 games/")
+    assert_equal %w[games/games], complete("app info games/games")
+    assert_empty complete("app info games/games/"), "an application is two parts"
+    assert_equal %w[games/games/mahjong1 games/games/othello1], complete("object info games/games/")
+    assert_equal %w[games/games/othello1], complete("call games/games/o")
+    assert_equal %w[join move view], complete("call games/games/othello1 ")
+    assert_equal %w[view], complete("call games/games/othello1 v")
+    assert_empty complete("call games/games/othello1 view ")
+    assert_equal %w[games linux], complete("node info ")
+    assert_equal %w[games games/], complete("ping ga")
+    assert_equal %w[join move say view], complete("object find ")
+    assert_equal %w[say], complete("ping linux/demo/screen --call ")
+    assert_equal %w[games/], complete("objects g")
+    # Nothing from the network: no names.
+    assert_empty complete("status echo ", FakeSource.new(nil))
+    assert_empty complete("call a/b/c ", FakeSource.new(nil))
+  end
+
+  def test_complete_line
+    sl = Asterism::CLI::Complete.method(:split_line)
+    assert_equal ["node", ""], sl.("asterism node ")
+    assert_equal ["node", "li"], sl.("asterism node li")
+    assert_equal [""], sl.("asterism ")
+    assert_equal ["call", "a/b/c", "x y"], sl.("asterism call a/b/c 'x y"), "an open quote is closed"
+    assert_equal %w[27448 x], Asterism::CLI::Complete.bash_trim(%w[tcp/127.0.0.1:27448 x], "tcp/127.0.0.1:2")
+  end
+
+  def test_complete_cache
+    Dir.mktmpdir do |dir|
+      t = 1000.0
+      net_a = ["tcp/192.0.2.2:7447", nil, nil]
+      net_b = [nil, "/home/someone/me.tar", nil]
+      cache = ->(net) { Asterism::CLI::Complete::Cache.new(dir: File.join(dir, "asterism"), network: net, ttl: 20,
+                                                           clock: -> { t }) }
+      asks = 0
+      ask = ->(v) { asks += 1; v }
+      assert_equal ["a"], cache.(net_a).fetch("names") { ask.(["a"]) }
+      assert_equal ["a"], cache.(net_a).fetch("names") { ask.(["x"]) }
+      assert_equal 1, asks, "remembered"
+      assert_equal ["b"], cache.(net_b).fetch("names") { ask.(["b"]) }
+      assert_equal 2, asks, "another network has its own"
+      refute_equal cache.(net_a).file, cache.(net_b).file
+      assert_equal %w[m], cache.(net_a).fetch("methods a/b/c") { ask.(%w[m]) }
+      t += 19
+      assert_equal ["a"], cache.(net_a).fetch("names") { ask.(["x"]) }
+      assert_equal 3, asks
+      t += 2
+      assert_equal ["new"], cache.(net_a).fetch("names") { ask.(["new"]) }, "past its time it is asked again"
+      assert_equal 4, asks
+      assert_nil cache.(net_a).fetch("methods x/y/z") { ask.(nil) }
+      assert_nil cache.(net_a).fetch("methods x/y/z") { ask.(nil) }
+      assert_equal 6, asks, "no answer is not remembered"
+      data = JSON.parse(File.read(cache.(net_a).file))
+      assert_equal ["names"], data.keys, "old entries are dropped"
+      assert_equal 0o600, File.stat(cache.(net_a).file).mode & 0o777
+      assert_equal 0o700, File.stat(File.join(dir, "asterism")).mode & 0o777
+      text = Dir.glob(File.join(dir, "asterism", "*")).map { File.read(_1) }.join
+      refute_includes text, "me.tar", "where the network is: a digest only"
+      refute_includes text, "192.0.2.2"
+      assert_equal File.join("/c", "asterism"), Asterism::CLI::Complete::Cache.dir({ "XDG_CACHE_HOME" => "/c" })
+    end
   end
 
   # ------------------------------------------------------------ the text's layout
@@ -354,6 +554,162 @@ class TestCLI < Minitest::Test
         th.value
         e.read
       end
+    end
+  end
+
+  def test_noun_verbs
+    with_node do |node|
+      out, err, code = cli("node", "list")
+      assert_equal 0, code, err
+      assert_includes out.lines, "calcnode\n", "a name a line"
+      refute_includes out, "\e[", "no colours on a pipe"
+      out, = cli("app", "list")
+      assert_includes out.lines, "calcnode/calc\n"
+      out, = cli("object", "list", "calcnode/**")
+      assert_equal "calcnode/calc/calc\ncalcnode/calc/other\n", out
+      out, = cli("object", "list", "calcnode/**", "-o", "json")
+      assert_equal %w[calcnode/calc/calc calcnode/calc/other], JSON.parse(out)
+
+      out, err, code = cli("node", "info", "calcnode")
+      assert_equal 0, code, err
+      assert_equal "calcnode\n  profile: kind=cruby protocol=1 name=\"Calc node\" icon_hash=HASH\n  calc\n" \
+                   "    status:\n      tables=1 st=wait\n    objects:\n      calc  5 methods\n" \
+                   "      other  1 method\n        The other calculator.\n", out.sub(/icon_hash=\h{8}/, "icon_hash=HASH")
+      j, = cli("node", "info", "calcnode", "-o", "json")
+      y, = cli("node", "info", "calcnode", "-o", "yaml")
+      assert_equal JSON.parse(j), YAML.safe_load(y), "-o yaml holds what -o json does"
+      assert_equal "calcnode", JSON.parse(j)["node"]
+      assert_equal JSON.parse(j), JSON.parse(cli("node", "info", "calcnode", "--json")[0])
+      _, err, code = cli("node", "info", "nosuchnode")
+      assert_equal 1, code
+      assert_match(/no node nosuchnode/, err)
+
+      out, err, code = cli("app", "info", "calcnode/calc", env: { "COLUMNS" => "40" })
+      assert_equal 0, code, err
+      assert_equal "calcnode/calc\n  status:\n    tables=1 st=wait\n  objects:\n    calc  5 methods\n" \
+                   "    other  1 method\n      The other calculator.\n", out
+      j, = cli("app", "info", "calcnode/calc", "-o", "json")
+      assert_equal %w[node app status objects], JSON.parse(j).keys
+
+      out, err, code = cli("object", "info", "calcnode/calc/other")
+      assert_equal 0, code, err
+      assert_equal "calcnode/calc/other\n  The other calculator.\n  add(a, b)  Adds a and b.\n", out
+      j, = cli("object", "info", "calcnode/calc/other", "-o", "json")
+      y, = cli("object", "info", "calcnode/calc/other", "-o", "yaml")
+      assert_equal({ "path" => "calcnode/calc/other", "doc" => "The other calculator.",
+                     "methods" => [{ "name" => "add", "arity" => 2, "args" => %w[a b], "doc" => "Adds a and b." }] },
+                   JSON.parse(j))
+      assert_equal JSON.parse(j), YAML.safe_load(y)
+      _, _, code = cli("object", "info", "calcnode/calc/nothing")
+      assert_equal 1, code
+
+      out, = cli("object", "find", "add")
+      assert_equal "calcnode/calc/calc\ncalcnode/calc/other\n", out
+      out, = cli("object", "find", "who*", "-o", "json")
+      assert_equal [{ "path" => "calcnode/calc/calc", "methods" => [{ "name" => "whoami", "arity" => 0 }] }],
+                   JSON.parse(out)
+      out, = cli("object", "find", "nothing")
+      assert_equal "", out
+
+      out, err, code = cli("status", "get", "calcnode/calc")
+      assert_equal [0, "tables=1 st=wait\n"], [code, out], err
+      j, = cli("status", "get", "calcnode/calc", "-o", "json")
+      y, = cli("status", "get", "calcnode/calc", "-o", "yaml")
+      assert_equal({ "tables" => 1, "st" => "wait" }, JSON.parse(j))
+      assert_equal "---\ntables: 1\nst: wait\n", y
+      _, err, code = cli("status", "get", "calcnode/none")
+      assert_equal 1, code
+      assert_match(/no status from calcnode\/none/, err)
+
+      out, err, code = cli("status", "echo", "calcnode/calc", "--once")
+      assert_equal 0, code, err
+      assert_match(/\A\d\d:\d\d:\d\d\.\d{3} calcnode\/calc \(now\)\n {13}tables=1 st=wait\n\z/, out)
+      out, = cli("status", "echo", "calcnode/calc", "--once", "-o", "json")
+      ev = JSON.parse(out)
+      assert_equal ["calcnode/calc", { "tables" => 1, "st" => "wait" }, true], ev.values_at("path", "status", "now")
+      _, _, code = cli("status", "echo", "calcnode/none", "--once")
+      assert_equal 1, code
+
+      # status echo: the status, then what changes; status hz: how often.
+      echo = [PLAIN, RbConfig.ruby, *LIB, EXE, "status", "echo", "calcnode/calc", "--duration", "5", *@where,
+              "--settle", "1.0"]
+      hz = [PLAIN, RbConfig.ruby, *LIB, EXE, "status", "hz", "calcnode/calc", "--period", "0.3", "--duration", "5",
+            "-o", "json", *@where, "--settle", "1.0"]
+      Open3.popen3(*echo) do |_i, o, _e, eth|
+        Open3.popen3(*hz) do |_i2, o2, _e2, hth|
+          lines = Timeout.timeout(10) { [o.gets, o.gets] }
+          assert_match(/ calcnode\/calc \(now\)\n\z/, lines[0])
+          sleep 0.5
+          [2, 3, 4].each do |n|
+            node.puts n.to_s
+            node.flush
+            sleep 0.4
+          end
+          3.times { lines << Timeout.timeout(6) { o.gets } }
+          assert_match(/\A\d\d:\d\d:\d\d\.\d{3} tables 1\u21922\n\z/, lines[2])
+          assert_match(/ tables 3\u21924\n\z/, lines[4])
+          reports = Timeout.timeout(10) { o2.read }.lines.map { JSON.parse(_1) }
+          last = reports.last
+          assert last, "hz reported"
+          assert_equal 3, last["count"]
+          assert_equal 2, last["window"]
+          assert_includes 1.0..5.0, last["rate_hz"]
+          assert_operator last["min_s"], :<=, last["max_s"]
+          hth.value
+        end
+        eth.value
+      end
+
+      # __complete: the names a part at a time, an object's methods.
+      Dir.mktmpdir do |cache|
+        env = PLAIN.merge("XDG_CACHE_HOME" => cache)
+        comp = ->(*w) { Open3.capture3(env, RbConfig.ruby, *LIB, EXE, "__complete", "--", *w)[0].split("\n") }
+        assert_equal %w[calcnode/], comp.("status", "echo", *@where, "calc")
+        assert_equal %w[calcnode/calc], comp.("status", "get", *@where, "calcnode/")
+        assert_equal %w[calcnode/calc/calc calcnode/calc/other], comp.("call", *@where, "calcnode/calc/")
+        assert_equal %w[add any boom kw whoami], comp.("call", *@where, "calcnode/calc/calc", "")
+        assert_equal %w[calcnode], comp.("node", "info", *@where, "")
+        assert_equal 1, Dir.glob(File.join(cache, "asterism", "*.json")).size
+        line = "asterism status get #{@where.join(' ')} calc"
+        out, = Open3.capture3(env, RbConfig.ruby, *LIB, EXE, "__complete", "--bash", line)
+        assert_equal "calcnode/\n", out
+      end
+    end
+  end
+
+  # The bash script: its function, called as bash calls it on a Tab.
+  def test_bash_script
+    skip "no bash" unless system("bash", "-c", "true", out: File::NULL, err: File::NULL)
+    lib = LIB.each_slice(2).map { |_, d| "-I#{d}" }.join(" ")
+    script = <<~BASH
+      asterism() { #{RbConfig.ruby} #{lib} #{EXE} "$@"; }
+      source <(asterism completion bash)
+      t() {
+        COMP_LINE=$1; COMP_POINT=${#1}; read -ra COMP_WORDS <<< "$1"
+        [[ $1 == *" " ]] && COMP_WORDS+=("")
+        COMP_CWORD=$((${#COMP_WORDS[@]} - 1)); COMPREPLY=(); _asterism; echo "${COMPREPLY[*]}"
+      }
+      t "asterism status e"; t "asterism object "; t "asterism tree -o "; t "asterism node list --cre"
+    BASH
+    out, err, st = Open3.capture3(PLAIN.merge("ASTERISM_ROUTER" => nil, "ASTERISM_CREDENTIALS" => nil),
+                                  "bash", "--norc", "-c", script)
+    assert st.success?, err
+    assert_equal ["echo", "find info list", "json yaml", "--credentials"], out.lines.map(&:chomp)
+  end
+
+  # __complete without a network that answers: nothing, soon.
+  def test_complete_without_network
+    Dir.mktmpdir do |cache|
+      env = PLAIN.merge("XDG_CACHE_HOME" => cache, "ASTERISM_ROUTER" => nil, "ASTERISM_CREDENTIALS" => nil)
+      t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      out, _, st = Open3.capture3(env, RbConfig.ruby, *LIB, EXE, "__complete", "--", "node", "info", "--router",
+                                  "tcp/127.0.0.1:#{TestHelper.free_port}", "")
+      dt = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+      assert_equal ["", 0], [out, st.exitstatus]
+      assert_operator dt, :<, 4.0, "the time the network may take, and the process's start"
+      out, = Open3.capture3(env, RbConfig.ruby, *LIB, EXE, "__complete", "--", "node", "info", "")
+      assert_equal "", out, "no network named: no names, nothing asked"
+      assert_empty Dir.glob(File.join(cache, "asterism", "*")), "what did not answer is not remembered"
     end
   end
 

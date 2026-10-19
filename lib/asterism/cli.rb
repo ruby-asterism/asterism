@@ -1,13 +1,19 @@
 # The command line of the gem (exe/asterism): look at an Asterism network
-# from CRuby, and call an object when asked to.
+# from CRuby, and call an object when asked to. Its commands are a noun and
+# a verb, as ros2's are:
 #
-#   asterism nodes   --router tcp/192.0.2.2:7447
-#   asterism tree    --credentials admin.tar   # --methods: each object's methods
-#   asterism objects 'games/games/*'
-#   asterism watch                         # joins, leaves, statuses as they come
-#   asterism ping    games/games/othello1  # the time of a round trip (meta)
-#   asterism call    games/games/othello1 view '"<token>"'
-#   asterism mcp     --allow 'games/othello1.*'   # an MCP server on stdio
+#   asterism node list   --router tcp/192.0.2.2:7447
+#   asterism node info   games --credentials admin.tar
+#   asterism app list / app info games/games
+#   asterism object list 'games/games/*' / object info games/games/othello1
+#   asterism object find join             # the objects that have join
+#   asterism status get  games/games      # echo: as it changes, hz: how often
+#   asterism call        games/games/othello1 view '"<token>"'
+#   asterism ping / watch / tree / mcp    # as before
+#   asterism completion bash              # the shell's Tab completion
+#
+# The older commands (nodes, objects, echo) stay, with the same output.
+# `-o json` / `-o yaml` (and --json, as before) on every command that reads.
 #
 # It is one more Asterism node: it connects with Asterism.connect (as the
 # certificate's name with --credentials, as cli-<6 hex digits> otherwise)
@@ -22,35 +28,97 @@ require_relative "cli/literal"
 require_relative "cli/survey"
 require_relative "cli/allow"
 require_relative "cli/text"
+require_relative "cli/hz"
+require_relative "cli/complete"
 
 module Asterism
   class CLI
-    USAGE = <<~TEXT
-      Usage: asterism COMMAND [options]
+    # The nouns and their verbs: verb => [its arguments, what it does].
+    NOUNS = {
+      "node" => {
+        "list" => ["", "the nodes, a name a line"],
+        "info" => ["NODE", "one node: its profile, applications (with their statuses) and objects"]
+      },
+      "app" => {
+        "list" => ["", "the applications, node/app a line"],
+        "info" => ["NODE/APP", "one application: its status and its objects"]
+      },
+      "object" => {
+        "list" => ["[PATTERN]", "the objects, node/app/object a line (PATTERN: * and ** for whole parts)"],
+        "info" => ["PATH", "one object (node/app/object): its description and its methods"],
+        "find" => ["METHOD", "the objects that have the method (* as a wildcard)"]
+      },
+      "status" => {
+        "get" => ["NODE/APP", "an application's status, now"],
+        "echo" => ["NODE/APP", "its status, then each change as it comes (--once: now, once)"],
+        "hz" => ["NODE/APP", "how often it changes: the rate, the intervals' min / max / std dev"]
+      }
+    }.freeze
 
-      Commands (they only read, except call):
-        nodes                the nodes, their applications and profiles
-        objects [PATTERN]    the objects and their methods (PATTERN: node/app/object, * and **)
-        tree                 nodes > applications (with their status) > objects (how many methods;
-                             --methods lists them)
-        watch                nodes, applications and objects coming and going, and status changes
-        ping PATH            round trips: PATH node/app/object (its meta), or node (its profile);
-                             --call METHOD [ARG...] times a call instead (echo is the same command)
-        call PATH METHOD [ARG...]
-                             calls a method; each ARG is JSON, else a Ruby literal, else text
-        mcp                  an MCP server on stdio (needs the mcp gem): the listings as tools,
-                             and the methods --allow names
-        version              the gem's version
+    # The commands without a noun: name => [its arguments, what it does].
+    COMMANDS = {
+      "call" => ["PATH METHOD [ARG...]", "calls a method; each ARG is JSON, else a Ruby literal, else text"],
+      "ping" => ["PATH", "round trips: PATH node/app/object (its meta) or node (its profile); " \
+                         "--call METHOD [ARG...] times a call instead"],
+      "watch" => ["", "nodes, applications and objects coming and going, and status changes"],
+      "tree" => ["", "nodes > applications (with their status) > objects (--methods: their methods)"],
+      "mcp" => ["", "an MCP server on stdio (needs the mcp gem): the listings as tools, and the methods " \
+                    "--allow names"],
+      "completion" => ["bash|zsh", "the shell's Tab completion: source <(asterism completion bash)"],
+      "version" => ["", "the gem's version"]
+    }.freeze
 
-      Where the network is (one of them):
-        --router LOCATOR     a router without TLS, e.g. tcp/192.0.2.2:7447
-        --credentials TAR    a console's .tar (mutual TLS; its router and name)
-      With none of --router, --credentials, --peer, the environment's
-      ASTERISM_CREDENTIALS and ASTERISM_ROUTER are used instead.
+    # The older names, kept with their output.
+    ALIASES = {
+      "nodes" => "the nodes, their applications (with their statuses) and profiles, in one listing",
+      "objects" => "[PATTERN] the objects with their descriptions and methods (object info of each)",
+      "echo" => "ping"
+    }.freeze
 
-      On a terminal the text has colours (NO_COLOR=1: none) and the terminal's
-      width; otherwise it is plain, 80 columns wide (or COLUMNS).
-    TEXT
+    # The options that take a value (what __complete skips over).
+    VALUE_OPTIONS = %w[--router --credentials --peer --node --app -o --output --timeout --settle --duration --count
+                       --interval --call --kwargs --allow --period --window].freeze
+
+    def self.usage
+      col = 30
+      line = lambda do |name, args, what|
+        Text.wrap_text(what, 80, first: "  #{"#{name} #{args}".strip.ljust(col - 3)} ").join("\n")
+      end
+      nouns = NOUNS.flat_map { |n, verbs| verbs.map { |v, (a, w)| line.("#{n} #{v}", a, w) } }
+      cmds = COMMANDS.map { |c, (a, w)| line.(c, a, w) }
+      <<~TEXT
+        Usage: asterism NOUN VERB [ARG...] [options]    (asterism NOUN: its verbs)
+
+        Commands (they only read, except call):
+        #{nouns.join("\n")}
+
+        #{cmds.join("\n")}
+
+        Where the network is (one of them):
+          --router LOCATOR     a router without TLS, e.g. tcp/192.0.2.2:7447
+          --credentials TAR    a console's .tar (mutual TLS; its router and name)
+        With none of --router, --credentials, --peer, the environment's
+        ASTERISM_CREDENTIALS and ASTERISM_ROUTER are used instead.
+
+        Output: text; -o json or -o yaml (the same content) on the commands that read
+        (--json is -o json). On a terminal the text has colours (NO_COLOR=1: none) and
+        the terminal's width; otherwise it is plain, 80 columns wide (or COLUMNS).
+
+        Older names, kept: nodes (all the nodes in one listing), objects [PATTERN]
+        (object info of each), echo (ping).
+      TEXT
+    end
+
+    USAGE = usage
+
+    # The verbs of a noun, for `asterism NOUN`.
+    def self.noun_usage(noun)
+      verbs = NOUNS.fetch(noun).map do |v, (a, w)|
+        Text.wrap_text(w, 80, first: "  #{"#{noun} #{v} #{a}".strip.ljust(27)} ").join("\n")
+      end
+      "Usage: asterism #{noun} VERB [ARG...] [options]\n\n#{verbs.join("\n")}\n\n" \
+        "asterism #{noun} VERB --help: its options; asterism --help: every command\n"
+    end
 
     def self.start(argv, out: $stdout, err: $stderr, env: ENV)
       new(out: out, err: err, env: env).run(argv.dup)
@@ -62,25 +130,45 @@ module Asterism
       @env = env
       @lock = Mutex.new
       @last_status = {}
-      @opts = { timeout: 2.0, settle: 1.5, json: false, count: 5, interval: 0.2, allow: [] }
+      @opts = { timeout: 2.0, settle: 1.5, format: nil, count: 5, interval: 0.2, allow: [], period: 1.0,
+                window: 1000 }
     end
 
     def run(argv)
       cmd = argv.shift
       case cmd
       when nil, "help", "-h", "--help"
+        if cmd == "help" && NOUNS.key?(argv.first)
+          @out.puts CLI.noun_usage(argv.first)
+          return 0
+        end
         @out.puts USAGE
         return cmd.nil? ? 2 : 0
       when "version", "--version", "-v"
         @out.puts "asterism #{::Asterism::VERSION}"
         return 0
+      when "__complete"
+        return cmd_complete(argv)
       end
-      unless %w[nodes objects tree watch ping echo call mcp].include?(cmd)
+      key = cmd
+      if NOUNS.key?(cmd)
+        verb = argv.first
+        if verb.nil? || %w[-h --help].include?(verb) || verb.start_with?("-")
+          @out.puts CLI.noun_usage(cmd)
+          return %w[-h --help].include?(verb) ? 0 : 2
+        end
+        unless NOUNS[cmd].key?(verb)
+          @err.puts "asterism: #{cmd} has no verb #{verb.inspect}\n\n#{CLI.noun_usage(cmd)}"
+          return 2
+        end
+        argv.shift
+        key = "#{cmd} #{verb}"
+      elsif !(COMMANDS.key?(cmd) || ALIASES.key?(cmd))
         @err.puts "asterism: unknown command #{cmd.inspect}\n\n#{USAGE}"
         return 2
       end
-      rest = parser(cmd).parse(argv)
-      send("cmd_#{cmd == 'echo' ? 'ping' : cmd}", rest)
+      rest = parser(key).parse(argv)
+      send("cmd_#{key == 'echo' ? 'ping' : key.tr(' ', '_')}", rest)
     rescue OptionParser::ParseError, ArgumentError => e
       @err.puts "asterism: #{e.message}"
       2
@@ -94,18 +182,27 @@ module Asterism
       0
     end
 
-    def parser(cmd)
+    # The options of a command (key: "tree", "node info", ...).
+    def parser(key)
       OptionParser.new do |o|
-        o.banner = "Usage: asterism #{cmd} [options]"
-        o.on("--router LOCATOR", "a router (tcp/HOST:7447)") { @opts[:router] = _1 }
-        o.on("--credentials TAR", "a console's .tar") { @opts[:credentials] = _1 }
-        o.on("--peer LOCATOR", "a direct peer link to a node listening there (no router)") { @opts[:peer] = _1 }
-        o.on("--node NAME", "this node's ID (default: the certificate's name, or cli-<6 hex>)") { @opts[:node] = _1 }
-        o.on("--app NAME", "this application's name (default: cli-<4 hex>)") { @opts[:app] = _1 }
-        o.on("--json", "JSON instead of text (watch: one JSON object a line)") { @opts[:json] = true }
-        o.on("--timeout SECONDS", Float, "time limit of each get or call (2.0)") { @opts[:timeout] = _1 }
-        o.on("--settle SECONDS", Float, "how long to wait for the tokens at connect (1.5)") { @opts[:settle] = _1 }
-        case cmd
+        args = (NOUNS.dig(*key.split(" ")) || COMMANDS[key] || [""])[0]
+        o.banner = "Usage: asterism #{key} #{args} [options]".squeeze(" ")
+        unless key == "completion"
+          o.on("--router LOCATOR", "a router (tcp/HOST:7447)") { @opts[:router] = _1 }
+          o.on("--credentials TAR", "a console's .tar") { @opts[:credentials] = _1 }
+          o.on("--peer LOCATOR", "a direct peer link to a node listening there (no router)") { @opts[:peer] = _1 }
+          o.on("--node NAME", "this node's ID (default: the certificate's name, or cli-<6 hex>)") { @opts[:node] = _1 }
+          o.on("--app NAME", "this application's name (default: cli-<4 hex>)") { @opts[:app] = _1 }
+          unless key == "mcp"
+            o.on("-o", "--output FORMAT", %w[json yaml], "json or yaml instead of text (the same content)") do
+              @opts[:format] = _1.to_sym
+            end
+            o.on("--json", "JSON instead of text (-o json)") { @opts[:format] = :json }
+          end
+          o.on("--timeout SECONDS", Float, "time limit of each get or call (2.0)") { @opts[:timeout] = _1 }
+          o.on("--settle SECONDS", Float, "how long to wait for the tokens at connect (1.5)") { @opts[:settle] = _1 }
+        end
+        case key
         when "tree"
           o.on("--methods", "list each object's methods (else how many)") { @opts[:methods] = true }
         when "watch"
@@ -119,8 +216,54 @@ module Asterism
         when "mcp"
           o.on("--allow PATTERN", "methods the MCP client may call: [node/][app/]object.method, * as a wildcard " \
                                   "(repeatable)") { @opts[:allow] << _1 }
+        when "status echo"
+          o.on("--once", "the status now, once, then stop") { @opts[:once] = true }
+          o.on("--duration SECONDS", Float, "stop after this long (default: until Ctrl-C)") { @opts[:duration] = _1 }
+        when "status hz"
+          o.on("--period SECONDS", Float, "how often to print (1.0)") { @opts[:period] = _1 }
+          o.on("--window N", Integer, "how many of the last intervals count (1000)") { @opts[:window] = _1 }
+          o.on("--duration SECONDS", Float, "stop after this long (default: until Ctrl-C)") { @opts[:duration] = _1 }
         end
       end
+    end
+
+    # ------------------------------------------------------------ the tables, for __complete
+
+    def noun?(w)
+      NOUNS.key?(w)
+    end
+
+    def nouns
+      NOUNS.keys
+    end
+
+    def verbs(noun)
+      NOUNS.fetch(noun).keys
+    end
+
+    def command_words
+      NOUNS.keys + COMMANDS.keys + ALIASES.keys + ["help"]
+    end
+
+    # [key, its arguments] of the positional words (nil when they name no
+    # command).
+    def command_key(pos)
+      return [nil, []] if pos.empty?
+      if NOUNS.key?(pos[0])
+        return [nil, []] unless pos[1] && NOUNS[pos[0]].key?(pos[1])
+        return ["#{pos[0]} #{pos[1]}", pos[2..]]
+      end
+      return [pos[0], pos[1..]] if COMMANDS.key?(pos[0]) || ALIASES.key?(pos[0]) || pos[0] == "help"
+      [nil, []]
+    end
+
+    def option_takes_value?(w)
+      VALUE_OPTIONS.include?(w)
+    end
+
+    def options_for(key)
+      return [] if key == "help"
+      parser(key).top.list.flat_map { |sw| sw.respond_to?(:long) ? sw.long + sw.short : [] } + ["--help"]
     end
 
     # ------------------------------------------------------------ connecting
@@ -166,8 +309,26 @@ module Asterism
       end
     end
 
-    def emit_json(v)
-      @out.puts JSON.pretty_generate(v)
+    # -o json or -o yaml (or --json) given: the data instead of the text.
+    def structured?
+      !@opts[:format].nil?
+    end
+
+    # The data as -o asks: JSON (pretty, as --json always was) or YAML (the
+    # same content: what the JSON holds, as YAML).
+    def emit(v)
+      @opts[:format] == :yaml ? @out.write(yaml(v)) : @out.puts(JSON.pretty_generate(v))
+    end
+
+    # One record of a stream (watch, status echo / hz, call): a JSON line,
+    # or a YAML document ("---" before each).
+    def emit_line(v)
+      @opts[:format] == :yaml ? @out.write(yaml(v)) : @out.puts(JSON.generate(v))
+    end
+
+    def yaml(v)
+      require "yaml"
+      YAML.dump(JSON.parse(JSON.generate(v)))
     end
 
     # ------------------------------------------------------------ nodes
@@ -175,8 +336,8 @@ module Asterism
     def cmd_nodes(_rest)
       connect do |_net, sv|
         tree = sv.tree(meta: false)
-        if @opts[:json]
-          emit_json(tree.map { |n| n.merge("apps" => n["apps"].map { |a| a.except("objects") }) })
+        if structured?
+          emit(tree.map { |n| n.merge("apps" => n["apps"].map { |a| a.except("objects") }) })
         elsif tree.empty?
           @out.puts "(no other node is visible)"
         else
@@ -200,8 +361,8 @@ module Asterism
       connect do |_net, sv|
         paths = sv.objects(pattern)
         metas = sv.metas(paths)
-        if @opts[:json]
-          emit_json(paths.map do |p|
+        if structured?
+          emit(paths.map do |p|
             h = { "path" => p, "methods" => metas[p] }
             h["doc"] = sv.object_doc(p) if sv.object_doc(p)
             h
@@ -220,8 +381,8 @@ module Asterism
     def cmd_tree(_rest)
       connect do |_net, sv|
         tree = sv.tree
-        if @opts[:json]
-          emit_json(tree)
+        if structured?
+          emit(tree)
         elsif tree.empty?
           @out.puts "(no other node is visible)"
         else
@@ -273,7 +434,7 @@ module Asterism
         end
         sleep 0.3
         @watch_started = true
-        @err.puts "asterism: watching (Ctrl-C to stop)" unless @opts[:json]
+        @err.puts "asterism: watching (Ctrl-C to stop)" unless structured?
         deadline = @opts[:duration] && (Process.clock_gettime(Process::CLOCK_MONOTONIC) + @opts[:duration])
         loop do
           break if deadline && Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
@@ -286,13 +447,13 @@ module Asterism
 
     def event(kind, path, what: nil, status: nil, profile: nil, now: false)
       t = Time.now
-      if @opts[:json]
+      if structured?
         h = { "t" => t.utc.strftime("%Y-%m-%dT%H:%M:%S.%LZ"), "event" => kind, "path" => path }
         h["what"] = what if what
         h["status"] = status if status
         h["profile"] = profile if profile
         h["now"] = true if now
-        @out.puts JSON.generate(h)
+        @lock.synchronize { emit_line(h) }
       else
         @lock.synchronize do
           text = event_text(t, kind, path, what, status, profile, now)
@@ -372,11 +533,11 @@ module Asterism
           end
           dt = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0) * 1000
           times << dt if ok
-          @out.puts "#{path} #{what}: #{ok ? format('%.1f ms', dt) : 'no answer'}" unless @opts[:json]
+          @out.puts "#{path} #{what}: #{ok ? format('%.1f ms', dt) : 'no answer'}" unless structured?
         end
       end
-      if @opts[:json]
-        emit_json({ "path" => path, "what" => what, "count" => @opts[:count], "answered" => times.size,
+      if structured?
+        emit({ "path" => path, "what" => what, "count" => @opts[:count], "answered" => times.size,
                     "ms" => times.map { _1.round(2) } })
       elsif times.any?
         @out.puts format("%d of %d answered: min %.1f / avg %.1f / max %.1f ms", times.size, @opts[:count],
@@ -412,10 +573,10 @@ module Asterism
         px = ::Asterism[path, timeout: @opts[:timeout]]
         begin
           v = px.asterism_call(method, *args, **kwargs)
-          @opts[:json] ? @out.puts(JSON.generate({ "value" => json_safe(v) })) : @out.puts(v.inspect)
+          structured? ? emit_line({ "value" => json_safe(v) }) : @out.puts(v.inspect)
         rescue ::Asterism::RemoteError => e
-          if @opts[:json]
-            @out.puts JSON.generate({ "error" => { "kind" => e.remote_kind, "class" => e.remote_class,
+          if structured?
+            emit_line({ "error" => { "kind" => e.remote_kind, "class" => e.remote_class,
                                                    "message" => e.remote_message } })
           else
             @err.puts "asterism: #{path}.#{method}: #{e.remote_kind || 'error'}: #{e.message}"
@@ -537,3 +698,4 @@ module Asterism
     end
   end
 end
+require_relative "cli/nouns"

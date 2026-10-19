@@ -115,10 +115,12 @@ module Asterism
 
       # The tree: [{"node", "profile", "apps" => [{"app", "status",
       # "objects" => [{"name", "methods"}]}]}]. meta: false leaves the
-      # methods out (no meta gets).
-      def tree(meta: true)
-        objs = objects
-        app_list = apps
+      # methods out (no meta gets); node: (and app:) narrow it to one node
+      # (one application).
+      def tree(meta: true, node: nil, app: nil)
+        scope = node && "#{node}/#{app || '*'}"
+        objs = scope ? objects("#{scope}/*") : objects
+        app_list = scope ? apps(scope) : apps
         threads = []
         node_list = (app_list.map { _1.split("/")[0] } + objs.map { _1.split("/")[0] }).uniq
         threads << Thread.new { profiles(node_list) }

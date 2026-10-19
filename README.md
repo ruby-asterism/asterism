@@ -101,7 +101,7 @@ build but not yet tested. To install from the repositories instead:
 
 ```
 (cd ../asterism-zenoh && rake gem) && rake gem
-gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.1.gem pkg/asterism-0.8.1.gem
+gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.1.gem pkg/asterism-0.9.0.gem
 ```
 
 From the working trees, without installing:
@@ -130,7 +130,7 @@ rake                  # every suite
 rake test:msgs        # generator, type hashes, CDR, bundled types (CRuby only; no Zenoh, no docker)
 rake test:objects     # objects and Asterism::ROS between CRuby sessions over a local peer link
 rake test:api         # the CRuby API (blocks, receiving threads, Enumerators)
-rake test:cli         # the command line (exe/asterism) and its MCP bridge (the mcp gem's client; skipped without it)
+rake test:cli         # the command line (exe/asterism), its Tab completion and its MCP bridge (the mcp gem's client; skipped without it)
 ASTERISM_TEST_ROUTER=tcp/127.0.0.1:7447 rake test:objects test:api   # the same through a zenohd router
 rake test:mruby       # the shared layer on mruby (builds mruby; not part of `rake`)
 rake test:protocol    # the wire protocol's conformance samples and driver against CRuby (docs/protocol.md)
@@ -415,37 +415,55 @@ What may be shared between threads:
 The gem has a command, `asterism`, that looks at a network from a terminal
 (CRuby). It is one more node: it connects, reads the liveliness tokens,
 the meta, the profiles and the statuses, and calls a method only when told
-to with `call`.
+to with `call`. Its commands are a noun and a verb, as ros2's are
+(`asterism node` alone lists the node's verbs, `asterism --help` all of
+them):
 
 ```
-asterism nodes   --router tcp/192.0.2.2:7447        # nodes, their apps (with their status), profiles
-asterism objects --router tcp/192.0.2.2:7447 'games/games/*'   # objects and their methods
-asterism tree    --credentials admin.tar             # nodes > apps > objects, with statuses (--methods: the methods)
-asterism watch   --router tcp/192.0.2.2:7447        # nodes, apps and objects coming and going, statuses
-asterism ping    --router tcp/192.0.2.2:7447 games/games/othello1   # round trips (its meta; no method runs)
-asterism ping    ... games/games/othello1 --call view '"<token>"'   # round trips of a call
-asterism call    --router tcp/192.0.2.2:7447 games/games/othello1 join '"Alice"'
-asterism call    ... linux/demo/screen say hello --kwargs '{color: 3}'
+asterism node list   --router tcp/192.0.2.2:7447    # the nodes, a name a line
+asterism node info   games                          # one node: profile, apps, statuses, objects
+asterism app list                                   # node/app, a line each
+asterism app info    games/games                    # its status and its objects
+asterism object list 'games/games/*'                # node/app/object, a line each
+asterism object info games/games/othello1           # its description and its methods
+asterism object find join                           # the objects that have join (* as a wildcard)
+asterism status get  games/games                    # the status now
+asterism status echo games/games                    # the status, then each change (--once: now, once)
+asterism status hz   games/games                    # how often it changes
+asterism call        games/games/othello1 join '"Alice"'
+asterism call        linux/demo/screen say hello --kwargs '{color: 3}'
+asterism ping        games/games/othello1           # round trips (its meta; no method runs)
+asterism ping        games/games/othello1 --call view '"<token>"'   # round trips of a call
+asterism watch                                      # nodes, apps and objects coming and going, statuses
+asterism tree        --credentials admin.tar        # nodes > apps > objects (--methods: the methods)
+asterism completion  bash                           # Tab completion (below)
 ```
 
+The older commands stay, with the same output: `nodes` (every node with
+its applications and statuses, in one listing), `objects [PATTERN]` (each
+object with its description and methods) and `echo` (`ping`).
+
 ```
-$ asterism tree --router tcp/192.0.2.2:7447
-games  (cruby) "asterism-games"
-  games
-    status:
-      mahjong1: st=wait members=0 humans=0 cpus=0 ais=0 away=0
-      othello1: st=wait members=0 humans=0 cpus=0 away=0
+$ export ASTERISM_ROUTER=tcp/192.0.2.2:7447
+$ asterism node list
+games
+linux
+$ asterism object list
+games/games/mahjong1
+games/games/othello1
+linux/demo/screen
+$ asterism app info games/games
+games/games
+  status:
+    mahjong1: st=wait members=0 humans=0 cpus=0 ais=0 away=0
+    othello1: st=wait members=0 humans=0 cpus=0 away=0
+  objects:
     mahjong1  18 methods
+      A riichi mahjong table (four seats). From a program: call describe first,
+      then join, sit, and look / choose in a loop.
     othello1  11 methods
-linux  (family_mruby/sim)
-  game
-$ asterism tree --methods ...
-    ...
-    othello1  11 methods
-      join(name)  mine()  sit(token, seat)  stand(token)  cpu(token, seat, on)
-      start(token)  move(token, n, square)  resign(token)  view(token)  table()
-      leave(token)
-$ asterism objects ... games/games/othello1
+      An othello table (two seats). join, sit, then view / move in a loop.
+$ asterism object info games/games/othello1
 games/games/othello1
   An othello table (two seats). join, sit, then view / move in a loop.
   join(name)              Joins the table as name (or gets this node's
@@ -455,7 +473,36 @@ games/games/othello1
   mine()                  This node's membership ({"token", ...}), or nil when
                           it has not joined.
   ...
-$ asterism watch --router tcp/192.0.2.2:7447
+$ asterism object find join
+games/games/mahjong1
+games/games/othello1
+$ asterism status get games/games -o yaml
+---
+mahjong1:
+  st: wait
+  members: 0
+  ...
+$ asterism status echo games/games
+12:00:01.204 games/games (now)
+             mahjong1: st=wait members=0 humans=0 cpus=0 ais=0 away=0
+             othello1: st=wait members=0 humans=0 cpus=0 away=0
+12:00:05.120 mahjong1.members 0→1
+12:00:05.133 mahjong1.humans 0→1
+$ asterism status hz games/games
+average rate: 0.409 Hz
+  min: 0.013 s  max: 4.876 s  std dev: 2.432 s  window: 2
+$ asterism tree
+games  (cruby) "asterism-games"
+  games
+    status:
+      mahjong1: st=wait members=0 humans=0 cpus=0 ais=0 away=0
+      othello1: st=wait members=0 humans=0 cpus=0 away=0
+    mahjong1  18 methods
+    othello1  11 methods
+linux  (family_mruby/sim)
+  demo
+    screen  3 methods
+$ asterism watch
 12:00:01.204 ~ status games/games (now)
                mahjong1: st=wait members=0 humans=0 cpus=0 ais=0 away=0
                othello1: st=wait members=0 humans=0 cpus=0 away=0
@@ -486,22 +533,59 @@ $ asterism watch --router tcp/192.0.2.2:7447
   literal (nil, true, false, numbers, strings, symbols, arrays, hashes; read
   with Ripper, nothing is evaluated), else the text as written. `--kwargs`
   is a JSON object or a Ruby Hash.
-- **Output**: text, or `--json` (`watch --json`: one object a line, with
-  the time; the JSON is the same whatever the output is). The text is for
-  people: on a terminal it has colours (nodes, applications, objects, the
-  `+` `-` `~` of watch; `NO_COLOR=1` turns them off) and is wrapped to the
-  terminal's width; written to a pipe or a file it is plain and 80 columns
-  wide (or `COLUMNS`). A status is shown as `key=value`, a line for each
-  level that holds Hashes (a long text or array is cut with `…`; `--json`
-  has it whole). `tree` tells how many methods an object has, `tree
-  --methods` lists them; `objects` lists each method with its description.
-  `watch` shows a status whole the first time (and when its application
-  comes back), then only what changed: `a.b 0→1`, `+a.c=…` (a key came),
-  `-a.d` (a key went). `--timeout` (2.0 s) is each get's and call's limit, `--settle`
+- **Lists** (`node list`, `app list`, `object list`, `object find`) print
+  the names only, a name a line, sorted, so they go to `grep` and `xargs`
+  as they are (on a terminal the parts are coloured; to a pipe they are
+  plain).
+- **Output**: text, or `-o json` / `-o yaml` on every command that reads
+  (the YAML holds what the JSON does; `--json` is `-o json`, its output as
+  it always was). The streams (`watch`, `status echo`, `status hz`) give a
+  JSON object a line, or a YAML document each (`---`), with the time. The
+  text is for people: on a terminal it has colours (nodes, applications,
+  objects, the `+` `-` `~` of watch; `NO_COLOR=1` turns them off) and is
+  wrapped to the terminal's width; written to a pipe or a file it is plain
+  and 80 columns wide (or `COLUMNS`). A status is shown as `key=value`, a
+  line for each level that holds Hashes (a long text or array is cut with
+  `…`; `-o json` has it whole). `tree` tells how many methods an object
+  has, `tree --methods` lists them; `object info` (and `objects`) lists
+  each method with its description. `watch` and `status echo` show a
+  status whole the first time (and when its application comes back), then
+  only what changed: `a.b 0→1`, `+a.c=…` (a key came), `-a.d` (a key
+  went). `--timeout` (2.0 s) is each get's and call's limit, `--settle`
   (1.5 s) how long it waits for the tokens after connecting.
+- **status hz** counts the changes of the status (a put of the same status
+  again is not one) and prints, every `--period` (1 s) in which a change
+  came, the average rate and the intervals' min, max and standard
+  deviation over the last `--window` (1000) intervals, as `ros2 topic hz`
+  does. An application puts its status when it changes, so this is how
+  often the application has something new to tell.
 - **watch** shows the applications and objects themselves (their tokens),
   not only the nodes: a node with two applications stays while one closes,
   and `watch` shows that one leave.
+
+### Tab completion
+
+```
+source <(asterism completion bash)     # or put this line in ~/.bashrc
+source <(asterism completion zsh)      # zsh, after compinit (~/.zshrc)
+```
+
+The commands, the verbs and the options complete without the network. The
+names on the network complete too: the nodes, `node/app`, `node/app/object`
+a part at a time (`ga<Tab>` gives `games/`, `games/games/<Tab>` the
+objects), and after `call PATH` (or `ping PATH --call`) the object's
+methods. On each Tab the script runs `asterism __complete`, which asks the
+network named on the line (`--router`, `--credentials`, `--peer`) or in
+`ASTERISM_CREDENTIALS` / `ASTERISM_ROUTER`:
+
+- briefly: what does not answer within 1.5 s gives no candidates, and the
+  shell is not kept waiting;
+- remembered for 20 s, a file per network in `$XDG_CACHE_HOME/asterism/`
+  (`~/.cache/asterism/`; the directory 0700, the files 0600), named by a
+  digest of where the network is. It holds the names only, never a key or
+  a certificate. What did not answer is not remembered;
+- as one more node for a moment (a `cli-` node, or the certificate's name),
+  so `asterism watch` shows it come and go.
 
 ### MCP: Asterism as tools of an AI assistant
 

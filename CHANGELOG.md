@@ -6,10 +6,35 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
-## 0.8.1
+## 0.9.0
 
-The command line only; the library and the wire are as in 0.8.0.
+The command line only; the library and the wire are as in 0.8.0 (0.8.1
+was not published: its changes are here).
 
+- The command line's commands are a noun and a verb, as ros2's are:
+  `node list` / `node info NODE`, `app list` / `app info NODE/APP`,
+  `object list [PATTERN]` / `object info PATH` / `object find METHOD`
+  (the objects that have a method, `*` as a wildcard), `status get` /
+  `status echo` / `status hz NODE/APP`. The lists print the names only, a
+  name a line, sorted (for grep and xargs). `asterism NOUN` lists its
+  verbs; `asterism --help` is grouped by noun. `call`, `ping`, `watch`,
+  `tree` and `mcp` are as they were, and the older `nodes`, `objects` and
+  `echo` stay with the same output. README "The command line".
+- `status echo NODE/APP`: the status, then each change as it comes (the
+  text tells what changed, as `watch` does; `--once`: the status now,
+  once). `status hz NODE/APP`: how often the status changes, as
+  `ros2 topic hz` (the average rate and the intervals' min, max and
+  standard deviation, every `--period`; `--window`).
+- `-o json` / `-o yaml` on every command that reads (YAML with the
+  standard library, the same content as the JSON). `--json` is `-o json`;
+  its output is as it was, byte for byte.
+- Tab completion: `asterism completion bash` / `zsh` prints a script
+  (`source <(asterism completion bash)`). The commands, verbs and options
+  complete without the network; the nodes, `node/app`, `node/app/object`
+  (a part at a time) and an object's methods come from the network named
+  on the line or in the environment, asked for 1.5 s at most and
+  remembered for 20 s in `$XDG_CACHE_HOME/asterism/` (names only; never a
+  key or a certificate). README "Tab completion".
 - The command line's text is easier to read (`--json` is unchanged): a
   status is shown as indented `key=value` lines instead of one line of
   JSON (`tree`, `nodes`, the first status of `watch`); `tree` shows how

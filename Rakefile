@@ -12,8 +12,9 @@
 #                      blocks, receiving threads, Enumerators; needs
 #                      asterism-zenoh too
 #   rake test:cli      the command line (exe/asterism) against a node in
-#                      another process, and its MCP bridge (with the mcp
-#                      gem's client; skipped without the mcp gem)
+#                      another process, its Tab completion (__complete, the
+#                      bash script) and its MCP bridge (with the mcp gem's
+#                      client; skipped without the mcp gem)
 #   rake test:mruby    the shared layer on mruby (MRB_UTF8_STRING, as on the
 #                      boards): node profiles between two mruby processes,
 #                      Asterism.session and on_join / on_leave in one.
@@ -97,7 +98,7 @@ namespace :test do
 end
 
 namespace :test do
-  desc "The command line (exe/asterism): nodes, objects, tree, watch, ping, call, and the MCP bridge (needs asterism-zenoh; the mcp gem for the bridge)"
+  desc "The command line (exe/asterism): the noun-verb commands, the older ones, the Tab completion and the MCP bridge (needs asterism-zenoh; the mcp gem for the bridge)"
   task :cli do
     lib = asterism_zenoh_lib
     unless lib || asterism_zenoh_gem?
