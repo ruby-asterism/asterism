@@ -2,7 +2,8 @@
 # (JSON or Ruby literals), the --allow patterns, and the commands against a
 # node in another process over a peer link (or ASTERISM_TEST_ROUTER):
 # nodes, objects, tree, ping, call, watch, the noun-verb commands (node,
-# app, object, status; -o json / yaml), the Tab completion (__complete),
+# app, object, status; -o json / yaml; object get / echo of the values a
+# node puts), the Tab completion (__complete),
 # and the MCP bridge with the mcp gem's client (skipped when the mcp gem is
 # not installed). The text's layout (statuses, wrapping, colours, watch's
 # differences), status hz's arithmetic, the completion's candidates and its
@@ -97,6 +98,17 @@ class TestCLI < Minitest::Test
     assert_match(/NODE\/APP/, err)
     _, err = capture_io { assert_equal 2, Asterism::CLI.start(%w[object info a/*/c --router tcp/192.0.2.2:7447]) }
     assert_match(/object list PATTERN/, err)
+    out, = capture_io { assert_equal 2, Asterism::CLI.start(%w[object]) }
+    assert_match(/^  object get PATH \[KEY\] +the next value/, out)
+    assert_match(/^  object echo PATH \[KEY\] +the values it puts/, out)
+    _, err = capture_io { assert_equal 2, Asterism::CLI.start(%w[object get a/b --router tcp/192.0.2.2:7447]) }
+    assert_match(/PATH is node\/app\/object/, err)
+    _, err = capture_io { assert_equal 2, Asterism::CLI.start(%w[object echo a/b/c x* --router tcp/192.0.2.2:7447]) }
+    assert_match(/names, \* \(one part\) or \*\*/, err)
+    _, err = capture_io do
+      assert_equal 2, Asterism::CLI.start(%w[object get a/b/c --timeout 0 --router tcp/192.0.2.2:7447])
+    end
+    assert_match(/--timeout: more than 0/, err)
     out, = capture_io { assert_equal 0, Asterism::CLI.start(%w[completion bash]) }
     assert_includes out, "complete -F _asterism asterism"
     out, = capture_io { assert_equal 0, Asterism::CLI.start(%w[completion zsh]) }
@@ -152,6 +164,142 @@ class TestCLI < Minitest::Test
     assert_equal "#{ts} +m=2\n#{ts} -st", cli.echo_text(t, "a/b", { "n" => 1, "m" => 2 }, false)
   end
 
+  # ------------------------------------------------------------ values (object get / echo, asterism_values)
+
+  V = Asterism::CLI::Values
+
+  def test_values_decode
+    assert_equal [{ "bd" => "...", "n" => [1, 2] }, "msgpack"], V.decode(MessagePack.pack({ "bd" => "...", "n" => [1, 2] }))
+    assert_equal [{ "1" => 2 }, "msgpack"], V.decode(MessagePack.pack({ 1 => 2 })), "keys as JSON has them"
+    assert_equal [nil, "msgpack"], V.decode(MessagePack.pack(nil))
+    assert_equal [nil, "empty"], V.decode("")
+    assert_equal [{ "x" => [1, "b"] }, "json"], V.decode('{"x": [1, "b"]}')
+    assert_equal ["hello world", "text"], V.decode("hello world")
+    assert_equal ["(3 bytes)", "bytes"], V.decode("\xff\xfe\xc1".b)
+    assert_equal [{ "b" => "(2 bytes)", "f" => "NaN" }, "msgpack"],
+                 V.decode(MessagePack.pack({ "b" => "\xff\xfe".b, "f" => Float::NAN }))
+    e = V.entry("asterism/a/b/c/state", MessagePack.pack({ "n" => 1 }), Time.at(0))
+    assert_equal({ "key" => "a/b/c/state", "t" => "1970-01-01T00:00:00.000Z", "bytes" => 4, "format" => "msgpack",
+                   "value" => { "n" => 1 } }, e)
+    assert_equal "a/b/c/**", V.check_pattern!("a/b/c/**")
+    assert_equal "**", V.check_pattern!("**")
+    assert_equal "*/*/*/state", V.check_pattern!("*/*/*/state")
+    ["a/b*/c", "a//b", "", "a/@status", "a/b/c/$x"].each do |bad|
+      assert_raises(ArgumentError, bad) { V.check_pattern!(bad) }
+    end
+  end
+
+  def test_values_store
+    clock = 100.0
+    alive = { "g/g" => true, "h/h" => true }
+    st = V::Store.new(max_keys: 3, max_total: 1000, max_bytes: 300, alive: ->(a) { alive[a] }, clock: -> { clock },
+                      now: -> { Time.at(clock) })
+    pk = ->(v) { MessagePack.pack(v) }
+    st.put("asterism/g/g/t1/state", pk.({ "n" => 1 }))
+    clock += 2
+    st.put("g/g/t2/state", pk.({ "n" => 2 }))
+    st.put("h/h/x/log", "plain text")
+    a = st.answer("g/g/**")
+    assert_equal %w[g/g/t1/state g/g/t2/state], a["values"].map { _1["key"] }, "sorted, only those that match"
+    assert_equal "1970-01-01T00:01:40.000Z", a["since"]
+    t1 = a["values"][0]
+    assert_equal({ "key" => "g/g/t1/state", "t" => "1970-01-01T00:01:40.000Z", "age_s" => 2.0, "app" => "alive",
+                   "bytes" => 4, "format" => "msgpack", "value" => { "n" => 1 } }, t1)
+    assert_equal ["plain text"], st.answer("*/*/*/log")["values"].map { _1["value"] }
+    assert_equal 3, st.answer["values"].size, "** is every key"
+    refute st.answer.key?("note")
+    # A newer put replaces the value and becomes the newest.
+    st.put("g/g/t1/state", pk.({ "n" => 3 }))
+    st.put("g/g/t3/state", pk.({ "n" => 4 }))
+    assert_equal %w[g/g/t1/state g/g/t3/state h/h/x/log], st.keys.sort, "over 3 keys: the oldest (t2) forgotten"
+    assert_equal 1, st.answer["forgotten"]
+    assert_equal({ "n" => 3 }, st.answer("g/g/t1/*")["values"][0]["value"])
+    # The total: a value that fills it pushes the old ones out.
+    st.put("g/g/big/state", "x" * 290)
+    assert_equal %w[g/g/big/state g/g/t1/state g/g/t3/state], st.keys.sort, "4 keys: the oldest (h/h/x/log) forgotten"
+    st.put("g/g/big2/state", "y" * 290)
+    st.put("g/g/big3/state", "z" * 290)
+    st.put("g/g/big4/state", "w" * 290)
+    assert_equal %w[g/g/big2/state g/g/big3/state g/g/big4/state], st.keys.sort, "at most 1000 bytes kept"
+    # Too large to keep: its size only.
+    st.put("g/g/huge/state", "q" * 301)
+    huge = st.answer("g/g/huge/state")["values"][0]
+    assert_equal [301, "dropped", true], huge.values_at("bytes", "format", "truncated")
+    assert_match(/301 bytes: too large to keep/, huge["value"])
+
+    # The application's mark: gone, restarted.
+    st = V::Store.new(alive: ->(a) { alive[a] }, clock: -> { clock })
+    st.put("g/g/t/state", pk.({ "n" => 1 }))
+    st.put("h/h/t/state", pk.({ "n" => 1 }))
+    st.left("g/g")
+    alive.delete("g/g")
+    assert_equal({ "g/g/t/state" => "gone", "h/h/t/state" => "alive" },
+                 st.answer["values"].to_h { [_1["key"], _1["app"]] })
+    alive["g/g"] = true
+    assert_equal "restarted", st.answer("g/**")["values"][0]["app"], "left and back after this value"
+    st.put("g/g/t/state", pk.({ "n" => 2 }))
+    assert_equal "alive", st.answer("g/**")["values"][0]["app"], "a value from its new life"
+
+    # Cut: a value whose JSON is longer than VALUE_CUT.
+    long = { "s" => "a" * (V::Store::VALUE_CUT + 10) }
+    st.put("g/g/long/state", pk.(long))
+    got = st.answer("g/g/long/state")["values"][0]
+    assert_equal true, got["truncated"]
+    assert_kind_of String, got["value"]
+    assert got["value"].start_with?('{"s":"aaa')
+    assert got["value"].end_with?("…")
+    assert_operator got["value"].bytesize, :<=, V::Store::VALUE_CUT + 3
+    refute st.answer("g/g/t/state")["values"][0].key?("truncated")
+    # More keys than an answer lists.
+    st2 = V::Store.new
+    (V::Store::MAX_ANSWER + 5).times { |i| st2.put(format("a/b/c/k%03d", i), pk.(i)) }
+    many = st2.answer
+    assert_equal [V::Store::MAX_ANSWER, 5], [many["values"].size, many["more"]]
+    assert_raises(ArgumentError) { st2.answer("a/b*") }
+  end
+
+  def test_values_wait
+    st = V::Store.new
+    t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    a = st.answer("g/g/t/state", wait: 0.3)
+    dt = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+    assert_equal [], a["values"]
+    assert_includes 0.25..2.0, dt, "waited, then gave up"
+    assert_match(/nothing came for g\/g\/t\/state in 0.3 s: .*since this server started.*does not let/, a["note"])
+    assert_match(/nothing came for x\/\*\*: /, st.answer("x/**")["note"], "no wait: at once")
+    th = Thread.new { sleep 0.2; st.put("g/g/other/state", "1"); sleep 0.2; st.put("g/g/t/state", MessagePack.pack(7)) }
+    t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    a = st.answer("g/g/t/*", wait: 5)
+    dt = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+    th.join
+    assert_equal [7], a["values"].map { _1["value"] }, "the first put that matches ends the wait"
+    assert_includes 0.3..2.0, dt
+    t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    assert_equal 1, st.answer("g/g/t/*", wait: 5)["values"].size
+    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0, :<, 0.2, "one is there: no wait"
+    t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    Thread.new { sleep 0.2; st.put("q/q/q/q", "1") }
+    st.answer("q/**", wait: -3)
+    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0, :<, 0.15, "a wait below 0 is 0"
+  end
+
+  def test_put_lines
+    cli = Asterism::CLI.new(out: StringIO.new, env: {})
+    t = Time.at(0)
+    ts = t.strftime("%H:%M:%S.%L")
+    pad = " " * 13
+    e = ->(v) { V.entry("asterism/g/g/t/state", MessagePack.pack(v), t) }
+    assert_equal ["#{ts} g/g/t/state", "#{pad}st=play n=1 cnt=[2, 2]"],
+                 cli.put_lines(t, e.({ "st" => "play", "n" => 1, "cnt" => [2, 2] }), nil)
+    assert_equal ["#{ts} g/g/t/state n 1\u21922", "#{ts} g/g/t/state cnt [2, 2]\u2192[1, 4]"],
+                 cli.put_lines(t, e.({ "st" => "play", "n" => 2, "cnt" => [1, 4] }),
+                               { "st" => "play", "n" => 1, "cnt" => [2, 2] }, again: true)
+    assert_nil cli.put_lines(t, e.({ "n" => 1 }), { "n" => 1 }, again: true), "no change, no line"
+    assert_equal ["#{ts} g/g/t/state 5"], cli.put_lines(t, e.(5), 4, again: true)
+    assert_nil cli.put_lines(t, e.(5), 5, again: true)
+    assert_equal ["#{ts} g/g/t/state \"a b\""], cli.put_lines(t, e.("a b"), nil)
+  end
+
   # ------------------------------------------------------------ completion
 
   # What the network names, for the completion's tests (counts the asks).
@@ -203,6 +351,11 @@ class TestCLI < Minitest::Test
     assert_equal %w[--router], complete("node list --rou", src)
     assert_includes complete("status echo --", src), "--once"
     refute_includes complete("status get --", src), "--once"
+    assert_equal %w[--once], complete("object echo --on", src)
+    assert_equal %w[--raw], complete("object echo --ra", src)
+    refute_includes complete("object get --", src), "--once"
+    assert_includes complete("object get --", src), "--timeout"
+    assert_equal %w[echo find get info list], complete("object ", src)
     assert_includes complete("tree --", src), "--methods"
     assert_includes complete("watch --", src), "--json"
     assert_equal %w[bash zsh], complete("completion ", src)
@@ -218,6 +371,9 @@ class TestCLI < Minitest::Test
     assert_empty complete("app info games/games/"), "an application is two parts"
     assert_equal %w[games/games/mahjong1 games/games/othello1], complete("object info games/games/")
     assert_equal %w[games/games/othello1], complete("call games/games/o")
+    assert_equal %w[games/games/mahjong1 games/games/othello1], complete("object get games/games/")
+    assert_equal %w[games/games/othello1], complete("object echo games/games/o")
+    assert_empty complete("object get games/games/othello1 "), "a key is not asked for"
     assert_equal %w[join move view], complete("call games/games/othello1 ")
     assert_equal %w[view], complete("call games/games/othello1 v")
     assert_empty complete("call games/games/othello1 view ")
@@ -395,6 +551,7 @@ class TestCLI < Minitest::Test
 
   NODE = <<~'RUBY'
     require "asterism"
+    require "json"
     class Calc
       def add(a, b, from: nil) = a + b
       def whoami(from: nil) = from
@@ -421,7 +578,13 @@ class TestCLI < Minitest::Test
       next unless r
       line = STDIN.gets
       break if line.nil?
-      Asterism.status(tables: line.to_i)
+      if line.start_with?("put ")
+        # put KEY JSON: a value on this application's own key.
+        _, key, json = line.chomp.split(" ", 3)
+        Asterism.session.put("asterism/calcnode/calc/#{key}", Asterism::Codec.pack(JSON.parse(json)))
+      else
+        Asterism.status(tables: line.to_i)
+      end
     end
     Asterism.close
   RUBY
@@ -677,6 +840,78 @@ class TestCLI < Minitest::Test
     end
   end
 
+  # object get / echo: the values the node puts on its own keys.
+  def test_object_values
+    with_node do |node|
+      say = lambda do |line, after = 0|
+        sleep after
+        node.puts line
+        node.flush
+      end
+      # get: waits for the next put.
+      cmd = [PLAIN, RbConfig.ruby, *LIB, EXE, "object", "get", "calcnode/calc/calc", "state", "-o", "json",
+             "--timeout", "8", *@where, "--settle", "1.0"]
+      Open3.popen3(*cmd) do |_i, o, e, th|
+        sleep 2.5
+        say.('put calc/other {"n":1}')
+        say.('put calc/state {"st":"play","n":1}', 0.3)
+        out = Timeout.timeout(10) { o.read }
+        assert_equal 0, th.value.exitstatus, e.read
+        got = JSON.parse(out)
+        assert_equal ["calcnode/calc/calc/state", { "st" => "play", "n" => 1 }, "msgpack"],
+                     got.values_at("key", "value", "format")
+        assert_match(/\A\d{4}-\d\d-\d\dT/, got["t"])
+      end
+      out, err, code = cli("object", "get", "calcnode/calc/calc", "--timeout", "0.5")
+      assert_equal [1, ""], [code, out]
+      assert_match(/nothing came on calcnode\/calc\/calc\/\*\* in 0.5 s \(the router does not let this node read it, or it has not changed\)/, err)
+      _, err, code = cli("object", "get", "calcnode/calc", "--timeout", "0.5")
+      assert_equal 2, code
+      assert_match(/PATH is node\/app\/object/, err)
+      _, err, code = cli("object", "get", "calcnode/c*/calc", "--timeout", "0.5")
+      assert_equal 2, code
+
+      # echo: whole the first time, then what changed; -o json each put whole.
+      echo = [PLAIN, RbConfig.ruby, *LIB, EXE, "object", "echo", "calcnode/*/calc", "--duration", "6", *@where,
+              "--settle", "1.0"]
+      json = [PLAIN, RbConfig.ruby, *LIB, EXE, "object", "echo", "calcnode/calc/calc", "state", "--once", "-o", "json",
+              *@where, "--settle", "1.0"]
+      raw = [PLAIN, RbConfig.ruby, *LIB, EXE, "object", "echo", "calcnode/calc/calc", "--raw", "--duration", "6",
+             *@where, "--settle", "1.0"]
+      Open3.popen3(*echo) do |_i, o, _e, eth|
+        Open3.popen3(*json) do |_i2, o2, _e2, jth|
+          Open3.popen3(*raw) do |_i3, o3, _e3, rth|
+            sleep 2.5
+            say.('put calc/state {"st":"play","n":1,"cnt":[2,2]}')
+            say.('put calc/state {"st":"play","n":2,"cnt":[4,1]}', 0.4)
+            say.('put calc/state {"st":"play","n":2,"cnt":[4,1]}', 0.4)
+            say.('put calc/log "hello"', 0.4)
+            text = Timeout.timeout(10) { o.read }.lines.map(&:chomp)
+            assert_equal 0, eth.value.exitstatus
+            ts = /\A\d\d:\d\d:\d\d\.\d{3} /
+            assert_match(/#{ts}calcnode\/calc\/calc\/state\z/, text[0])
+            assert_equal "#{' ' * 13}st=play n=1 cnt=[2, 2]", text[1]
+            assert_match(/#{ts}calcnode\/calc\/calc\/state n 1\u21922\z/, text[2])
+            assert_match(/#{ts}calcnode\/calc\/calc\/state cnt \[2, 2\]\u2192\[4, 1\]\z/, text[3])
+            assert_match(/#{ts}calcnode\/calc\/calc\/log hello\z/, text[4], "the same value again: no line")
+            assert_equal 5, text.size, text.inspect
+            once = Timeout.timeout(10) { o2.read }.lines
+            assert_equal 0, jth.value.exitstatus
+            assert_equal 1, once.size, "--once: the first put"
+            assert_equal({ "st" => "play", "n" => 1, "cnt" => [2, 2] }, JSON.parse(once[0])["value"])
+            r = Timeout.timeout(10) { o3.read }.lines.map(&:chomp)
+            rth.value
+            assert_equal 7, r.size, "--raw: each put whole (#{r.inspect})"
+            assert_equal "#{' ' * 13}st=play n=2 cnt=[4, 1]", r[5]
+          end
+        end
+      end
+      _, err, code = cli("object", "echo", "calcnode/calc/calc", "--once", "--duration", "0.5")
+      assert_equal 1, code
+      assert_match(/nothing came on calcnode\/calc\/calc\/\*\* in 0.5 s/, err)
+    end
+  end
+
   # The bash script: its function, called as bash calls it on a Tab.
   def test_bash_script
     skip "no bash" unless system("bash", "-c", "true", out: File::NULL, err: File::NULL)
@@ -694,7 +929,7 @@ class TestCLI < Minitest::Test
     out, err, st = Open3.capture3(PLAIN.merge("ASTERISM_ROUTER" => nil, "ASTERISM_CREDENTIALS" => nil),
                                   "bash", "--norc", "-c", script)
     assert st.success?, err
-    assert_equal ["echo", "find info list", "json yaml", "--credentials"], out.lines.map(&:chomp)
+    assert_equal ["echo", "echo find get info list", "json yaml", "--credentials"], out.lines.map(&:chomp)
   end
 
   # __complete without a network that answers: nothing, soon.
@@ -719,7 +954,7 @@ class TestCLI < Minitest::Test
     rescue LoadError
       skip "the mcp gem is not installed (gem install mcp)"
     end
-    with_node do |_node|
+    with_node do |node|
       t = MCP::Client::Stdio.new(command: RbConfig.ruby,
                                  args: [*LIB, EXE, "mcp", *@where, "--settle", "1.0", "--allow", "calc/calc.add",
                                         "--allow", "calc/calc.any", "--allow", "calc/calc.boom",
@@ -728,8 +963,8 @@ class TestCLI < Minitest::Test
       c = MCP::Client.new(transport: t)
       c.connect
       tools = c.tools.to_h { [_1.name, _1] }
-      assert_equal %w[asterism_nodes asterism_objects asterism_status calcnode.calc.calc.add calcnode.calc.calc.any
-                      calcnode.calc.calc.boom calcnode.calc.other.add].sort, tools.keys.sort,
+      assert_equal %w[asterism_nodes asterism_objects asterism_status asterism_values calcnode.calc.calc.add
+                      calcnode.calc.calc.any calcnode.calc.calc.boom calcnode.calc.other.add].sort, tools.keys.sort,
                    "only the allowed methods are tools"
       named = tools["calcnode.calc.other.add"]
       assert_equal %w[a b], named.input_schema["required"], "the names the meta tells are the inputs"
@@ -754,6 +989,35 @@ class TestCLI < Minitest::Test
       assert_equal 2, objs.size
       r = c.call_tool(tool: tools["asterism_nodes"], arguments: {})
       assert(text.(r).any? { _1["node"] == "calcnode" })
+
+      # asterism_values: nothing yet; wait for the first put; what came since.
+      vt = tools["asterism_values"]
+      assert_match(/only when the value changes/, vt.description)
+      assert_match(/wait/, vt.description)
+      assert_match(/since it started/, vt.description)
+      r = c.call_tool(tool: vt, arguments: {})
+      v = text.(r)
+      assert_equal [], v["values"]
+      assert_match(/nothing came for \*\*/, v["note"])
+      Thread.new do
+        sleep 0.5
+        node.puts 'put calc/state {"st":"play","bd":"..BW.."}'
+        node.flush
+      end
+      r = c.call_tool(tool: vt, arguments: { pattern: "calcnode/calc/*/state", wait: 10 })
+      v = text.(r)
+      assert_equal 1, v["values"].size, v.inspect
+      got = v["values"][0]
+      assert_equal ["calcnode/calc/calc/state", { "st" => "play", "bd" => "..BW.." }, "alive", "msgpack"],
+                   got.values_at("key", "value", "app", "format")
+      assert_kind_of Numeric, got["age_s"]
+      node.puts 'put calc/log "two"'
+      node.flush
+      sleep 0.5
+      v = text.(c.call_tool(tool: vt, arguments: { pattern: "calcnode/**" }))
+      assert_equal %w[calcnode/calc/calc/log calcnode/calc/calc/state], v["values"].map { _1["key"] }
+      r = c.call_tool(tool: vt, arguments: { pattern: "calcnode/c*" })
+      assert r["result"]["isError"]
     ensure
       t&.close
     end

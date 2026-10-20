@@ -101,7 +101,7 @@ build but not yet tested. To install from the repositories instead:
 
 ```
 (cd ../asterism-zenoh && rake gem) && rake gem
-gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.1.gem pkg/asterism-0.9.0.gem
+gem install --local ../asterism-zenoh/pkg/asterism-zenoh-0.4.1.gem pkg/asterism-0.10.0.gem
 ```
 
 From the working trees, without installing:
@@ -427,6 +427,8 @@ asterism app info    games/games                    # its status and its objects
 asterism object list 'games/games/*'                # node/app/object, a line each
 asterism object info games/games/othello1           # its description and its methods
 asterism object find join                           # the objects that have join (* as a wildcard)
+asterism object get  games/games/othello1 state     # the next value the application puts there
+asterism object echo games/games/othello1 state     # the values as they come (what changed)
 asterism status get  games/games                    # the status now
 asterism status echo games/games                    # the status, then each change (--once: now, once)
 asterism status hz   games/games                    # how often it changes
@@ -553,6 +555,21 @@ $ asterism watch
   only what changed: `a.b 0→1`, `+a.c=…` (a key came), `-a.d` (a key
   went). `--timeout` (2.0 s) is each get's and call's limit, `--settle`
   (1.5 s) how long it waits for the tokens after connecting.
+- **object get / echo PATH [KEY]** read what an application puts on its
+  own keys, `asterism/<node>/<app>/<object>/<more>` (docs/protocol.md 2.2;
+  a game table puts its state on `<table>/state`). `PATH` is
+  `node/app/object` (`*` for a part), `KEY` the rest (`*` and `**` as whole
+  parts; `**` by default). A put is kept nowhere and a get has no answer
+  for it, so both wait for puts: `object get` prints the next one and ends
+  (`--timeout`, 5 s; an application puts when its value changes, so a quiet
+  one gives nothing), `object echo` prints them as they come: a key's
+  value whole the first time, then only what changed in it, as
+  `status echo` does (`--raw`: each value whole; `--once`: the first put;
+  `--duration`). The value is MessagePack (Asterism's own) or JSON as it
+  is, other text as a string, bytes as their count; `-o json` gives each
+  put as `{"key", "t", "bytes", "format", "value"}`. When nothing comes
+  they say so: the router does not let this node read the key (a role
+  needs `read` on it), or nothing changed.
 - **status hz** counts the changes of the status (a put of the same status
   again is not one) and prints, every `--period` (1 s) in which a change
   came, the average rate and the intervals' min, max and standard
@@ -603,6 +620,7 @@ claude mcp add asterism -- asterism mcp --credentials admin.tar --allow 'games/o
 | `asterism_nodes` | the nodes, their profiles, applications (with their statuses) and objects |
 | `asterism_objects` | the objects and their methods (meta); `callable_as` names the tool for an allowed method |
 | `asterism_status` | the applications' statuses (`node` / `app` narrow it) |
+| `asterism_values` | the latest value of each key the applications put on (`asterism/<node>/<app>/<object>/<more>`, e.g. a game table's state), as this server received them since it started; `pattern` (`node/app/object/more`, `*` and `**`; default `**`) and `wait` (seconds, at most 30) |
 | `<node>.<app>.<object>.<method>` | one per method an `--allow` pattern names, made from the meta: the arguments' names it tells are the inputs and its doc the description (with the object's doc after it); without names, arity n gives the inputs `arg1` .. `argN` (any JSON value), arity -1 an array `args`; `kwargs` is an object of keyword arguments. The answer is `{"value": ...}`, or an error with its kind |
 
 - `--allow PATTERN` (repeatable): `[node/][app/]object.method`, `*` within
@@ -617,6 +635,38 @@ claude mcp add asterism -- asterism mcp --credentials admin.tar --allow 'games/o
   gives the MCP client its own seat. `--app` names this application (a
   game host that follows its players by the application `game` sees an
   MCP client started with `--app game` come and go).
+- **asterism_values**: from its start the server subscribes to
+  `asterism/**` (the applications' own keys; `@profile` and `@status` are
+  not under it) and keeps the last value of each key with the time it
+  came. A put comes only when a value changes and is kept nowhere else, so
+  a key that has not been put since the server started is not there:
+  `wait` waits (at most 30 s) for the first put that matches when none has
+  come yet. Each value has `key`, `value`, `t`, `age_s` (seconds since it
+  came), `bytes`, `format` and `app`: `alive`, `gone` (the application is
+  not on the network now; the value is its last one, not the present) or
+  `restarted` (it left and came back after this value). A value whose JSON
+  is longer than 8192 bytes is cut (`truncated: true`, the value the start
+  of its JSON text); the server keeps at most 1000 keys and 16 MiB (the
+  key received longest ago is forgotten first; `forgotten` counts them), a
+  single put over 256 KiB as its size only, and an answer lists at most
+  100 keys (`more`). Nothing that matches: `note` says so (not put since
+  the start, or the router does not let the server read it). A console's
+  viewer role (`read` / `watch` on `asterism/**`) is enough.
+
+  Showing an othello table to an AI assistant (the game host puts the
+  table on `games/games/othello1/state` after every move):
+
+  ```
+  claude mcp add asterism -- asterism mcp --credentials viewer.tar
+  > Watch the othello game on games/games/othello1 and tell me who is winning.
+    (the assistant calls asterism_values with pattern games/games/othello1/state, wait 30)
+  {"since":"2026-10-20T02:16:50.191Z","values":[{"key":"games/games/othello1/state",
+   "t":"2026-10-20T02:16:58.583Z","age_s":0.4,"app":"alive","bytes":181,"format":"msgpack",
+   "value":{"v":15,"t":"othello1","st":"play","nm":["CPU","Alice"],"sk":[2,1],...,
+            "bd":"..W.......W.......WBWWW...WBB....W.BBB..........................",
+            "tn":0,"n":10,"last":"c1","lg":"b1b2e2f2g2b3h3b4a6","cnt":[6,8]}}]}
+  ```
+
 - An object that describes its methods at `expose` (`args:` and `doc:`,
   "Describing the methods" below) gives the AI assistant the names and the
   texts; without them it sees only the number of arguments.

@@ -6,6 +6,33 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
+## 0.10.0
+
+The command line and its MCP bridge only; the library and the wire are as
+in 0.9.0.
+
+- `asterism mcp` has a tool `asterism_values`: the latest value of each
+  key the applications put on (`asterism/<node>/<app>/<object>/<more>`,
+  e.g. a game table's state), as the server received them since it
+  started (it subscribes to `asterism/**` from the start). Arguments
+  `pattern` (`*`, `**`; default every key) and `wait` (seconds, at most
+  30: for the first put that matches when none has come yet). Each value
+  has its time, its age, its size and whether its application is still on
+  the network (`app`: `alive` / `gone` / `restarted`). Limits: 1000 keys
+  and 16 MiB kept (the oldest forgotten first), a put over 256 KiB as its
+  size only, a value's JSON cut at 8192 bytes in an answer
+  (`truncated`), 100 keys an answer (`more`). A viewer's certificate is
+  enough. README "MCP".
+- `asterism object get PATH [KEY]`: the next value the application puts
+  there (`--timeout`, 5 s). `asterism object echo PATH [KEY]`: the values
+  as they come (the text: a key's value whole, then what changed;
+  `--raw`, `--once`, `--duration`). `-o json` / `-o yaml`, and Tab
+  completion of `PATH`. Both say so when nothing came (not readable, or
+  not changed).
+- The other tools, commands and their output (`--json` too) are as they
+  were; `asterism --help`, `asterism object` and the MCP server's
+  instructions mention the new ones.
+
 ## 0.9.0
 
 The command line only; the library and the wire are as in 0.8.0 (0.8.1

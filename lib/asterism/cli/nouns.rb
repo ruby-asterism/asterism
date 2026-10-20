@@ -117,6 +117,68 @@ module Asterism
       0
     end
 
+    # The next value the application puts on its own keys (PATH/KEY: a put
+    # is kept nowhere, so it waits for one; --timeout, 5.0 s).
+    def cmd_object_get(rest)
+      pattern = put_pattern!(rest, "object get")
+      wait = @opts[:put_timeout] || 5.0
+      raise ArgumentError, "--timeout: more than 0" unless wait.positive?
+      code = 0
+      connect do |net, _sv|
+        q = Queue.new
+        net.session.subscribe(Values.key_expr(pattern), depth: 16) { |s| q << [s.key, s.payload, Time.now] }
+        got = q.pop(timeout: wait)
+        if got.nil?
+          @err.puts nothing_came(pattern, wait)
+          code = 1
+          next
+        end
+        e = Values.entry(*got)
+        if structured?
+          emit(e)
+        else
+          put_lines(got[2], e, nil).each { @out.puts _1 }
+        end
+      end
+      code
+    end
+
+    # The values the application puts on its own keys, as they come: the
+    # text shows a key's value whole the first time (and always with
+    # --raw), then what changed; -o json / yaml each put whole.
+    def cmd_object_echo(rest)
+      pattern = put_pattern!(rest, "object echo")
+      code = 0
+      connect do |net, _sv|
+        q = Queue.new
+        net.session.subscribe(Values.key_expr(pattern), depth: 256) { |s| q << [s.key, s.payload, Time.now] }
+        seen = 0
+        last = {}
+        until_stopped(net) do |left|
+          got = q.pop(timeout: [left || 0.2, 0.2].min)
+          next unless got
+          seen += 1
+          e = Values.entry(*got)
+          if structured?
+            emit_line(e)
+          else
+            whole = @opts[:raw] || !last.key?(e["key"])
+            old = last[e["key"]]
+            last[e["key"]] = e["value"]
+            lines = whole ? put_lines(got[2], e, nil) : put_lines(got[2], e, old, again: true)
+            lines&.each { @out.puts _1 }
+          end
+          @out.flush
+          break if @opts[:once]
+        end
+        if seen.zero?
+          @err.puts nothing_came(pattern, @opts[:duration])
+          code = 1 if @opts[:once]
+        end
+      end
+      code
+    end
+
     # ------------------------------------------------------------ status
 
     def cmd_status_get(rest)
@@ -312,6 +374,41 @@ module Asterism
       ok = path && path.split("/", -1).size == 2 && path.split("/").none? { _1.empty? || _1.include?("*") }
       raise ArgumentError, "#{what}: which application? (asterism #{what} NODE/APP)" unless ok
       path
+    end
+
+    # PATH (node/app/object, * for a part) and KEY (the rest, ** by
+    # default) as one pattern.
+    def put_pattern!(rest, what)
+      path = rest.shift
+      key = rest.shift || "**"
+      parts = path.to_s.split("/", -1)
+      unless parts.size == 3 && parts.none? { _1.empty? || (_1.include?("*") && _1 != "*") }
+        raise ArgumentError, "#{what}: PATH is node/app/object (* for a part), then KEY (asterism #{what} " \
+                             "games/games/othello1 state)"
+      end
+      Values.check_pattern!("#{path}/#{key}")
+    end
+
+    def nothing_came(pattern, seconds)
+      "asterism: nothing came on #{pattern}#{seconds ? " in #{format('%g', seconds)} s" : ''} " \
+        "(the router does not let this node read it, or it has not changed)"
+    end
+
+    # The lines of one put received at t: the time, the key and the value
+    # whole; again (the key's value before was old): a line for each thing
+    # that changed in a Hash, the value whole otherwise (nil: no change).
+    def put_lines(t, e, old, again: false)
+      head = "#{paint(t.strftime('%H:%M:%S.%L'), :time)} "
+      v = e["value"]
+      if again && old.is_a?(Hash) && v.is_a?(Hash)
+        changes = Text.status_diff(old, v)
+        return nil if changes.empty?
+        return changes.map { |c| "#{head}#{paint(e['key'], :object)} #{change_text(c)}" }
+      end
+      return nil if again && old == v
+      first = "#{head}#{paint(e['key'], :object)}"
+      return ["#{first} #{Text.inline(v)}"] unless v.is_a?(Hash)
+      [first, *Text.status_lines(v, style.width, Text.width(head))]
     end
 
     def no_status(path)

@@ -8,6 +8,7 @@
 #   asterism object list 'games/games/*' / object info games/games/othello1
 #   asterism object find join             # the objects that have join
 #   asterism status get  games/games      # echo: as it changes, hz: how often
+#   asterism object get  games/games/othello1 state   # the next put there
 #   asterism call        games/games/othello1 view '"<token>"'
 #   asterism ping / watch / tree / mcp    # as before
 #   asterism completion bash              # the shell's Tab completion
@@ -30,6 +31,7 @@ require_relative "cli/allow"
 require_relative "cli/text"
 require_relative "cli/hz"
 require_relative "cli/complete"
+require_relative "cli/values"
 
 module Asterism
   class CLI
@@ -46,7 +48,11 @@ module Asterism
       "object" => {
         "list" => ["[PATTERN]", "the objects, node/app/object a line (PATTERN: * and ** for whole parts)"],
         "info" => ["PATH", "one object (node/app/object): its description and its methods"],
-        "find" => ["METHOD", "the objects that have the method (* as a wildcard)"]
+        "find" => ["METHOD", "the objects that have the method (* as a wildcard)"],
+        "get" => ["PATH [KEY]", "the next value the application puts on PATH/KEY (its own keys; KEY: ** " \
+                                "by default; --timeout 5.0)"],
+        "echo" => ["PATH [KEY]", "the values it puts there as they come (the text: what changed; --once: " \
+                                 "the first; --raw: each whole)"]
       },
       "status" => {
         "get" => ["NODE/APP", "an application's status, now"],
@@ -199,7 +205,11 @@ module Asterism
             end
             o.on("--json", "JSON instead of text (-o json)") { @opts[:format] = :json }
           end
-          o.on("--timeout SECONDS", Float, "time limit of each get or call (2.0)") { @opts[:timeout] = _1 }
+          if key == "object get"
+            o.on("--timeout SECONDS", Float, "how long to wait for a put (5.0)") { @opts[:put_timeout] = _1 }
+          else
+            o.on("--timeout SECONDS", Float, "time limit of each get or call (2.0)") { @opts[:timeout] = _1 }
+          end
           o.on("--settle SECONDS", Float, "how long to wait for the tokens at connect (1.5)") { @opts[:settle] = _1 }
         end
         case key
@@ -216,6 +226,10 @@ module Asterism
         when "mcp"
           o.on("--allow PATTERN", "methods the MCP client may call: [node/][app/]object.method, * as a wildcard " \
                                   "(repeatable)") { @opts[:allow] << _1 }
+        when "object echo"
+          o.on("--once", "the first put, then stop") { @opts[:once] = true }
+          o.on("--raw", "each value whole (the text; else what changed)") { @opts[:raw] = true }
+          o.on("--duration SECONDS", Float, "stop after this long (default: until Ctrl-C)") { @opts[:duration] = _1 }
         when "status echo"
           o.on("--once", "the status now, once, then stop") { @opts[:once] = true }
           o.on("--duration SECONDS", Float, "stop after this long (default: until Ctrl-C)") { @opts[:duration] = _1 }

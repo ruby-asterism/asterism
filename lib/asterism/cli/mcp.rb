@@ -9,6 +9,10 @@
 #                      and objects                         (always; reads)
 #   asterism_objects   the objects and their methods (meta) (always; reads)
 #   asterism_status    the applications' statuses           (always; reads)
+#   asterism_values    the latest value of each key the applications put
+#                      on (asterism/<node>/<app>/<object>/<more>), as this
+#                      server received them since it started (always;
+#                      reads; lib/asterism/cli/values.rb)
 #   <node>.<app>.<object>.<method>
 #                      one per method that an --allow pattern names, made
 #                      from the object's meta: the arguments' names the
@@ -30,7 +34,8 @@ module Asterism
         These tools look at an Asterism network: Ruby programs and boards that expose objects to each other over
         Zenoh. Paths are <node>/<app>/<object>. asterism_nodes lists the nodes and their applications (with the
         status each application tells about itself, a JSON object of its own), asterism_objects the objects and
-        their methods, asterism_status the statuses. The other tools call one method each, on the object their
+        their methods, asterism_status the statuses, asterism_values the latest values the applications put on
+        their own keys (a game table's state). The other tools call one method each, on the object their
         name says (<node>.<app>.<object>.<method>); only the methods this server was started to allow are there.
         A call's answer is {"value": ...}; an error says its kind (raised, not_exposed, arguments, ...).
       TEXT
@@ -43,13 +48,17 @@ module Asterism
         @call_tools = {}  # tool name => [path, method, arity, meta entry]
         @signature = nil
         @lock = Mutex.new
+        @values = Values::Store.new(alive: ->(app) { !::Asterism.apps(app).empty? })
       end
+
+      attr_reader :values
 
       def run
         @server = ::MCP::Server.new(name: "asterism", version: ::Asterism::VERSION, instructions: INSTRUCTIONS,
                                     tools: read_tools)
         @transport = ::MCP::Server::Transports::StdioTransport.new(@server)
         @server.transport = @transport
+        remember_values
         refresh
         @log.puts "asterism mcp: #{@net.node_id}/#{@net.app}; #{@call_tools.size} call tools" \
                   "#{@allow.empty? ? ' (no --allow: read-only)' : ''}"
@@ -57,6 +66,16 @@ module Asterism
         @transport.open
       ensure
         @refresher&.kill
+      end
+
+      # From now on, the puts on the applications' own keys (asterism/**
+      # does not match @profile and @status), and the applications that
+      # leave (their values are marked).
+      def remember_values
+        @net.session.subscribe("#{Values::PREFIX}**", depth: 1024) { |s| @values.put(s.key, s.payload) }
+        @net.session.liveliness_watch("#{Values::PREFIX}*/*", depth: 1024) do |key, alive|
+          @values.left(key.delete_prefix(Values::PREFIX)) unless alive
+        end
       end
 
       # ------------------------------------------------------------ the list
@@ -153,9 +172,45 @@ module Asterism
                 (node.nil? || node == n) && (app.nil? || app == a)
               end
             end
+          end,
+          ::MCP::Tool.define(
+            name: "asterism_values",
+            description: VALUES_DOC,
+            input_schema: {
+              properties: {
+                pattern: { type: "string",
+                           description: "keys as node/app/object/more, with * (one part) and ** (any parts); " \
+                                        "default ** (every key). A key always has a part after the object: " \
+                                        "games/games/othello1/** or games/*/*/state, not games/games/othello1" },
+                wait: { type: "number",
+                        description: "seconds (at most #{Values::Store::MAX_WAIT}) to wait for the first put " \
+                                     "that matches when none has come yet; default 0 (answer now)" }
+              }
+            },
+            annotations: { read_only_hint: true }
+          ) do |server_context:, pattern: "**", wait: 0|
+            bridge.answer { bridge.values.answer(pattern, wait: wait) }
+          rescue ArgumentError => e
+            bridge.error(e.message)
           end
         ]
       end
+
+      VALUES_DOC = "The latest value each application put on its own keys (asterism/<node>/<app>/<object>/<more>: " \
+                   "a game table's state, a log), as this server received them: {\"since\", \"values\": " \
+                   "[{\"key\", \"value\", \"t\", \"age_s\", \"app\", \"bytes\", \"format\"}]}. " \
+                   "A put comes only when the value changes, and this server remembers only what it received " \
+                   "since it started (since): a key that has not been put since then is not listed. Give wait " \
+                   "(seconds) to wait for the first put that matches when none has come yet (a quiet table, " \
+                   "just after the start). age_s: seconds since it came. app: alive; gone (the application is " \
+                   "not on the network now: this is its last value, not the present); restarted (it left and " \
+                   "came back after this value). value: MessagePack or JSON as it is, text as a string; a " \
+                   "value whose JSON is longer than #{Values::Store::VALUE_CUT} bytes is cut (truncated: " \
+                   "true, value: the start of its JSON text). It keeps at most #{Values::Store::MAX_KEYS} keys " \
+                   "(those received longest ago are forgotten first) and lists at most " \
+                   "#{Values::Store::MAX_ANSWER} (more: how many it left out). Nothing came: the note says so " \
+                   "(not put since the start, or the router does not let this server read it). The statuses " \
+                   "(@status) are asterism_status's."
 
       def objects(pattern)
         paths = @survey.objects(pattern)
