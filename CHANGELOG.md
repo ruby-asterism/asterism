@@ -8,6 +8,8 @@ version (a patch release of one may come without the other).
 
 ## Unreleased
 
+## 0.11.0
+
 - Needs CRuby 3.4 or newer (`required_ruby_version >= 3.4`; 3.2 is past its end of life). CI runs Ruby 3.4 and 4.0.
 
 ## 0.10.0
