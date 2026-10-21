@@ -20,7 +20,7 @@ Gem::Specification.new do |s|
   # ROS 2's definitions) except tf2_msgs, which is BSD-3-Clause (NOTICE,
   # data/msgs/NOTICE and the license texts in data/msgs ship with the gem).
   s.licenses = ["MIT", "Apache-2.0", "BSD-3-Clause"]
-  s.required_ruby_version = ">= 3.2"
+  s.required_ruby_version = ">= 3.4"
   s.files = Dir["lib/**/*.rb", "exe/*", "mrblib/*.rb", "data/msgs/**/*", "data/icon.png", "tools/asterism_msggen.rb",
                 "README.md", "CHANGELOG.md", "LICENSE", "NOTICE"]
   s.require_paths = ["lib"]

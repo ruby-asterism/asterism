@@ -16,7 +16,7 @@
 #          the conformance driver (CRuby, asterism-zenoh) against an mruby
 #          node.
 #
-# Runners: ubuntu-latest with Ruby 3.2 / 3.3 / 3.4 / 4.0, and one macOS leg
+# Runners: ubuntu-latest with Ruby 3.4 / 4.0, and one macOS leg
 # (macos-latest, arm64). The other CPUs and macOS on Intel are covered by
 # asterism-zenoh's own CI, where the native code is; this gem is pure Ruby.
 name: CI
@@ -44,7 +44,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        ruby: ["3.2", "3.3", "3.4", "4.0"]
+        ruby: ["3.4", "4.0"]
         include:
           - os: macos-latest
             ruby: "3.4"

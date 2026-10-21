@@ -6,6 +6,10 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
+## Unreleased
+
+- Needs CRuby 3.4 or newer (`required_ruby_version >= 3.4`; 3.2 is past its end of life). CI runs Ruby 3.4 and 4.0.
+
 ## 0.10.0
 
 The command line and its MCP bridge only; the library and the wire are as

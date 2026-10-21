@@ -85,7 +85,7 @@ time is taken, on both APIs and every Ruby; giving one twice raises
 
 ## Using it
 
-CRuby (needs CRuby 3.2+ and a C compiler):
+CRuby (needs CRuby 3.4+ and a C compiler):
 
 ```
 gem install asterism          # also installs asterism-zenoh (>= 0.4.1, < 1.0) and msgpack
