@@ -18,14 +18,18 @@
 #
 #   begin(kind, meta)  meta {"name", "size", "sha256" (hex, of the whole
 #                      file), ...the kind's own}. -> {"id", "piece" (the
-#                      largest piece this receiver takes), "pos" (the bytes
-#                      it already holds of this very file: 0, or where it
-#                      stopped)}. The same sender beginning the same file
+#                      largest piece this receiver takes), "window" (how
+#                      many pieces may be on their way at once), "pos" (the
+#                      bytes it already holds of this very file: 0, or
+#                      where it stopped)}. The receiver chooses piece and
+#                      window (the room a call has, its own memory, the
+#                      kind); the sender keeps within both (a receiver that
+#                      names no window is sent one piece at a time). The same sender beginning the same file
 #                      (name, size and sha256 alike) again goes on where it
 #                      stopped -- after a lost answer, a dropped connection,
 #                      or this receiver's application started again (the
-#                      piece file and a note of the file stay in its
-#                      directory). Refused (Refused) for a kind or a sender
+#                      piece file and a note of the file stay where they
+#                      were written). Refused (Refused) for a kind or a sender
 #                      the hooks do not take, or a file that does not fit;
 #                      Busy while another node's file is coming in. The
 #                      meta may carry what the kind wants besides (the
@@ -59,14 +63,39 @@ module Asterism
     # The receiver has no such file (any more): the sender begins again.
     class Unknown < StandardError; end
 
-    # A call carries 4 KB in all on zenoh-pico (Z_FRAG_MAX_SIZE), the
-    # arguments' framing included.
+    # A call carries 4 KB in all on zenoh-pico (Z_FRAG_MAX_SIZE), its key
+    # and the arguments' framing included; a larger one is dropped without
+    # an error (the caller waits until its time is out).
+    CALL_BYTES = 4096
+    # What a chunk call needs besides its key and the piece (the request's
+    # map, the id and the position: under 40 bytes), with a margin.
+    CALL_SPARE = 160
+    # The piece a sender sends when the receiver names none (an older
+    # receiver), and the largest a receiver names.
     PIECE = 3072
+    PIECE_MAX = 3840
+    # The pieces on their way at once that a receiver names when its
+    # application does not say (Inbox#window), and the most a sender keeps
+    # on their way whatever the receiver says (a node's calls wait in a
+    # queue of 32 on zenoh-pico).
+    WINDOW = 4
+    WINDOW_MAX = 16
+    # The key length a receiver that does not know its own path assumes.
+    KEY_GUESS = 128
     # Where this file and sha256.rb are on the boards.
     DIR = "/usr/share/asterism/transfer"
 
     def self.now_ms
       ::Asterism.now_ms
+    end
+
+    # The largest piece a chunk call on a key of key_bytes carries: the 4 KB
+    # of a call less the key and CALL_SPARE, in steps of 256, 512 to
+    # PIECE_MAX.
+    def self.piece_for_key(key_bytes)
+      n = ((CALL_BYTES - CALL_SPARE - key_bytes) / 256) * 256
+      return PIECE_MAX if n > PIECE_MAX
+      n < 512 ? 512 : n
     end
 
     # A String of hex digits, n of them.
@@ -222,8 +251,20 @@ module Asterism
     #   room(kind, meta)           bytes free where this file goes (nil: not
     #                              known; it is then refused where it stops
     #                              being written)
+    #   part_path(kind, name)      where the piece file is written (default
+    #                              "<dir><name>.<kind>.part"; a kind may write
+    #                              it beside the place it goes, so that the
+    #                              commit has only to rename it). The note
+    #                              of the file ("<dir><name>.<kind>.xfer")
+    #                              stays in dir
+    #   window(kind, meta)         how many pieces may be on their way at once
+    #                              (default the window: given to new)
     #   received(t)                the file is whole at t["part"]: put it where
     #                              it belongs -> the answer to commit (a Hash)
+    #
+    # The piece named to a sender is the largest a call to this inbox carries
+    # (path=, "<node>/<app>/<object>": the key is known; else KEY_GUESS), at
+    # most the piece: given to new.
     class Inbox
       METHODS = { "begin" => 2, "chunk" => 3, "commit" => 1, "cancel" => 1 }
       # Without a piece for this long, another node may begin.
@@ -231,14 +272,17 @@ module Asterism
       # Without a piece for this long, the held file is deleted.
       KEEP_MS = 60000
 
-      attr_accessor :logger
+      attr_accessor :logger, :path
       attr_reader :dir, :keep_ms
 
       # dir: where the files are written (it ends in "/"). piece: the largest
-      # piece taken. keep_ms: how long a file that stopped coming is kept.
-      def initialize(dir, piece: PIECE, keep_ms: KEEP_MS, stale_ms: STALE_MS)
+      # piece taken. window: the pieces on their way at once a sender is
+      # told (the window hook's default). keep_ms: how long a file that
+      # stopped coming is kept.
+      def initialize(dir, piece: PIECE_MAX, window: WINDOW, keep_ms: KEEP_MS, stale_ms: STALE_MS)
         @dir = dir
         @piece = piece
+        @window = window
         @keep_ms = keep_ms
         @stale_ms = stale_ms
         @t = nil
@@ -260,6 +304,14 @@ module Asterism
 
       def room(kind, meta)
         nil
+      end
+
+      def part_path(kind, name)
+        "#{@dir}#{name}.#{kind}.part"
+      end
+
+      def window(kind, meta)
+        @window
       end
 
       def received(t)
@@ -286,7 +338,7 @@ module Asterism
           t["at"] = now_ms
           t["meta"] = m
           info("transfer: #{from} goes on with #{k} #{name} at #{t['got']} of #{size} bytes")
-          return { "id" => t["id"], "piece" => @piece, "pos" => t["got"] }
+          return { "id" => t["id"], "piece" => piece_for(from), "window" => window_for(k, m), "pos" => t["got"] }
         end
         if t
           if t["from"] != from && now_ms - t["at"] <= @stale_ms
@@ -300,14 +352,17 @@ module Asterism
         end
         @done = nil if @done && @done["from"] == from
         t = { "id" => new_id, "from" => from, "kind" => k, "name" => name, "size" => size, "sha256" => sha,
-              "meta" => m, "got" => 0, "part" => "#{@dir}#{name}.#{k}.part", "note" => "#{@dir}#{name}.#{k}.xfer",
+              "meta" => m, "got" => 0, "part" => part_path(k, name), "note" => "#{@dir}#{name}.#{k}.xfer",
               "file" => nil, "digest" => nil, "at" => now_ms, "gaps" => 0, "again" => 0 }
         remove(t["part"])
         write_note(t)
         @t = t
         open_part(t)
-        info("transfer: #{from} sends #{k} #{name} (#{size} bytes)")
-        { "id" => t["id"], "piece" => @piece, "pos" => 0 }
+        piece = piece_for(from)
+        win = window_for(k, m)
+        info("transfer: #{from} sends #{k} #{name} (#{size} bytes) to #{t['part']}, pieces of #{piece} bytes, " \
+             "#{win} at a time")
+        { "id" => t["id"], "piece" => piece, "window" => win, "pos" => 0 }
       end
 
       def chunk(id, pos, data, from: nil)
@@ -416,8 +471,8 @@ module Asterism
         i = 0
         while i < names.size
           path = "#{@dir}#{names[i]}"
-          t = @t.nil? ? read_note(path) : nil
-          if t
+          t = read_note(path)
+          if t && @t.nil?
             got = ::File.exist?(t["part"]) ? ::File.size(t["part"]) : 0
             got = t["size"] if got > t["size"]
             t["got"] = got
@@ -426,8 +481,7 @@ module Asterism
             info("transfer: held #{t['kind']} #{t['name']} from #{t['from']} (#{got} of #{t['size']} bytes)")
           else
             remove(path)
-            stem = path.byteslice(0, path.bytesize - 5)
-            remove("#{stem}.part")
+            remove(t ? t["part"] : "#{path.byteslice(0, path.bytesize - 5)}.part")
           end
           i += 1
         end
@@ -446,6 +500,19 @@ module Asterism
 
       def warn(msg)
         @logger.warn(msg) if @logger
+      end
+
+      # The largest piece a call from this sender carries here.
+      def piece_for(from)
+        key = @path ? "asterism/#{@path}/call/#{from}".bytesize : KEY_GUESS
+        n = ::Asterism::Transfer.piece_for_key(key)
+        n < @piece ? n : @piece
+      end
+
+      def window_for(kind, meta)
+        w = window(kind, meta)
+        w = 1 unless w.is_a?(Integer) && w >= 1
+        w > WINDOW_MAX ? WINDOW_MAX : w
       end
 
       def new_id
@@ -529,7 +596,7 @@ module Asterism
         return nil unless name_ok?(k, h["name"])
         { "id" => new_id, "from" => h["from"], "kind" => k, "name" => h["name"], "size" => h["size"],
           "sha256" => h["sha256"], "meta" => h["meta"].is_a?(Hash) ? h["meta"] : {}, "got" => 0,
-          "part" => "#{@dir}#{h['name']}.#{k}.part", "note" => path, "file" => nil, "digest" => nil, "at" => now_ms,
+          "part" => part_path(k, h["name"]), "note" => path, "file" => nil, "digest" => nil, "at" => now_ms,
           "gaps" => 0, "again" => 0 }
       rescue => e
         warn("transfer: #{path}: #{e.message}")
@@ -565,6 +632,11 @@ module Asterism
     # again) is tried again after a wait that doubles (RETRY_MS up to
     # RETRY_MAX_MS), by beginning again -- the receiver answers where it
     # stopped. tries failures in a row without a byte of progress end it.
+    #
+    # The receiver names the piece size and how many pieces may be on their
+    # way at once (begin's answer); piece: and window: are only the most
+    # this sender goes to (a receiver that names no window gets one piece
+    # at a time, as before).
     class Sender
       RETRY_MS = 200
       RETRY_MAX_MS = 4000
@@ -572,15 +644,16 @@ module Asterism
       CALL_TIMEOUT_MS = 10000
 
       attr_accessor :logger
-      attr_reader :path, :size, :sha256, :answer, :reason, :stats, :pos, :id, :kind
+      attr_reader :path, :size, :sha256, :answer, :reason, :stats, :pos, :id, :kind, :piece, :window
 
-      def initialize(to, kind, path, meta: {}, name: nil, piece: PIECE, window: 1, timeout_ms: CALL_TIMEOUT_MS,
-                     tries: TRIES, sha256: nil)
+      def initialize(to, kind, path, meta: {}, name: nil, piece: PIECE_MAX, window: WINDOW_MAX,
+                     timeout_ms: CALL_TIMEOUT_MS, tries: TRIES, sha256: nil)
         @to = to
         @kind = kind
         @path = path
         @piece_max = piece
-        @window = window < 1 ? 1 : window
+        @window_max = window < 1 ? 1 : window
+        @window = 1
         @timeout_ms = timeout_ms
         @tries_max = tries
         @logger = Object.const_defined?(:Log) ? ::Log : nil
@@ -783,6 +856,12 @@ module Asterism
         @id = r["id"]
         p = int(r["piece"])
         @piece = p > 0 && p < @piece_max ? p : @piece_max
+        w = int(r["window"])
+        w = 1 if w < 1
+        @window = w < @window_max ? w : @window_max
+        if @stats["begins"] == 1
+          info("transfer: #{@to} takes pieces of #{@piece} bytes, #{@window} at a time")
+        end
         pos = int(r["pos"])
         pos = 0 if pos < 0 || pos > @size
         if @stats["begins"] > 1 || pos > 0
@@ -897,10 +976,14 @@ module Asterism
           return c[1] if c[0] == pos && c[1].bytesize == n
           i += 1
         end
+        if @file && @file_pos != pos && seek_to(pos)
+          @file_pos = pos
+        end
         if @file.nil? || @file_pos > pos
           close_file
           @file = ::File.open(@path, "r")
           @file_pos = 0
+          @file_pos = pos if pos > 0 && seek_to(pos)
         end
         while @file_pos < pos
           k = pos - @file_pos
@@ -916,6 +999,16 @@ module Asterism
         @cache << [pos, data]
         @cache.shift while @cache.size > @window + 2
         data
+      end
+
+      # Moves the file to pos where the File has seek (CRuby, and the boards'
+      # that have it); false where it has none (then it is read up to pos).
+      def seek_to(pos)
+        return false unless @file.respond_to?(:seek)
+        @file.seek(pos)
+        true
+      rescue ScriptError, StandardError
+        false
       end
 
       def close_file

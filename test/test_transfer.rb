@@ -105,6 +105,7 @@ class TestTransfer < Minitest::Test
   # An inbox that places the whole file beside the piece file.
   class TestInbox < T::Inbox
     attr_accessor :space
+    attr_writer :window, :parts
 
     attr_accessor :kinds
 
@@ -115,6 +116,13 @@ class TestTransfer < Minitest::Test
     def refused(kind, _from, _meta)
       return nil if @kinds.nil? || @kinds.include?(kind)
       "takes no #{kind}"
+    end
+
+    # parts: a directory of its own for the piece files (the kind "file"
+    # of Family mruby writes them beside where they go)
+    def part_path(kind, name)
+      return super unless @parts
+      "#{@parts}.#{name}.#{kind}.part"
     end
 
     def received(t)
@@ -132,7 +140,9 @@ class TestTransfer < Minitest::Test
     File.binwrite(@src, @bytes)
     @rx = "#{File.join(@dir, 'rx')}/"
     FileUtils.mkdir_p(@rx)
-    @inbox = TestInbox.new(@rx, piece: 1000)
+    # one piece at a time (the counts below are of that); the window's own
+    # tests say otherwise
+    @inbox = TestInbox.new(@rx, piece: 1000, window: 1)
     @inbox.logger = nil
     @net = Net.new(@inbox)
   end
@@ -142,7 +152,7 @@ class TestTransfer < Minitest::Test
   end
 
   def sender(**opts)
-    s = TestSender.new("node-b/transfer/inbox", "file", @src, name: "src", **opts)
+    s = TestSender.new("node-b/transfer/inbox", "file", @src, **{ name: "src" }.merge(opts))
     s.logger = nil
     s.net = @net
     s
@@ -214,7 +224,8 @@ class TestTransfer < Minitest::Test
   end
 
   def test_window_of_four
-    s = sender(window: 4)
+    @inbox.window = 4
+    s = sender
     s.faults = ->(i) { i % 10 == 5 ? :drop : nil }
     run_to_end(s)
     assert s.ok?, s.reason
@@ -264,7 +275,7 @@ class TestTransfer < Minitest::Test
       next unless n == 40
       held = @inbox.current_file["got"]
       @inbox.close
-      @inbox = TestInbox.new(@rx, piece: 1000)
+      @inbox = TestInbox.new(@rx, piece: 1000, window: 1)
       @inbox.logger = nil
       @inbox.resume_held
       @net.inbox = @inbox
@@ -345,6 +356,116 @@ class TestTransfer < Minitest::Test
     assert_equal [["begin", ["file", { "name" => "src", "size" => 100_000, "sha256" => Digest::SHA256.hexdigest(@bytes) }]]],
                  @net.log
     assert_empty Dir.glob("#{@rx}*")
+  end
+
+  # The receiver names the piece and the window; the sender keeps within
+  # them and within its own most.
+  def test_the_receiver_names_piece_and_window
+    @inbox.window = 8
+    most = 0
+    s = sender
+    s.define_singleton_method(:pump) do
+      super()
+      most = @inflight.size if @inflight.size > most
+    end
+    run_to_end(s)
+    assert s.ok?, s.reason
+    assert_equal @bytes, placed
+    assert_equal 1000, s.piece
+    assert_equal 8, s.window
+    assert_equal 8, most
+    assert_equal 100, s.stats["pieces"]
+    # its own most
+    s = run_to_end(sender(piece: 700, window: 2))
+    assert s.ok?, s.reason
+    assert_equal [700, 2], [s.piece, s.window]
+  end
+
+  # A receiver that names no window (before T3) is sent one piece at a time.
+  def test_an_older_receiver_one_at_a_time
+    @inbox.define_singleton_method(:begin) do |kind, meta, from: nil|
+      r = super(kind, meta, from: from)
+      r.delete("window")
+      r
+    end
+    s = run_to_end(sender)
+    assert s.ok?, s.reason
+    assert_equal 1, s.window
+  end
+
+  # The piece is what a call to this inbox carries: its key counts.
+  def test_piece_from_the_key
+    assert_equal 3840, T.piece_for_key(50)
+    assert_equal 3584, T.piece_for_key(200)
+    assert_equal 512, T.piece_for_key(5000)
+    ib = T::Inbox.new(@rx)
+    ib.logger = nil
+    ib.path = "node-b/transfer/inbox"
+    assert_equal 3840, ib.begin("file", meta, from: "node-a")["piece"]
+    ib.cancel(ib.current_file["id"], from: "node-a")
+    ib.path = "n" * 200
+    assert_equal 3584, ib.begin("file", meta, from: "node-a")["piece"]
+    ib.cancel(ib.current_file["id"], from: "node-a")
+    assert_equal T::WINDOW, ib.begin("file", meta, from: "node-a")["window"]
+  end
+
+  # Piece files written elsewhere than the notes (part_path): placed from
+  # there, kept there across the application started again, deleted from
+  # there when kept too long; the notes stay in dir.
+  def test_pieces_beside_where_they_go
+    parts = "#{File.join(@dir, 'inbox')}/"
+    FileUtils.mkdir_p(parts)
+    @inbox.parts = parts
+    s = sender
+    held = nil
+    run_to_end(s) do |n|
+      if n == 20
+        assert File.exist?("#{parts}.src.file.part")
+        refute File.exist?("#{@rx}src.file.part")
+        assert File.exist?("#{@rx}src.file.xfer")
+      end
+      next unless n == 40
+      held = @inbox.current_file["got"]
+      @inbox.close
+      @inbox = TestInbox.new(@rx, piece: 1000, window: 1)
+      @inbox.logger = nil
+      @inbox.parts = parts
+      @inbox.resume_held
+      @net.inbox = @inbox
+    end
+    assert s.ok?, s.reason
+    assert_equal @bytes, placed
+    assert_equal [held], s.stats["resumed_at"]
+    assert_empty Dir.children(parts) + Dir.glob("#{@rx}*.xfer")
+    # kept too long: deleted where it was written
+    s = sender(name: "again")
+    run_to_end(s) { |n| @net.down = true if n == 30 }
+    assert File.exist?("#{parts}.again.file.part")
+    T.clock += T::Inbox::KEEP_MS + 1
+    @inbox.tick
+    assert_empty Dir.children(parts) + Dir.glob("#{@rx}*.xfer")
+    # a note left by an application that ended, with another one held: both
+    # files of the one not taken up go
+    @net.down = false
+    s = sender(name: "third")
+    run_to_end(s) { |n| break if n == 10 }
+    @inbox.close
+    File.write("#{@rx}stray.file.xfer", JSON.generate({ "from" => "node-x", "kind" => "file", "name" => "stray",
+                                                         "size" => 10, "sha256" => "0" * 64 }))
+    File.write("#{parts}.stray.file.part", "x")
+    ib = TestInbox.new(@rx, piece: 1000, window: 1)
+    ib.logger = nil
+    ib.parts = parts
+    ib.resume_held
+    # one is taken up (whichever the directory lists first), the other's two
+    # files are gone
+    other = ib.current_file["name"] == "third" ? "stray" : "third"
+    refute File.exist?("#{parts}.#{other}.file.part")
+    refute File.exist?("#{@rx}#{other}.file.xfer")
+  end
+
+  def meta
+    { "name" => "src", "size" => @bytes.bytesize, "sha256" => Digest::SHA256.hexdigest(@bytes) }
   end
 
   def test_file_names
