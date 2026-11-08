@@ -520,4 +520,168 @@ class TestTransfer < Minitest::Test
       assert_equal Digest::SHA256.hexdigest(b), d.hexdigest, "#{n} bytes"
     end
   end
+
+  # ---- CRuby: FileInbox (the kind "file") and Endpoint (<node>/transfer/inbox) ----
+
+  # A query of the stand-in connection: the key and the payload in, the
+  # reply out.
+  class Query
+    attr_reader :key, :payload, :replies
+
+    def initialize(key, payload = nil)
+      @key = key
+      @payload = payload
+      @replies = []
+    end
+
+    def reply(key, bytes)
+      @replies << [key, bytes]
+    end
+  end
+
+  # The connection an Endpoint is given: tokens and one queryable.
+  class Conn
+    attr_reader :tokens, :queryables
+
+    Token = Struct.new(:key, :closed) do
+      def close = (self.closed = true)
+    end
+
+    Qa = Struct.new(:key, :block, :closed) do
+      def close = (self.closed = true)
+    end
+
+    def initialize
+      @tokens = []
+      @queryables = []
+    end
+
+    def liveliness(key) = (@tokens << Token.new(key, false)).last
+    def queryable(key, depth: 16, &blk) = (@queryables << Qa.new(key, blk, false)).last
+
+    # A call as a remote node makes it: encoded, through the queryable's
+    # block, the reply decoded.
+    def call(path, from, method, args)
+      q = Query.new("asterism/#{path}/call/#{from}", Asterism::Codec.pack(Asterism.request(method, args, nil)))
+      @queryables.find { !_1.closed }.block.call(q)
+      return Answer.new(nil, Asterism::TimeoutError.new("nobody answers")) if q.replies.empty?
+      r = Asterism::Codec.unpack(q.replies[0][1])
+      return Answer.new(r["value"]) if r.key?("value")
+      e = r["error"]
+      Answer.new(nil, Asterism::RemoteError.new(e["class"], e["message"], e["kind"]))
+    end
+  end
+
+  # A Sender whose calls go through the stand-in connection.
+  class WireSender < T::Sender
+    attr_accessor :conn, :from
+
+    def proxy
+      me = self
+      Struct.new(:s) do
+        def async = self
+        def asterism_call(method, *args) = s.conn.call(s.path_to, s.from, method.to_s, args)
+      end.new(me)
+    end
+
+    def path_to = @to
+  end
+
+  def file_inbox(**opts)
+    i = T::FileInbox.new("#{@dir}/inbox", work: "#{@dir}/work", from: ["node-*"], label: "pc", **opts)
+    i.logger = nil
+    i
+  end
+
+  def wire_send(conn, from: "node-a", **opts)
+    s = WireSender.new("pc/transfer/inbox", "file", @src, **{ name: "photo.bin" }.merge(opts))
+    s.logger = nil
+    s.conn = conn
+    s.from = from
+    run_to_end(s)
+  end
+
+  def test_endpoint_answers_at_transfer_inbox
+    inbox = file_inbox
+    conn = Conn.new
+    ep = T::Endpoint.new(conn, inbox, node: "pc").start
+    assert_equal ["asterism/pc/transfer", "asterism/pc/transfer/inbox"], conn.tokens.map(&:key)
+    assert_equal "asterism/pc/transfer/inbox/**", conn.queryables[0].key
+    q = Query.new("asterism/pc/transfer/inbox/meta")
+    conn.queryables[0].block.call(q)
+    meta = Asterism::Codec.unpack(q.replies[0][1])
+    assert_equal %w[begin chunk commit cancel], meta["methods"].map { _1["name"] }
+    s = wire_send(conn)
+    assert s.ok?, s.reason
+    assert_equal({ "status" => "placed", "name" => "photo.bin", "path" => "photo.bin" }, s.answer)
+    assert_equal @bytes, File.binread("#{@dir}/inbox/photo.bin")
+    # the receiver named the piece from its key and its window
+    assert_equal [T.piece_for_key("asterism/pc/transfer/inbox/call/node-a".bytesize), 8], [s.piece, s.window]
+    # the same name again: beside it; overwrite: in its place
+    assert_equal "photo(1).bin", wire_send(conn).answer["name"]
+    File.binwrite(@src, "new")
+    assert_equal "photo.bin", wire_send(conn, meta: { "overwrite" => true }).answer["name"]
+    assert_equal "new", File.binread("#{@dir}/inbox/photo.bin")
+    assert_equal @bytes, File.binread("#{@dir}/inbox/photo(1).bin")
+    assert_equal %w[photo.bin photo(1).bin].sort, inbox.files.map { _1["name"] }.sort
+    assert_empty Dir.glob("#{@dir}/inbox/.*.part") + Dir.glob("#{@dir}/work/*")
+    # not a method of the inbox; not three parts of the protocol
+    r = conn.call("pc/transfer/inbox", "node-a", "instance_eval", ["1"])
+    assert_raises(Asterism::RemoteError) { r.value }
+    ep.close
+    assert conn.tokens.all?(&:closed)
+    assert conn.queryables[0].closed
+  end
+
+  def test_file_inbox_refuses_at_begin
+    inbox = file_inbox(max_bytes: 150_000)
+    conn = Conn.new
+    T::Endpoint.new(conn, inbox, node: "pc").start
+    s = wire_send(conn, from: "other")
+    refute s.ok?
+    assert_equal "pc takes no file from other", s.reason
+    assert_equal "pc has no SD card to write to", wire_send(conn, meta: { "inbox" => "sd" }).reason
+    assert_equal "pc has no inbox usb (home only)", wire_send(conn, meta: { "inbox" => "usb" }).reason
+    assert_match(/not a name/, wire_send(conn, name: ".hidden").reason)
+    s = WireSender.new("pc/transfer/inbox", "checkpoint", @src, name: "x")
+    s.logger = nil
+    s.conn = conn
+    s.from = "node-a"
+    assert_equal "pc takes no checkpoint", run_to_end(s).reason
+    assert wire_send(conn).ok?
+    # 100,000 bytes there: another 100,000 do not fit in 150,000
+    assert_equal "100000 bytes do not fit (50000 bytes free)", wire_send(conn).reason
+    # a block decides who may send
+    b = T::FileInbox.new("#{@dir}/inbox2", from: nil) { |node| node == "node-z" }
+    assert b.sender_ok?("node-z")
+    refute b.sender_ok?("node-a")
+    assert_empty Dir.glob("#{@dir}/inbox/.*.part")
+  end
+
+  def test_file_inbox_started_again_goes_on
+    inbox = file_inbox
+    conn = Conn.new
+    T::Endpoint.new(conn, inbox, node: "pc").start
+    s = WireSender.new("pc/transfer/inbox", "file", @src, name: "photo.bin", window: 1)
+    s.logger = nil
+    s.conn = conn
+    s.from = "node-a"
+    s.step until s.pos >= 30_000
+    held = inbox.current_file["got"]
+    inbox.close
+    File.write("#{@dir}/inbox/.stray.bin.file.part", "x")
+    # the program starts again on the same directories (a while later: its
+    # ids are new)
+    T.clock += 5000
+    again = file_inbox.start
+    refute File.exist?("#{@dir}/inbox/.stray.bin.file.part")
+    assert_equal held, again.current_file["got"]
+    conn2 = Conn.new
+    T::Endpoint.new(conn2, again, node: "pc").start
+    s.conn = conn2
+    run_to_end(s)
+    assert s.ok?, s.reason
+    assert_equal @bytes, File.binread("#{@dir}/inbox/photo.bin")
+    assert_includes s.stats["resumed_at"], held
+  end
 end

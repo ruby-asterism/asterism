@@ -1199,6 +1199,22 @@ end
 s.ok? ? s.answer : s.reason
 ```
 
+On CRuby, `Asterism::Transfer::FileInbox` is the receiver of the kind
+`file` (the rules of a Family mruby machine: the senders allowed, names
+that stay in its directory, `foo(1).txt` beside a name already there unless
+the sender asks to overwrite, a limit for the directory), and
+`Asterism::Transfer::Endpoint` answers for it at `<node>/transfer/inbox`,
+where the machines send, beside the program's own application:
+
+```ruby
+conn = Asterism::Zenoh.open("tcp/127.0.0.1:7447")
+inbox = Asterism::Transfer::FileInbox.new("inbox/", work: "work/", from: ["fmruby-*"],
+                                          max_bytes: 1 << 30, label: "mypc").start
+ep = Asterism::Transfer::Endpoint.new(conn, inbox, node: "mypc").start
+conn.start
+loop { ep.tick; sleep 0.5 }   # a file that stopped coming is deleted after a minute
+```
+
 A piece is 3,072 bytes by default: one call carries about 4 KB in all on
 zenoh-pico (`Z_FRAG_MAX_SIZE` 4096; a String argument of 4,044 bytes still
 went through between two Family mruby programs, 4,048 did not and was not
