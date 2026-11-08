@@ -251,10 +251,11 @@ module Asterism
     #   room(kind, meta)           bytes free where this file goes (nil: not
     #                              known; it is then refused where it stops
     #                              being written)
-    #   part_path(kind, name)      where the piece file is written (default
+    #   part_path(kind, name, meta) where the piece file is written (default
     #                              "<dir><name>.<kind>.part"; a kind may write
-    #                              it beside the place it goes, so that the
-    #                              commit has only to rename it). The note
+    #                              it beside the place it goes -- which the
+    #                              meta may choose -- so that the commit has
+    #                              only to rename it). The note
     #                              of the file ("<dir><name>.<kind>.xfer")
     #                              stays in dir
     #   window(kind, meta)         how many pieces may be on their way at once
@@ -306,7 +307,7 @@ module Asterism
         nil
       end
 
-      def part_path(kind, name)
+      def part_path(kind, name, meta)
         "#{@dir}#{name}.#{kind}.part"
       end
 
@@ -333,7 +334,9 @@ module Asterism
         raise Refused, "size #{size} is not a size" unless size.is_a?(Integer) && size > 0
         raise Refused, "sha256 is not 64 hex digits" unless ::Asterism::Transfer.hex?(sha, 64)
         t = @t
-        if t && t["from"] == from && t["kind"] == k && t["name"] == name && t["size"] == size && t["sha256"] == sha
+        part = part_path(k, name, m)
+        if t && t["from"] == from && t["kind"] == k && t["name"] == name && t["size"] == size && t["sha256"] == sha &&
+           t["part"] == part
           open_part(t)
           t["at"] = now_ms
           t["meta"] = m
@@ -352,7 +355,7 @@ module Asterism
         end
         @done = nil if @done && @done["from"] == from
         t = { "id" => new_id, "from" => from, "kind" => k, "name" => name, "size" => size, "sha256" => sha,
-              "meta" => m, "got" => 0, "part" => part_path(k, name), "note" => "#{@dir}#{name}.#{k}.xfer",
+              "meta" => m, "got" => 0, "part" => part, "note" => "#{@dir}#{name}.#{k}.xfer",
               "file" => nil, "digest" => nil, "at" => now_ms, "gaps" => 0, "again" => 0 }
         remove(t["part"])
         write_note(t)
@@ -596,7 +599,7 @@ module Asterism
         return nil unless name_ok?(k, h["name"])
         { "id" => new_id, "from" => h["from"], "kind" => k, "name" => h["name"], "size" => h["size"],
           "sha256" => h["sha256"], "meta" => h["meta"].is_a?(Hash) ? h["meta"] : {}, "got" => 0,
-          "part" => part_path(k, h["name"]), "note" => path, "file" => nil, "digest" => nil, "at" => now_ms,
+          "part" => part_path(k, h["name"], h["meta"].is_a?(Hash) ? h["meta"] : {}), "note" => path, "file" => nil, "digest" => nil, "at" => now_ms,
           "gaps" => 0, "again" => 0 }
       rescue => e
         warn("transfer: #{path}: #{e.message}")

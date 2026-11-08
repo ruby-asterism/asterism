@@ -105,7 +105,7 @@ class TestTransfer < Minitest::Test
   # An inbox that places the whole file beside the piece file.
   class TestInbox < T::Inbox
     attr_accessor :space
-    attr_writer :window, :parts
+    attr_writer :window, :parts, :parts_b
 
     attr_accessor :kinds
 
@@ -120,8 +120,9 @@ class TestTransfer < Minitest::Test
 
     # parts: a directory of its own for the piece files (the kind "file"
     # of Family mruby writes them beside where they go)
-    def part_path(kind, name)
+    def part_path(kind, name, meta)
       return super unless @parts
+      return "#{@parts_b}.#{name}.#{kind}.part" if meta["inbox"] == "b"
       "#{@parts}.#{name}.#{kind}.part"
     end
 
@@ -462,6 +463,31 @@ class TestTransfer < Minitest::Test
     other = ib.current_file["name"] == "third" ? "stray" : "third"
     refute File.exist?("#{parts}.#{other}.file.part")
     refute File.exist?("#{@rx}#{other}.file.xfer")
+  end
+
+  # The meta chooses where the pieces go (the sender's choice of a place);
+  # the same file begun again for the other place begins anew there.
+  def test_the_meta_chooses_the_place
+    a = "#{File.join(@dir, 'a')}/"
+    b = "#{File.join(@dir, 'b')}/"
+    FileUtils.mkdir_p([a, b])
+    @inbox.parts = a
+    @inbox.parts_b = b
+    s = sender(meta: { "inbox" => "b" })
+    run_to_end(s) do |n|
+      next unless n == 20
+      assert File.exist?("#{b}.src.file.part")
+      refute File.exist?("#{a}.src.file.part")
+      @net.down = true
+    end
+    refute s.ok?
+    @net.down = false
+    T.clock += T::Inbox::STALE_MS + 1
+    s = run_to_end(sender)
+    assert s.ok?, s.reason
+    assert_equal [], s.stats["resumed_at"]
+    refute File.exist?("#{b}.src.file.part")
+    assert_equal @bytes, placed
   end
 
   def meta
