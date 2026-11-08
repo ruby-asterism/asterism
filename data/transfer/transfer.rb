@@ -27,7 +27,9 @@
 #                      piece file and a note of the file stay in its
 #                      directory). Refused (Refused) for a kind or a sender
 #                      the hooks do not take, or a file that does not fit;
-#                      Busy while another node's file is coming in.
+#                      Busy while another node's file is coming in. The
+#                      meta may carry what the kind wants besides (the
+#                      kind "file" of Family mruby: "overwrite").
 #   chunk(id, pos, bytes)  -> the position the receiver holds now. Taken at
 #                      that position only: a piece before it (already here)
 #                      is read past, a piece after it (one went missing) is
@@ -40,7 +42,7 @@
 #                      placed); {"status" => "more", "pos"} when bytes are
 #                      still missing. Asked again for the same id, the same
 #                      answer.
-#   cancel(id)         drops it (and its files).
+#   cancel(id)         drops it (and its files); the sender's Sender#cancel.
 #
 #   Unknown            raised by chunk / commit for an id this receiver
 #                      does not have (any more): the sender begins again.
@@ -92,6 +94,56 @@ module Asterism
         i += 1
       end
       true
+    end
+
+    # A file name another machine may give (a receiver's kind that places
+    # files under a directory of its own, the kind "file"): no way out of
+    # that directory (no "/", "\\" or ".."), not hidden (no "." first),
+    # no control characters, 1 to 48 bytes (UTF-8 is fine). The piece file
+    # beside it ("<name>.<kind>.part") keeps within 63 bytes.
+    def self.file_name?(name)
+      return false unless name.is_a?(String)
+      n = name.bytesize
+      return false if n == 0 || n > 48
+      return false if name.getbyte(0) == 46
+      i = 0
+      while i < n
+        c = name.getbyte(i)
+        return false if c < 32 || c == 127 || c == 47 || c == 92
+        return false if c == 46 && i + 1 < n && name.getbyte(i + 1) == 46
+        i += 1
+      end
+      true
+    end
+
+    # name with " (k)" put before its extension: "foo.txt" -> "foo(1).txt",
+    # "foo" -> "foo(1)" (the receiver keeps the file there and places the
+    # new one beside it).
+    def self.numbered(name, k)
+      dot = nil
+      i = name.bytesize - 1
+      while i > 0
+        if name.getbyte(i) == 46
+          dot = i
+          break
+        end
+        i -= 1
+      end
+      return "#{name}(#{k})" if dot.nil?
+      "#{name.byteslice(0, dot)}(#{k})#{name.byteslice(dot, name.bytesize - dot)}"
+    end
+
+    # The name to place under dir (it ends in "/"): name itself when there is
+    # no such file there, else the first of name(1), name(2), ... that is free.
+    def self.free_name(dir, name)
+      return name unless ::File.exist?("#{dir}#{name}")
+      k = 1
+      while k < 10000
+        n = numbered(name, k)
+        return n unless ::File.exist?("#{dir}#{n}")
+        k += 1
+      end
+      nil
     end
 
     def self.to_hex(bin)
@@ -165,7 +217,11 @@ module Asterism
     # and call tick from the update loop. The hooks to override:
     #
     #   refused(kind, from, meta)  why this is not taken (nil: taken)
-    #   room                       bytes free where the files go (nil: not known)
+    #   name_ok?(kind, name)       whether the name is one this kind takes
+    #                              (plain_name?: letters, digits, _ and -)
+    #   room(kind, meta)           bytes free where this file goes (nil: not
+    #                              known; it is then refused where it stops
+    #                              being written)
     #   received(t)                the file is whole at t["part"]: put it where
     #                              it belongs -> the answer to commit (a Hash)
     class Inbox
@@ -198,7 +254,11 @@ module Asterism
         nil
       end
 
-      def room
+      def name_ok?(kind, name)
+        ::Asterism::Transfer.plain_name?(name)
+      end
+
+      def room(kind, meta)
         nil
       end
 
@@ -217,7 +277,7 @@ module Asterism
         name = m["name"]
         size = m["size"]
         sha = m["sha256"]
-        raise Refused, "not a name for a file: #{name}" unless ::Asterism::Transfer.plain_name?(name)
+        raise Refused, "not a name for a file: #{name}" unless name_ok?(k, name)
         raise Refused, "size #{size} is not a size" unless size.is_a?(Integer) && size > 0
         raise Refused, "sha256 is not 64 hex digits" unless ::Asterism::Transfer.hex?(sha, 64)
         t = @t
@@ -234,7 +294,7 @@ module Asterism
           end
           drop("#{from} begins another")
         end
-        left = room
+        left = room(k, m)
         if left && size > left
           raise Refused, "#{size} bytes do not fit (#{left} bytes free)"
         end
@@ -464,8 +524,9 @@ module Asterism
       def read_note(path)
         text = ::File.open(path, "r") { |f| f.read }
         h = ::JSON.parse(text.to_s)
-        return nil unless h.is_a?(Hash) && ::Asterism::Transfer.plain_name?(h["name"]) && h["size"].is_a?(Integer)
+        return nil unless h.is_a?(Hash) && h["size"].is_a?(Integer)
         k = h["kind"].to_s
+        return nil unless name_ok?(k, h["name"])
         { "id" => new_id, "from" => h["from"], "kind" => k, "name" => h["name"], "size" => h["size"],
           "sha256" => h["sha256"], "meta" => h["meta"].is_a?(Hash) ? h["meta"] : {}, "got" => 0,
           "part" => "#{@dir}#{h['name']}.#{k}.part", "note" => path, "file" => nil, "digest" => nil, "at" => now_ms,
@@ -511,7 +572,7 @@ module Asterism
       CALL_TIMEOUT_MS = 10000
 
       attr_accessor :logger
-      attr_reader :path, :size, :sha256, :answer, :reason, :stats, :pos, :id
+      attr_reader :path, :size, :sha256, :answer, :reason, :stats, :pos, :id, :kind
 
       def initialize(to, kind, path, meta: {}, name: nil, piece: PIECE, window: 1, timeout_ms: CALL_TIMEOUT_MS,
                      tries: TRIES, sha256: nil)
@@ -593,6 +654,28 @@ module Asterism
           committed(v)
         end
         nil
+      end
+
+      # Gives up on purpose: the receiver is asked to drop what it holds of
+      # this file (its piece file and note; nothing is placed), without
+      # waiting for its answer. -> false when already done.
+      def cancel
+        return false if done?
+        id = @id
+        if id
+          begin
+            call("cancel", id)
+          rescue ::Asterism::Error
+            nil
+          end
+        end
+        finish_failed("cancelled")
+        @cancelled = true
+        true
+      end
+
+      def cancelled?
+        @cancelled == true
       end
 
       # Stops (the application ends, or gives up): the file is closed.

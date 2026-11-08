@@ -9,6 +9,7 @@ version (a patch release of one may come without the other).
 ## Unreleased
 
 - `Asterism::Transfer` (`data/transfer/`, `require "asterism/transfer"` on CRuby): a file carried in pieces over calls, resent from the receiver's position after lost, repeated or reordered pieces, a dropped connection or a receiver started again, checked whole by SHA-256. Plain Ruby loaded at run time on the boards (not part of the mrbgem). `rake test:transfer`.
+- `Asterism::Transfer`: the receiver's hooks `name_ok?(kind, name)` (the names a kind takes; `plain_name?` by default) and `room(kind, meta)` (was `room`); `Transfer.file_name?` (a file name that stays in the receiver's directory: no `/`, `\`, `..`, not hidden, up to 48 bytes), `Transfer.numbered` / `Transfer.free_name` (`foo(1).txt` beside a `foo.txt`); `Sender#cancel` (the receiver drops what it holds of the file) and `Sender#kind`.
 
 ## 0.11.0
 

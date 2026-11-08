@@ -106,8 +106,15 @@ class TestTransfer < Minitest::Test
   class TestInbox < T::Inbox
     attr_accessor :space
 
-    def room
+    attr_accessor :kinds
+
+    def room(_kind, _meta)
       @space
+    end
+
+    def refused(kind, _from, _meta)
+      return nil if @kinds.nil? || @kinds.include?(kind)
+      "takes no #{kind}"
     end
 
     def received(t)
@@ -313,6 +320,43 @@ class TestTransfer < Minitest::Test
     other = sender
     run_to_end(other)
     assert other.ok?, other.reason
+  end
+
+  def test_cancel_drops_what_the_receiver_holds
+    s = sender
+    run_to_end(s) { |n| break if n == 30 }
+    assert_operator @inbox.current_file["got"], :>, 0
+    assert File.exist?("#{@rx}src.file.part")
+    assert s.cancel
+    assert s.done?
+    refute s.ok?
+    assert s.cancelled?
+    assert_equal "cancelled", s.reason
+    assert_nil @inbox.current_file
+    assert_empty Dir.glob("#{@rx}*.part") + Dir.glob("#{@rx}*.xfer")
+    refute s.cancel
+  end
+
+  def test_a_kind_not_taken_is_refused_at_begin
+    @inbox.kinds = ["other"]
+    s = run_to_end(sender)
+    refute s.ok?
+    assert_equal "takes no file", s.reason
+    assert_equal [["begin", ["file", { "name" => "src", "size" => 100_000, "sha256" => Digest::SHA256.hexdigest(@bytes) }]]],
+                 @net.log
+    assert_empty Dir.glob("#{@rx}*")
+  end
+
+  def test_file_names
+    %w[a.txt foo.tar.gz 日本語.txt a-b_c(1).bin x].each { |n| assert T.file_name?(n), n }
+    ["", ".hidden", "a/b", "../x", "a..b", "a\\b", "a\nb", "x" * 49, nil, 3].each { |n| refute T.file_name?(n), n.inspect }
+    assert_equal "foo(1).txt", T.numbered("foo.txt", 1)
+    assert_equal "foo.tar(2).gz", T.numbered("foo.tar.gz", 2)
+    assert_equal "foo(3)", T.numbered("foo", 3)
+    File.write("#{@rx}foo.txt", "1")
+    File.write("#{@rx}foo(1).txt", "2")
+    assert_equal "foo(2).txt", T.free_name(@rx, "foo.txt")
+    assert_equal "bar.txt", T.free_name(@rx, "bar.txt")
   end
 
   # The plain Ruby SHA-256 (the boards without mbedTLS) gives CRuby's digest.
