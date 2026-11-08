@@ -1,0 +1,332 @@
+# Asterism::Transfer (data/transfer/transfer.rb) between a Sender and an
+# Inbox in one process, over a stand-in for the calls that can lose, repeat
+# and reorder pieces, go down for a while, and lose answers; the receiver's
+# application started again on the same directory; a file whose sha256
+# does not match; a file kept too long; another sender while one is coming
+# in. No Zenoh: the calls are the stand-in's (rake test:transfer).
+require "minitest/autorun"
+require "tmpdir"
+require "fileutils"
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require "asterism"
+require "asterism/transfer"
+
+module Asterism
+  module Transfer
+    # the test's clock
+    @clock = 0
+    class << self
+      attr_accessor :clock
+
+      def now_ms
+        @clock
+      end
+    end
+  end
+end
+
+class TestTransfer < Minitest::Test
+  T = Asterism::Transfer
+
+  # An answer already there, or an error.
+  class Answer
+    def initialize(value = nil, error = nil)
+      @value = value
+      @error = error
+    end
+
+    def done?
+      true
+    end
+
+    def value
+      raise @error if @error
+      @value
+    end
+  end
+
+  # The calls: each goes to the inbox at once (as the receiver would answer
+  # it), unless the network is down; lose: the call is done there but its
+  # answer does not come back.
+  class Net
+    attr_accessor :inbox, :down, :lose, :log, :from
+
+    def initialize(inbox)
+      @inbox = inbox
+      @down = false
+      @lose = nil
+      @log = []
+      @from = "node-a"
+    end
+
+    def call(method, args)
+      @log << [method, args[0..1]]
+      return Answer.new(nil, Asterism::TimeoutError.new("no answer (nobody answers)")) if @down
+      begin
+        v = @inbox.public_send(method, *args, from: @from)
+      rescue StandardError => e
+        return Answer.new(nil, Asterism::RemoteError.new(e.class.name, e.message, "raised"))
+      end
+      return Answer.new(nil, Asterism::TimeoutError.new("no answer within 10 s")) if @lose&.call(method, args)
+      Answer.new(v)
+    end
+  end
+
+  class Proxy
+    def initialize(net)
+      @net = net
+    end
+
+    def async
+      self
+    end
+
+    def asterism_call(method, *args)
+      @net.call(method.to_s, args)
+    end
+  end
+
+  # A Sender whose calls go to the stand-in and whose pieces meet faults.
+  class TestSender < T::Sender
+    attr_accessor :net, :faults
+
+    def proxy
+      Proxy.new(@net)
+    end
+
+    def fault(pos, n)
+      @seen ||= {}
+      return nil if @seen[pos]
+      @seen[pos] = true
+      @faults&.call(pos / @piece)
+    end
+  end
+
+  # An inbox that places the whole file beside the piece file.
+  class TestInbox < T::Inbox
+    attr_accessor :space
+
+    def room
+      @space
+    end
+
+    def received(t)
+      dest = "#{dir}#{t['name']}.#{t['kind']}"
+      File.rename(t["part"], dest)
+      { "status" => "placed", "path" => dest }
+    end
+  end
+
+  def setup
+    T.clock = 1_000_000
+    @dir = Dir.mktmpdir("asterism-transfer")
+    @src = File.join(@dir, "src.bin")
+    @bytes = Random.new(7).bytes(100_000)
+    File.binwrite(@src, @bytes)
+    @rx = "#{File.join(@dir, 'rx')}/"
+    FileUtils.mkdir_p(@rx)
+    @inbox = TestInbox.new(@rx, piece: 1000)
+    @inbox.logger = nil
+    @net = Net.new(@inbox)
+  end
+
+  def teardown
+    FileUtils.rm_rf(@dir)
+  end
+
+  def sender(**opts)
+    s = TestSender.new("node-b/transfer/inbox", "file", @src, name: "src", **opts)
+    s.logger = nil
+    s.net = @net
+    s
+  end
+
+  # Steps until done, the clock going on 10 ms a step; a block runs before
+  # each step (to break things on the way).
+  def run_to_end(s, max: 100_000)
+    n = 0
+    until s.done?
+      yield n if block_given?
+      s.step
+      T.clock += 10
+      n += 1
+      flunk "not done in #{max} steps" if n > max
+    end
+    s
+  end
+
+  def placed
+    File.binread("#{@rx}src.file")
+  end
+
+  def chunk_positions
+    @net.log.select { |m, _| m == "chunk" }.map { |_, a| a[1] }
+  end
+
+  def test_straight
+    s = run_to_end(sender)
+    assert s.ok?, s.reason
+    assert_equal "placed", s.answer["status"]
+    assert_equal @bytes, placed
+    assert_equal 100, s.stats["pieces"]
+    assert_equal 0, s.stats["again"]
+    assert_empty Dir.glob("#{@rx}*.part") + Dir.glob("#{@rx}*.xfer")
+  end
+
+  def test_a_tenth_of_the_pieces_lost
+    s = sender
+    s.faults = ->(i) { i % 10 == 3 ? :drop : nil }
+    run_to_end(s)
+    assert s.ok?, s.reason
+    assert_equal @bytes, placed
+    assert_equal 10, s.stats["again"]
+    # each lost piece is sent again from where the receiver stood
+    pos = chunk_positions
+    (0...10).each do |k|
+      assert_equal 1, pos.count((k * 10 + 3) * 1000), "the lost piece #{k * 10 + 3} sent once, when asked for"
+      assert_equal 2, pos.count((k * 10 + 4) * 1000), "the piece after it sent before and after"
+    end
+  end
+
+  def test_every_piece_twice
+    s = sender
+    s.faults = ->(_i) { :twice }
+    run_to_end(s)
+    assert s.ok?, s.reason
+    assert_equal @bytes, placed
+    assert_equal 200, s.stats["pieces"]
+  end
+
+  def test_pieces_swapped
+    s = sender
+    s.faults = ->(i) { i % 7 == 2 ? :swap : nil }
+    run_to_end(s)
+    assert s.ok?, s.reason
+    assert_equal @bytes, placed
+    assert_operator s.stats["again"], :>, 0
+  end
+
+  def test_window_of_four
+    s = sender(window: 4)
+    s.faults = ->(i) { i % 10 == 5 ? :drop : nil }
+    run_to_end(s)
+    assert s.ok?, s.reason
+    assert_equal @bytes, placed
+  end
+
+  def test_down_twice_goes_on_from_where_it_stood
+    s = sender
+    downs = []
+    run_to_end(s) do |n|
+      if n == 20 || n == 60
+        @net.down = true
+        downs << @inbox.current_file["got"]
+      end
+      @net.down = false if n == 30 || n == 75
+    end
+    assert s.ok?, s.reason
+    assert_equal @bytes, placed
+    assert_equal 2, downs.size
+    # it began again twice and went on from where the receiver stood
+    assert_equal downs, s.stats["resumed_at"]
+    assert_operator downs[0], :>, 0
+  end
+
+  def test_answers_lost
+    k = 0
+    @net.lose = ->(m, _a) { m == "chunk" && (k += 1) % 9 == 0 }
+    s = run_to_end(sender)
+    assert s.ok?, s.reason
+    assert_equal @bytes, placed
+    assert_operator s.stats["retries"], :>, 5
+  end
+
+  def test_commit_answer_lost_is_asked_again
+    lost = false
+    @net.lose = ->(m, _a) { m == "commit" && !lost && (lost = true) }
+    s = run_to_end(sender)
+    assert s.ok?, s.reason
+    assert_equal "placed", s.answer["status"]
+    assert_equal @bytes, placed
+  end
+
+  def test_receiver_started_again
+    s = sender
+    held = nil
+    run_to_end(s) do |n|
+      next unless n == 40
+      held = @inbox.current_file["got"]
+      @inbox.close
+      @inbox = TestInbox.new(@rx, piece: 1000)
+      @inbox.logger = nil
+      @inbox.resume_held
+      @net.inbox = @inbox
+    end
+    assert s.ok?, s.reason
+    assert_equal @bytes, placed
+    assert_equal [held], s.stats["resumed_at"]
+    assert_operator held, :>, 0
+  end
+
+  def test_sha256_mismatch_is_not_placed
+    s = sender(sha256: "0" * 64)
+    run_to_end(s)
+    assert s.ok?
+    assert_equal "refused", s.answer["status"]
+    assert_includes s.answer["reason"], "does not match"
+    refute File.exist?("#{@rx}src.file")
+    assert_empty Dir.glob("#{@rx}*.part") + Dir.glob("#{@rx}*.xfer")
+  end
+
+  def test_kept_too_long_is_deleted
+    s = sender
+    run_to_end(s) do |n|
+      next unless n == 30
+      @net.down = true
+    end
+    # (the sender gives up while down)
+    refute s.ok?
+    assert_includes s.reason, "gave up"
+    assert File.exist?("#{@rx}src.file.part")
+    T.clock += T::Inbox::KEEP_MS + 1
+    @inbox.tick
+    refute File.exist?("#{@rx}src.file.part")
+    refute File.exist?("#{@rx}src.file.xfer")
+  end
+
+  def test_too_big_for_the_room
+    @inbox.space = 50_000
+    s = run_to_end(sender)
+    refute s.ok?
+    assert_includes s.reason, "do not fit"
+  end
+
+  def test_another_sender_is_busy_until_stale
+    s = sender
+    run_to_end(s) { |n| break if n == 10 }
+    @net.from = "node-c"
+    other = sender(tries: 1)
+    run_to_end(other)
+    refute other.ok?
+    assert_includes other.reason, "busy"
+    T.clock += T::Inbox::STALE_MS + 1
+    other = sender
+    run_to_end(other)
+    assert other.ok?, other.reason
+  end
+
+  # The plain Ruby SHA-256 (the boards without mbedTLS) gives CRuby's digest.
+  def test_plain_sha256
+    require_relative "../data/transfer/sha256"
+    [0, 1, 55, 56, 64, 1000, 100_000].each do |n|
+      b = @bytes.byteslice(0, n)
+      d = T::SHA256.new(:ruby)
+      i = 0
+      while i < n
+        d.update(b.byteslice(i, 777))
+        i += 777
+      end
+      assert_equal Digest::SHA256.hexdigest(b), d.hexdigest, "#{n} bytes"
+    end
+  end
+end

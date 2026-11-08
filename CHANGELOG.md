@@ -8,6 +8,8 @@ version (a patch release of one may come without the other).
 
 ## Unreleased
 
+- `Asterism::Transfer` (`data/transfer/`, `require "asterism/transfer"` on CRuby): a file carried in pieces over calls, resent from the receiver's position after lost, repeated or reordered pieces, a dropped connection or a receiver started again, checked whole by SHA-256. Plain Ruby loaded at run time on the boards (not part of the mrbgem). `rake test:transfer`.
+
 ## 0.11.0
 
 - Needs CRuby 3.4 or newer (`required_ruby_version >= 3.4`; 3.2 is past its end of life). CI runs Ruby 3.4 and 4.0.

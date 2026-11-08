@@ -128,6 +128,7 @@ these repositories.
 ```
 rake                  # every suite
 rake test:msgs        # generator, type hashes, CDR, bundled types (CRuby only; no Zenoh, no docker)
+rake test:transfer    # files in pieces (Asterism::Transfer) over a stand-in for the calls: lost, repeated, swapped pieces, a connection down, a receiver started again
 rake test:objects     # objects and Asterism::ROS between CRuby sessions over a local peer link
 rake test:api         # the CRuby API (blocks, receiving threads, Enumerators)
 rake test:cli         # the command line (exe/asterism), its Tab completion and its MCP bridge (the mcp gem's client; skipped without it)
@@ -1164,6 +1165,45 @@ directions at once, keeps 5.8 KB free (as before the blocks); a ROS node
 publishing from `node.every` and receiving through a `node.subscribe` block
 keeps 6.9 KB free, the same as polling `each_pending` by hand. Loading a
 nested type (`geometry_msgs/msg/Twist`) at start-up took 0.6 KB more.
+
+## Files in pieces: `Asterism::Transfer`
+
+A file carried from one machine to another over calls, that comes through
+lost, repeated and reordered pieces, a connection that drops for a while
+and a receiver started again, and arrives whole (its SHA-256 checked) or
+not at all. The receiver's position is the truth: every answer says how
+many bytes it holds, and the sender goes on from there. Plain Ruby that is
+not compiled into the mrbgem (an mruby VM that carries no files pays
+nothing for it): `data/transfer/transfer.rb`, which the boards load at run
+time (`require "/usr/share/asterism/transfer/transfer"` on Family mruby)
+and CRuby with `require "asterism/transfer"`. Its head describes the calls
+(`begin` / `chunk` / `commit` / `cancel`).
+
+```ruby
+# the receiver: what it takes and where a whole file goes
+class Inbox < Asterism::Transfer::Inbox
+  def refused(kind, from, meta) = (kind == "file" ? nil : "takes no #{kind}")
+  def received(t) = (File.rename(t["part"], "inbox/#{t['name']}"); { "status" => "placed" })
+end
+inbox = Inbox.new("tmp/")          # the piece files and their notes go here
+inbox.resume_held                  # a file held when it last ended goes on
+Asterism.expose("inbox", inbox, methods: Asterism::Transfer::Inbox::METHODS, caller: :from)
+# ... inbox.tick in the update loop
+
+# the sender: stepped from the update loop, never waiting in one go
+s = Asterism::Transfer::Sender.new("node-b/app/inbox", "file", "photo.png", name: "photo")
+until s.done?
+  Asterism.poll
+  s.step
+end
+s.ok? ? s.answer : s.reason
+```
+
+A piece is 3,072 bytes by default: one call carries about 4 KB in all on
+zenoh-pico (`Z_FRAG_MAX_SIZE` 4096; a String argument of 4,044 bytes still
+went through between two Family mruby programs, 4,048 did not and was not
+answered at all). SHA-256 is CRuby's Digest, mbedTLS (`MbedTLS::Digest`)
+where the build has it, else plain Ruby (`data/transfer/sha256.rb`, slow).
 
 ## Limits
 

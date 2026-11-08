@@ -6,6 +6,10 @@
 #   rake               all the test suites (the default)
 #   rake test:msgs     the generator, the type hashes, CDR, the bundled
 #                      types and the layout (CRuby only: no Zenoh, no docker)
+#   rake test:transfer files carried in pieces (data/transfer): lost,
+#                      repeated and swapped pieces, a connection down, a
+#                      receiver started again, sha256; over a stand-in for
+#                      the calls (no Zenoh)
 #   rake test:objects  the object layer, node profiles, statuses and Asterism::ROS
 #                      between CRuby sessions; needs asterism-zenoh (below)
 #   rake test:api      the Ruby-like API of CRuby (lib/asterism/cruby/):
@@ -60,6 +64,11 @@ def asterism_zenoh_gem?
 end
 
 namespace :test do
+  desc "Files carried in pieces with resending (data/transfer), over a stand-in for the calls (no Zenoh)"
+  task :transfer do
+    sh RbConfig.ruby, File.join(ROOT, "test/test_transfer.rb")
+  end
+
   desc "Message types: generator, type hashes, CDR, bundled types (no Zenoh)"
   task :msgs do
     sh RbConfig.ruby, File.join(ROOT, "test/msgs/run.rb")
@@ -330,7 +339,7 @@ namespace :bench do
 end
 
 desc "Run the test suites"
-task test: ["test:msgs", "test:objects", "test:api", "test:cli", "test:protocol"]
+task test: ["test:msgs", "test:transfer", "test:objects", "test:api", "test:cli", "test:protocol"]
 
 def ros2_image!
   img = ENV["ASTERISM_ROS2_IMAGE"].to_s
