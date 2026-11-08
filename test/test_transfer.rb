@@ -633,6 +633,23 @@ class TestTransfer < Minitest::Test
     assert conn.queryables[0].closed
   end
 
+  # A program with Encoding.default_internal set (Rails: UTF-8) writes the
+  # pieces as they came.
+  def test_file_inbox_with_default_internal
+    was = Encoding.default_internal
+    verbose = $VERBOSE
+    $VERBOSE = nil
+    Encoding.default_internal = Encoding::UTF_8
+    conn = Conn.new
+    T::Endpoint.new(conn, file_inbox, node: "pc").start
+    s = wire_send(conn)
+    assert s.ok?, s.reason
+    assert_equal @bytes, File.binread("#{@dir}/inbox/photo.bin")
+  ensure
+    Encoding.default_internal = was
+    $VERBOSE = verbose
+  end
+
   def test_file_inbox_refuses_at_begin
     inbox = file_inbox(max_bytes: 150_000)
     conn = Conn.new
