@@ -6,7 +6,7 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
-## Unreleased
+## 0.13.0
 
 - The command line runs inside another program, on that program's connection (README "Inside another program"): `Asterism::CLI.new(net:, stop:, permit:)`. `net:` an `Asterism::Net` already connected (neither started nor closed; what a command subscribes to or hooks onto it is released when it ends), `stop:` ends a streaming command as Ctrl-C does, `permit:` is asked with an `Asterism::CLI::Plan` (the command, `:read` / `:call` / `:local`, the object and method of a call) and may refuse with a reason (`CLI#refused`). Such a command line takes no connection options, runs neither `mcp` nor `completion`, takes long options only in full, prints `--help` to its `out`, and its `__complete` keeps no cache and never exits the process.
 - `lib/asterism/cli/commands.rb`: the command table (`NOUNS`, `COMMANDS`, `ALIASES`, `VALUE_OPTIONS`, `CONNECTION_OPTIONS`, `LOCAL`), `CLI.kind(key, call:)` (what a command does on the network: only `call` and `ping --call` call a method) and `CLI::Plan`, loadable without the Zenoh binding.
