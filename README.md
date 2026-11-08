@@ -605,6 +605,41 @@ network named on the line (`--router`, `--credentials`, `--peer`) or in
 - as one more node for a moment (a `cli-` node, or the certificate's name),
   so `asterism watch` shows it come and go.
 
+### Inside another program
+
+A program that is connected already (a console's bridge, which shows the
+commands on a page) runs the same commands on its own connection:
+
+```ruby
+require "asterism/cli"
+cli = Asterism::CLI.new(out: io, err: io, env: {}, net: Asterism.net,
+                        stop: -> { asked_to_stop }, permit: ->(plan) { nil })
+cli.run(%w[node list])        # the exit code; the text went to io
+```
+
+- `net:` the `Asterism::Net` to run on. It is neither started nor closed:
+  what a command subscribes to or hooks onto it (watch, echo, hz, get) is
+  released when the command ends. Its own application is left out of the
+  listings, as the command line's own is.
+- `stop:` asked while a command streams or waits; `true` ends it as
+  Ctrl-C does.
+- `permit:` asked once the words are read, with an `Asterism::CLI::Plan`:
+  `key` ("node list", "call", ...), `kind` (`:read`; `:call` for `call`
+  and `ping --call`, with `path` and `method`; `:local` for `mcp` and
+  `completion`), `args`, `options`. It returns nil to go on, or the reason
+  the command may not run (printed; `CLI#refused` keeps it).
+- Such a command line takes no `--router`, `--credentials`, `--peer`,
+  `--node` or `--app`, never runs `mcp` or `completion`, takes long
+  options only as written in full (`--cal` is not `--call`), and prints
+  `--help` to `out` (OptionParser's own `--help` / `--version` would print
+  to `$stdout` and exit the process). `__complete` asks the connection on
+  each Tab and keeps nothing.
+- Colours and width: `out` that answers `tty?` true (and `winsize`) gets
+  them, as a terminal does.
+- `require "asterism/cli/commands"` loads the command table alone (the
+  nouns, verbs, commands, `CLI.kind`, `CLI::Plan`), without the Zenoh
+  binding, for a program that only checks a command line.
+
 ### MCP: Asterism as tools of an AI assistant
 
 `asterism mcp` is an MCP server on stdio (it needs the `mcp` gem, which

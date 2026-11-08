@@ -126,8 +126,8 @@ module Asterism
       code = 0
       connect do |net, _sv|
         q = Queue.new
-        net.session.subscribe(Values.key_expr(pattern), depth: 16) { |s| q << [s.key, s.payload, Time.now] }
-        got = q.pop(timeout: wait)
+        hold net.session.subscribe(Values.key_expr(pattern), depth: 16) { |s| q << [s.key, s.payload, Time.now] }
+        got = pop_until(q, wait)
         if got.nil?
           @err.puts nothing_came(pattern, wait)
           code = 1
@@ -151,7 +151,7 @@ module Asterism
       code = 0
       connect do |net, _sv|
         q = Queue.new
-        net.session.subscribe(Values.key_expr(pattern), depth: 256) { |s| q << [s.key, s.payload, Time.now] }
+        hold net.session.subscribe(Values.key_expr(pattern), depth: 256) { |s| q << [s.key, s.payload, Time.now] }
         seen = 0
         last = {}
         until_stopped(net) do |left|
@@ -283,7 +283,8 @@ module Asterism
       @out.flush
       # A connection still trying past the budget is left behind: the
       # process ends without waiting for it.
-      Process.exit!(0) if @complete_abandoned
+      # (Not when it runs on a connection given to it: the program goes on.)
+      Process.exit!(0) if @complete_abandoned && !embedded?
       0
     end
 
@@ -315,7 +316,10 @@ module Asterism
 
       private
 
+      # On a connection given to the command line: asked every time (its
+      # program keeps what it needs; nothing is written here).
       def cached(entry, &blk)
+        return blk.call if @cli.embedded?
         net = @cli.complete_network(@words)
         return nil if net.none?
         dir = Complete::Cache.dir(@cli.env)
@@ -439,10 +443,10 @@ module Asterism
 
     # The status's puts of one application, cleaned (Status.parse).
     def subscribe_status(net, path)
-      net.session.subscribe("asterism/#{path}/@status") do |sample|
+      hold(net.session.subscribe("asterism/#{path}/@status") do |sample|
         got = ::Asterism::Status.parse(sample.key, sample.payload)
         yield got[2] if got
-      end
+      end)
     end
 
     # Yields until Ctrl-C, --duration or a lost connection (the seconds
@@ -453,7 +457,20 @@ module Asterism
         left = deadline && (deadline - now)
         break if left && left <= 0
         break unless net.connected?
+        break if stopped?
         yield left
+      end
+    end
+
+    # The next item of the queue within seconds (nil: none came, or stop:
+    # asked to end first).
+    def pop_until(queue, seconds)
+      deadline = now + seconds
+      loop do
+        left = deadline - now
+        return nil if left <= 0 || stopped?
+        got = queue.pop(timeout: [left, 0.2].min)
+        return got if got
       end
     end
 

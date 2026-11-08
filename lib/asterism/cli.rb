@@ -21,10 +21,29 @@
 # and reads what docs/protocol.md lets anyone read. It calls a method only
 # with `call` (and the MCP bridge only the methods --allow names). What it
 # can see is what the router lets it see: with a console's .tar, its role.
+#
+# Inside another program (a console's bridge) it runs on that program's
+# connection instead of opening one:
+#
+#   cli = Asterism::CLI.new(out: io, err: io, env: {}, net: Asterism.net,
+#                           stop: -> { asked_to_stop }, permit: ->(plan) { nil })
+#   cli.run(%w[node list])
+#
+# net: the Asterism::Net to use (it is neither started nor closed here; what
+# a command subscribes to or hooks onto it is released when the command
+# ends); stop: asked often while a command streams (watch, echo, hz, get,
+# ping), true ends it as Ctrl-C does; permit: asked once the words are read
+# (an Asterism::CLI::Plan: the command, whether it reads or calls, the
+# object and method it calls), returns nil to go on or the reason it may
+# not (printed; CLI#refused keeps it). Such a command line takes no
+# --router / --credentials / --peer / --node / --app, runs neither mcp nor
+# completion, takes long options only as written in full, and prints
+# --help to its out.
 require "asterism"
 require "optparse"
 require "json"
 require "securerandom"
+require_relative "cli/commands"
 require_relative "cli/literal"
 require_relative "cli/survey"
 require_relative "cli/allow"
@@ -35,56 +54,6 @@ require_relative "cli/values"
 
 module Asterism
   class CLI
-    # The nouns and their verbs: verb => [its arguments, what it does].
-    NOUNS = {
-      "node" => {
-        "list" => ["", "the nodes, a name a line"],
-        "info" => ["NODE", "one node: its profile, applications (with their statuses) and objects"]
-      },
-      "app" => {
-        "list" => ["", "the applications, node/app a line"],
-        "info" => ["NODE/APP", "one application: its status and its objects"]
-      },
-      "object" => {
-        "list" => ["[PATTERN]", "the objects, node/app/object a line (PATTERN: * and ** for whole parts)"],
-        "info" => ["PATH", "one object (node/app/object): its description and its methods"],
-        "find" => ["METHOD", "the objects that have the method (* as a wildcard)"],
-        "get" => ["PATH [KEY]", "the next value the application puts on PATH/KEY (its own keys; KEY: ** " \
-                                "by default; --timeout 5.0)"],
-        "echo" => ["PATH [KEY]", "the values it puts there as they come (the text: what changed; --once: " \
-                                 "the first; --raw: each whole)"]
-      },
-      "status" => {
-        "get" => ["NODE/APP", "an application's status, now"],
-        "echo" => ["NODE/APP", "its status, then each change as it comes (--once: now, once)"],
-        "hz" => ["NODE/APP", "how often it changes: the rate, the intervals' min / max / std dev"]
-      }
-    }.freeze
-
-    # The commands without a noun: name => [its arguments, what it does].
-    COMMANDS = {
-      "call" => ["PATH METHOD [ARG...]", "calls a method; each ARG is JSON, else a Ruby literal, else text"],
-      "ping" => ["PATH", "round trips: PATH node/app/object (its meta) or node (its profile); " \
-                         "--call METHOD [ARG...] times a call instead"],
-      "watch" => ["", "nodes, applications and objects coming and going, and status changes"],
-      "tree" => ["", "nodes > applications (with their status) > objects (--methods: their methods)"],
-      "mcp" => ["", "an MCP server on stdio (needs the mcp gem): the listings as tools, and the methods " \
-                    "--allow names"],
-      "completion" => ["bash|zsh", "the shell's Tab completion: source <(asterism completion bash)"],
-      "version" => ["", "the gem's version"]
-    }.freeze
-
-    # The older names, kept with their output.
-    ALIASES = {
-      "nodes" => "the nodes, their applications (with their statuses) and profiles, in one listing",
-      "objects" => "[PATTERN] the objects with their descriptions and methods (object info of each)",
-      "echo" => "ping"
-    }.freeze
-
-    # The options that take a value (what __complete skips over).
-    VALUE_OPTIONS = %w[--router --credentials --peer --node --app -o --output --timeout --settle --duration --count
-                       --interval --call --kwargs --allow --period --window].freeze
-
     def self.usage
       col = 30
       line = lambda do |name, args, what|
@@ -130,20 +99,38 @@ module Asterism
       new(out: out, err: err, env: env).run(argv.dup)
     end
 
-    def initialize(out: $stdout, err: $stderr, env: ENV)
+    # The reason permit: gave for not running the command (nil: it ran).
+    attr_reader :refused
+
+    def initialize(out: $stdout, err: $stderr, env: ENV, net: nil, stop: nil, permit: nil)
       @out = out
       @err = err
       @env = env
+      @given_net = net
+      @stop = stop
+      @permit = permit
+      @held = []
       @lock = Mutex.new
       @last_status = {}
       @opts = { timeout: 2.0, settle: 1.5, format: nil, count: 5, interval: 0.2, allow: [], period: 1.0,
                 window: 1000 }
     end
 
+    # Whether this command line runs on a connection it was given (net:).
+    def embedded?
+      !@given_net.nil?
+    end
+
+    # Whether stop: asks the command to end.
+    def stopped?
+      @stop ? @stop.call : false
+    end
+
     def run(argv)
       cmd = argv.shift
       case cmd
       when nil, "help", "-h", "--help"
+        return 2 unless permitted?(Plan.new(key: "help", kind: :read, args: argv.dup, options: {}))
         if cmd == "help" && NOUNS.key?(argv.first)
           @out.puts CLI.noun_usage(argv.first)
           return 0
@@ -151,9 +138,11 @@ module Asterism
         @out.puts USAGE
         return cmd.nil? ? 2 : 0
       when "version", "--version", "-v"
+        return 2 unless permitted?(Plan.new(key: "version", kind: :read, args: [], options: {}))
         @out.puts "asterism #{::Asterism::VERSION}"
         return 0
       when "__complete"
+        return 2 unless permitted?(Plan.new(key: "__complete", kind: :read, args: argv.dup, options: {}))
         return cmd_complete(argv)
       end
       key = cmd
@@ -173,8 +162,10 @@ module Asterism
         @err.puts "asterism: unknown command #{cmd.inspect}\n\n#{USAGE}"
         return 2
       end
+      return embedded_run(key, argv) if embedded?
       rest = parser(key).parse(argv)
-      send("cmd_#{key == 'echo' ? 'ping' : key.tr(' ', '_')}", rest)
+      return 2 unless permitted?(plan(key, rest))
+      run_command(key, rest)
     rescue OptionParser::ParseError, ArgumentError => e
       @err.puts "asterism: #{e.message}"
       2
@@ -188,17 +179,70 @@ module Asterism
       0
     end
 
+    def run_command(key, rest)
+      send("cmd_#{key == 'echo' ? 'ping' : key.tr(' ', '_')}", rest)
+    end
+
+    # A command on the connection given (net:): no connection options, no
+    # mcp or completion, --help printed to out (see the top of this file).
+    def embedded_run(key, argv)
+      if LOCAL.include?(key)
+        return 2 unless permitted?(Plan.new(key: key, kind: :local, args: argv.dup, options: {}))
+        raise ArgumentError, "#{key} runs only as a program of its own (asterism #{key})"
+      end
+      words = argv.take_while { _1 != "--" }
+      given = words.find { CONNECTION_OPTIONS.include?(_1.split("=", 2)[0]) }
+      raise ArgumentError, "#{given.split('=', 2)[0]}: this command line runs on the connection it was given" if given
+      if words.any? { %w[-h --help].include?(_1) }
+        @out.puts parser(key).help
+        return 0
+      end
+      rest = parser(key).parse(argv)
+      return 2 unless permitted?(plan(key, rest))
+      run_command(key, rest)
+    end
+
+    # The Plan of a command whose words were read (rest: its positional
+    # arguments).
+    def plan(key, rest)
+      kind = CLI.kind(key, call: @opts[:call])
+      path = rest[0]
+      method = kind == :call ? (key == "call" ? rest[1] : @opts[:call]) : nil
+      Plan.new(key: key, kind: kind, path: path, method: method, args: rest.dup,
+               options: @opts.reject { |k, _| k == :allow }.merge(allow: @opts[:allow].dup))
+    end
+
+    # Asks permit: (when given) about the plan; prints the reason it gives.
+    def permitted?(plan)
+      return true unless @permit
+      why = @permit.call(plan)
+      return true if why.nil?
+      @refused = why.to_s
+      @err.puts "asterism: #{@refused}"
+      false
+    end
+
     # The options of a command (key: "tree", "node info", ...).
     def parser(key)
       OptionParser.new do |o|
         args = (NOUNS.dig(*key.split(" ")) || COMMANDS[key] || [""])[0]
         o.banner = "Usage: asterism #{key} #{args} [options]".squeeze(" ")
+        if embedded?
+          # Long options only as written in full (no --cal for --call), and
+          # none of OptionParser's own (--help, --version, the completion
+          # scripts): they print to $stdout and exit the process.
+          o.require_exact = true
+          o.base.long.clear
+          o.base.short.clear
+        end
         unless key == "completion"
-          o.on("--router LOCATOR", "a router (tcp/HOST:7447)") { @opts[:router] = _1 }
-          o.on("--credentials TAR", "a console's .tar") { @opts[:credentials] = _1 }
-          o.on("--peer LOCATOR", "a direct peer link to a node listening there (no router)") { @opts[:peer] = _1 }
-          o.on("--node NAME", "this node's ID (default: the certificate's name, or cli-<6 hex>)") { @opts[:node] = _1 }
-          o.on("--app NAME", "this application's name (default: cli-<4 hex>)") { @opts[:app] = _1 }
+          unless embedded?
+            o.on("--router LOCATOR", "a router (tcp/HOST:7447)") { @opts[:router] = _1 }
+            o.on("--credentials TAR", "a console's .tar") { @opts[:credentials] = _1 }
+            o.on("--peer LOCATOR", "a direct peer link to a node listening there (no router)") { @opts[:peer] = _1 }
+            o.on("--node NAME", "this node's ID (default: the certificate's name, or cli-<6 hex>)") { @opts[:node] = _1 }
+            o.on("--app NAME", "this application's name (default: cli-<4 hex>)") { @opts[:app] = _1 }
+          end
           unless key == "mcp"
             o.on("-o", "--output FORMAT", %w[json yaml], "json or yaml instead of text (the same content)") do
               @opts[:format] = _1.to_sym
@@ -297,7 +341,8 @@ module Asterism
 
     # Connects, starts the receiving thread, waits for the tokens and yields
     # the Net and a Survey.
-    def connect(app_prefix: "cli")
+    def connect(app_prefix: "cli", &blk)
+      return connect_given(&blk) if embedded?
       router, creds, peer = network
       if router.nil? && creds.nil? && peer.nil?
         raise ArgumentError, "where is the network? --router tcp/HOST:7447 or --credentials FILE.tar " \
@@ -319,7 +364,42 @@ module Asterism
         net.start
         survey = Survey.new(timeout: @opts[:timeout])
         survey.settle(@opts[:settle])
-        yield net, survey
+        begin
+          yield net, survey
+        ensure
+          release_held
+        end
+      end
+    end
+
+    # The connection given (net:): yields it and a Survey; nothing is
+    # started, waited for or closed (its tokens are known already). What
+    # the command subscribed to or hooked onto it is released at the end.
+    def connect_given
+      raise ::Asterism::Disconnected, "the connection is not there" unless @given_net.connected?
+      yield @given_net, Survey.new(timeout: @opts[:timeout])
+    ensure
+      release_held
+    end
+
+    # Something a command keeps until it ends (released when it does): a
+    # subscription or liveliness watch (closed), or [:join / :leave, block]
+    # given to on_join / on_leave (taken off). Returns it.
+    def hold(thing)
+      @lock.synchronize { @held << thing }
+      thing
+    end
+
+    def release_held
+      held = @lock.synchronize { @held.slice!(0..) }
+      held.reverse_each do |h|
+        case h
+        in [:join, blk] then (@given_net || ::Asterism).off_join(blk)
+        in [:leave, blk] then (@given_net || ::Asterism).off_leave(blk)
+        else h.close
+        end
+      rescue StandardError
+        nil
       end
     end
 
@@ -427,25 +507,25 @@ module Asterism
       connect do |net, sv|
         own = "#{net.node_id}/#{net.app}"
         sv.statuses.sort.each { |path, st| event("status", path, status: st, now: true) }
-        net.on_join { |n| event("join", n, what: "node") }
-        net.on_leave { |n| event("leave", n, what: "node") }
-        net.session.liveliness_watch("asterism/**") do |key, alive|
+        net.on_join(&hold([:join, proc { |n| event("join", n, what: "node") }])[1])
+        net.on_leave(&hold([:leave, proc { |n| event("leave", n, what: "node") }])[1])
+        hold(net.session.liveliness_watch("asterism/**") do |key, alive|
           # The tokens alive at the start come first, in one burst: not news.
           next unless @watch_started
           path = key.delete_prefix("asterism/")
           next if path == own || path.start_with?("#{own}/")
           what = { 2 => "app", 3 => "object" }[path.count("/") + 1]
           event(alive ? "join" : "leave", path, what: what) if what
-        end
-        net.session.subscribe(Survey::STATUS_ALL) do |sample|
+        end)
+        hold(net.session.subscribe(Survey::STATUS_ALL) do |sample|
           got = ::Asterism::Status.parse(sample.key, sample.payload)
           event("status", "#{got[0]}/#{got[1]}", status: got[2]) if got && "#{got[0]}/#{got[1]}" != own
-        end
-        net.session.subscribe(Survey::PROFILES_ALL) do |sample|
+        end)
+        hold(net.session.subscribe(Survey::PROFILES_ALL) do |sample|
           node = sample.key.split("/")[1]
           pr = ::Asterism::Profile.check(::Asterism::Codec.unpack(sample.payload))
           event("profile", node, profile: pr) if pr && node != net.node_id
-        end
+        end)
         sleep 0.3
         @watch_started = true
         @err.puts "asterism: watching (Ctrl-C to stop)" unless structured?
@@ -453,6 +533,7 @@ module Asterism
         loop do
           break if deadline && Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
           break unless net.connected?
+          break if stopped?
           sleep 0.05
         end
       end
@@ -533,7 +614,8 @@ module Asterism
       connect do |_net, _sv|
         ms = (@opts[:timeout] * 1000).round
         @opts[:count].times do |i|
-          sleep @opts[:interval] if i.positive?
+          break if stopped?
+          pause(@opts[:interval]) if i.positive?
           t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
           ok = begin
             ping_once(path, chunks, args, ms)
@@ -558,6 +640,16 @@ module Asterism
                          times.min, times.sum / times.size, times.max)
       end
       times.empty? ? 1 : 0
+    end
+
+    # Sleeps for seconds, or until stop: asks to end.
+    def pause(seconds)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + seconds
+      loop do
+        left = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        break if left <= 0 || stopped?
+        sleep [left, 0.1].min
+      end
     end
 
     def ping_once(path, chunks, args, ms)

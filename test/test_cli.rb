@@ -840,6 +840,107 @@ class TestCLI < Minitest::Test
     end
   end
 
+  # On a connection given (CLI.new(net:)), as a console's bridge runs it:
+  # this process is one more node ("host"/"console"), the commands run on
+  # its connection, permit: is asked, stop: ends the streams, and what a
+  # command subscribed to is released while the connection stays.
+  def test_on_a_given_connection
+    with_node do |node|
+      if (r = TestHelper.router)
+        Asterism.connect(r, node: "host", app: "console")
+      else
+        Asterism.connect(@where[1], node: "host", app: "console", mode: :peer)
+      end
+      net = Asterism.net
+      net.start
+      assert wait_for(5) { Asterism.each("calcnode/**").size == 2 }
+      plans = []
+      run = lambda do |*words, permit: ->(pl) { plans << pl; nil }, stop: nil, cols: 80|
+        out = FakeTTY.new(cols)
+        cli = Asterism::CLI.new(out: out, err: out, env: { "NO_COLOR" => "1" }, net: net, stop: stop, permit: permit)
+        code = cli.run(words)
+        [out.string, code, cli]
+      end
+
+      out, code = run.("node", "list")
+      assert_equal [0, "calcnode\n"], [code, out], "this connection's own node is left out"
+      assert_equal ["node list", :read], plans.last.to_h.values_at(:key, :kind)
+      out, code = run.("tree")
+      assert_equal 0, code, out
+      assert_includes out, "    calc  5 methods\n"
+      out, code = run.("call", "calcnode/calc/calc", "add", "2", "3")
+      assert_equal [0, "5\n"], [code, out]
+      assert_equal ["call", :call, "calcnode/calc/calc", "add", %w[calcnode/calc/calc add 2 3]],
+                   plans.last.to_h.values_at(:key, :kind, :path, :method, :args)
+      out, code = run.("call", "calcnode/calc/calc", "whoami")
+      assert_equal [0, "\"host\"\n"], [code, out], "the caller is the connection's node"
+      run.("ping", "calcnode/calc/calc", "--call", "add", "1", "2", "--count", "1")
+      assert_equal [:call, "calcnode/calc/calc", "add"], plans.last.to_h.values_at(:kind, :path, :method)
+      run.("ping", "calcnode/calc/calc", "--count", "1")
+      assert_equal :read, plans.last.kind
+
+      # Refused by permit: its reason, nothing called.
+      out, code, cli = run.("call", "calcnode/calc/calc", "add", "2", "3", permit: ->(pl) { "#{pl.method}: no" })
+      assert_equal [2, "asterism: add: no\n", "add: no"], [code, out, cli.refused]
+      # Long options in full only: --cal is not --call (a call that would pass as a read).
+      n = plans.size
+      out, code = run.("ping", "calcnode/calc/calc", "--cal", "add")
+      assert_equal 2, code
+      assert_match(/invalid option: --cal/, out)
+      assert_equal n, plans.size, "refused before permit: is asked"
+      out, code = run.("node", "list", "--router", "tcp/192.0.2.2:7447")
+      assert_equal [2, "asterism: --router: this command line runs on the connection it was given\n"], [code, out]
+      out, code = run.("call", "a/b/c", "m", "--node=other")
+      assert_match(/--node: this command line runs on the connection/, out)
+      assert_equal 2, code
+      out, code = run.("mcp")
+      assert_equal [2, "asterism: mcp runs only as a program of its own (asterism mcp)\n"], [code, out]
+      assert_equal :local, plans.last.kind
+      out, code = run.("completion", "bash")
+      assert_equal 2, code
+      out, code = run.("node", "list", "--help")
+      assert_equal 0, code
+      assert_match(/\AUsage: asterism node list \[options\]/, out)
+      refute_match(/--router/, out)
+      out, code = run.("version", "--version")
+      assert_equal [0, "asterism #{Asterism::VERSION}\n"], [code, out]
+      out, code = run.("__complete", "--", "call", "calc")
+      assert_equal [0, "calcnode/\n"], [code, out]
+      out, = run.("__complete", "--", "call", "calcnode/calc/calc", "a")
+      assert_equal "add\nany\n", out
+
+      # A stream ends when stop: says so; what it subscribed to goes, the
+      # connection stays.
+      stop = false
+      q = Queue.new
+      th = Thread.new { q << run.("status", "echo", "calcnode/calc", stop: -> { stop }) }
+      sleep 1.0
+      node.puts "9"
+      node.flush
+      sleep 0.8
+      stop = true
+      out, code, cli = Timeout.timeout(3) { q.pop }
+      th.join
+      assert_equal 0, code
+      assert_match(/calcnode\/calc \(now\)\n\s+tables=1 st=wait\n.*tables 1→9/m, out)
+      assert_empty cli.instance_variable_get(:@held)
+      stop = false
+      th = Thread.new { q << run.("watch", stop: -> { stop }) }
+      sleep 0.8
+      stop = true
+      _, code, cli = Timeout.timeout(3) { q.pop }
+      th.join
+      assert_equal 0, code
+      assert_empty cli.instance_variable_get(:@held)
+      assert_empty Asterism.instance_variable_get(:@on_join).to_a, "watch's on_join is taken off"
+      assert net.connected?
+      out, code = run.("object", "get", "calcnode/calc/calc", "--timeout", "30", stop: -> { true })
+      assert_equal 1, code, out
+    ensure
+      Asterism.close
+    end
+  end
+
   # object get / echo: the values the node puts on its own keys.
   def test_object_values
     with_node do |node|

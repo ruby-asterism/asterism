@@ -6,6 +6,12 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
+## Unreleased
+
+- The command line runs inside another program, on that program's connection (README "Inside another program"): `Asterism::CLI.new(net:, stop:, permit:)`. `net:` an `Asterism::Net` already connected (neither started nor closed; what a command subscribes to or hooks onto it is released when it ends), `stop:` ends a streaming command as Ctrl-C does, `permit:` is asked with an `Asterism::CLI::Plan` (the command, `:read` / `:call` / `:local`, the object and method of a call) and may refuse with a reason (`CLI#refused`). Such a command line takes no connection options, runs neither `mcp` nor `completion`, takes long options only in full, prints `--help` to its `out`, and its `__complete` keeps no cache and never exits the process.
+- `lib/asterism/cli/commands.rb`: the command table (`NOUNS`, `COMMANDS`, `ALIASES`, `VALUE_OPTIONS`, `CONNECTION_OPTIONS`, `LOCAL`), `CLI.kind(key, call:)` (what a command does on the network: only `call` and `ping --call` call a method) and `CLI::Plan`, loadable without the Zenoh binding.
+- The command line closes what a command subscribed to (and takes off its `on_join` / `on_leave` blocks) when the command ends, before the connection closes. The output is the same.
+
 ## 0.12.0
 
 - `Asterism::Transfer` (`data/transfer/`, `require "asterism/transfer"` on CRuby): a file carried in pieces over calls, resent from the receiver's position after lost, repeated or reordered pieces, a dropped connection or a receiver started again, checked whole by SHA-256. Plain Ruby loaded at run time on the boards (not part of the mrbgem). `rake test:transfer`.
