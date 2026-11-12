@@ -22,7 +22,8 @@ class TestCrossMruby < Minitest::Test
     pubs = { "imu" => { "t" => 2, "u" => "m/s2", "d" => "acceleration", "ts" => true },
              "cam/front" => { "t" => 4, "e" => 17 } }
     assert_equal pubs, Asterism.pubs_of("mdata", "t")
-    assert_equal({ "mdata/sample" => { "f" => [["id", "int"], ["tags", "str[]"], ["at", 3]], "d" => "a sample" } },
+    assert_equal({ "mdata/sample" => { "f" => [["id", "int"], ["tags", "str[]"], ["at", "pose"], ["trail", "vector3[]"],
+                                                     ["kind", 5]], "d" => "a sample" } },
                  Asterism.types_of("mdata", "t"))
     assert_nil Asterism.status_of("mdata", "t")
 

@@ -74,7 +74,8 @@ end
 
 Asterism.profile(name: "iut", icon: icon)
 Asterism.status({ "st" => "wait", "n" => 1 })
-Asterism.define_type("conf/stroke", [["pts", "int[]"], ["color", "str"], ["at", :vector3]], desc: "one stroke")
+Asterism.define_type("conf/stroke", [["pts", "int[]"], ["color", "str"], ["at", 2], ["path", "vector3[]"],
+                                     ["pose", "pose"]], desc: "one stroke")
 if mode == "peer"
   Asterism.connect(locator, node: "iut", app: "conf", mode: :peer)
 else

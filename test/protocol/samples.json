@@ -49,7 +49,15 @@
           ],
           [
             "at",
-            "vector3"
+            2
+          ],
+          [
+            "path",
+            "vector3[]"
+          ],
+          [
+            "pose",
+            "pose"
           ]
         ],
         "desc": "one stroke"
@@ -2987,6 +2995,14 @@
                                 {
                                   "int": "2"
                                 }
+                              ],
+                              [
+                                "path",
+                                "vector3[]"
+                              ],
+                              [
+                                "pose",
+                                "pose"
                               ]
                             ]
                           ],
@@ -3004,7 +3020,7 @@
           }
         }
       ],
-      "note": "f: [name, type] pairs (a built-in number, a basic type, another type's name; [] for an array)",
+      "note": "f: [name, type] pairs (a built-in type's number or name, a basic type, another type's name; [] for an array)",
       "portable": true
     },
     {
@@ -3058,6 +3074,14 @@
                                 {
                                   "int": "2"
                                 }
+                              ],
+                              [
+                                "path",
+                                "vector3[]"
+                              ],
+                              [
+                                "pose",
+                                "pose"
                               ]
                             ]
                           ],

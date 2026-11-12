@@ -238,7 +238,8 @@ st_tv = m(["st", "wait"], ["n", i(1)])
 pubs_tv = m(["imu", m(["t", i(2)], ["u", "m/s2"], ["d", "acceleration"], ["ts", true])],
             ["board1/strokes", m(["t", "conf/stroke"])],
             ["camera", m(["t", i(4)], ["e", i(17)])])
-types_tv = m(["conf/stroke", m(["f", [["pts", "int[]"], ["color", "str"], ["at", i(2)]]], ["d", "one stroke"])])
+types_tv = m(["conf/stroke", m(["f", [["pts", "int[]"], ["color", "str"], ["at", i(2)], ["path", "vector3[]"],
+                                     ["pose", "pose"]]], ["d", "one stroke"])])
 ap = ->(*pairs) { [{ "key" => app_prof, "payload" => m(*pairs) }] }
 q.("app profile", app_prof, nil, ap.(["status", st_tv], ["pubs", pubs_tv]),
   note: "without parameters: the status and the topics (the types only when asked for)")
@@ -246,7 +247,7 @@ q.("app profile ?status", app_prof, nil, ap.(["status", st_tv]), params: "status
 q.("app profile ?pubs", app_prof, nil, ap.(["pubs", pubs_tv]), params: "pubs",
   note: "t: a built-in type's number or an application type's name; e: the encoding's number (image/jpeg is 17)")
 q.("app profile ?types", app_prof, nil, ap.(["types", types_tv]), params: "types",
-  note: "f: [name, type] pairs (a built-in number, a basic type, another type's name; [] for an array)")
+  note: "f: [name, type] pairs (a built-in type's number or name, a basic type, another type's name; [] for an array)")
 q.("app profile two parts", app_prof, nil, ap.(["status", st_tv], ["types", types_tv]), params: "status;types")
 q.("app profile unknown parameters", app_prof, nil, ap.(["status", st_tv], ["pubs", pubs_tv]), params: "x=1",
   note: "parameters naming no part: the default reply")
@@ -435,7 +436,8 @@ samples = {
   "iut" => {
     "profile" => m(["name", "iut"]),
     "status" => m(["st", "wait"], ["n", i(1)]),
-    "types" => [{ "name" => "conf/stroke", "fields" => [["pts", "int[]"], ["color", "str"], ["at", "vector3"]],
+    "types" => [{ "name" => "conf/stroke", "fields" => [["pts", "int[]"], ["color", "str"], ["at", 2], ["path", "vector3[]"],
+                                                                ["pose", "pose"]],
                   "desc" => "one stroke" }],
     "topics" => [{ "name" => "imu", "type" => "vector3", "unit" => "m/s2", "desc" => "acceleration", "ts" => true },
                  { "name" => "board1/strokes", "type" => "conf/stroke" },

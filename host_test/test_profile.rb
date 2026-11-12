@@ -133,9 +133,10 @@ check(Asterism.status_of("mnode", "nothing", timeout: 1.0).nil?, "no status: nil
 
 # --- topics (topic.rb), on mruby and from node.rb
 check(Asterism::Types.number(:vector3) == 2, "a built-in type's number")
-check(Asterism::Types.definition!([["pts", "int[]"], ["at", :vector3]], "d") ==
-      { "f" => [["pts", "int[]"], ["at", 2]], "d" => "d" }, "a definition")
-raises(ArgumentError, "an array of a built-in type") { Asterism::Types.definition!([["a", "vector3[]"]], nil) }
+check(Asterism::Types.definition!([["pts", "int[]"], ["at", :vector3], ["n", 1], ["path", "pose[]"]], "d") ==
+      { "f" => [["pts", "int[]"], ["at", "vector3"], ["n", 1], ["path", "pose[]"]], "d" => "d" },
+      "a definition (built-in types by number or name, arrays of them by name)")
+raises(ArgumentError, "a field type of [] alone") { Asterism::Types.definition!([["a", "[]"]], nil) }
 check(Asterism::Pubs.encoding_id("image/jpeg") == 17 && Asterism::Pubs.encoding_id("video/vp9") == 52,
       "encoding numbers")
 check(Asterism::Pubs.check({ "a" => { "t" => 2, "x" => 1 }, 5 => {} }) == { "a" => { "t" => 2 } }, "pubs check")

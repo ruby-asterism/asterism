@@ -58,7 +58,7 @@ class Probe
   end
 end
 
-Asterism.define_type("mdata/sample", [["id", "int"], ["tags", "str[]"], ["at", :pose]], desc: "a sample")
+Asterism.define_type("mdata/sample", [["id", "int"], ["tags", "str[]"], ["at", :pose], ["trail", "vector3[]"], ["kind", 5]], desc: "a sample")
 Asterism.connect(nil, node: "mdata", app: "t", mode: :peer, listen: "tcp/127.0.0.1:#{port}")
 imu = Asterism.publish("imu", type: :vector3, unit: "m/s2", desc: "acceleration", ts: true)
 cam = Asterism.publish("cam/front", type: :image, encoding: "image/jpeg")

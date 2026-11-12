@@ -30,12 +30,14 @@ class TestTopic < Minitest::Test
     assert_raises(ArgumentError) { Asterism::Types.topic_type!(8) }
     assert_raises(ArgumentError) { Asterism::Types.topic_type!("") }
     assert_raises(ArgumentError) { Asterism::Types.topic_type!(1.5) }
-    d = Asterism::Types.definition!([["pts", "int[]"], [:pos, :vector3], ["kids", "mygame/node[]"], ["n", 1]], "a board")
-    assert_equal({ "f" => [["pts", "int[]"], ["pos", 2], ["kids", "mygame/node[]"], ["n", 1]], "d" => "a board" }, d)
+    d = Asterism::Types.definition!([["pts", "int[]"], [:pos, :vector3], ["kids", "mygame/node[]"], ["n", 1],
+                                     ["path", "vector3[]"], ["at", "pose"]], "a board")
+    assert_equal({ "f" => [["pts", "int[]"], ["pos", "vector3"], ["kids", "mygame/node[]"], ["n", 1],
+                           ["path", "vector3[]"], ["at", "pose"]], "d" => "a board" }, d,
+                 "built-in types by number or by name, as written; arrays of them by name")
     assert_equal({ "f" => [] }, Asterism::Types.definition!([], nil))
     assert_raises(ArgumentError) { Asterism::Types.definition!([["a"]], nil) }
     assert_raises(ArgumentError) { Asterism::Types.definition!([["a", "[]"]], nil) }
-    assert_raises(ArgumentError) { Asterism::Types.definition!([["a", "vector3[]"]], nil) }
     assert_raises(ArgumentError) { Asterism::Types.definition!([["a", 9]], nil) }
     assert_raises(ArgumentError) { Asterism::Types.definition!({ "a" => "int" }, nil) }
     assert_raises(ArgumentError) { Asterism::Types.definition!([], 5) }

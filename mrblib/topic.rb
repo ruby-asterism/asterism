@@ -27,7 +27,7 @@ module Asterism
   module Types
     NUMBER = 1   # a Float or an Integer
     VECTOR3 = 2  # [x, y, z]
-    POSE = 3     # [x, y, z, qx, qy, qz, qw]
+    POSE = 3     # [x, y, z, qx, qy, qz, qw] (ROS 2's Pose order)
     IMAGE = 4    # the bytes, in the topic's encoding (image/jpeg, image/png)
     STATE = 5    # a String or an Integer (a scene, on / off)
     LOG = 6      # a log record (docs/v3.md)
@@ -78,8 +78,10 @@ module Asterism
       s
     end
 
-    # A field's type as it is sent: a built-in number, or a String (a
-    # basic type, another application type; "[]" at the end for an array).
+    # A field's type as it is sent: a built-in number as given, or a
+    # String as given (a Symbol as its name): a built-in type's name
+    # ("vector3"), a basic type ("int"), another application type; "[]" at
+    # the end for an array of it ("vector3[]", "int[]").
     # @api private
     def self.field_type!(t)
       if t.is_a?(Integer)
@@ -89,13 +91,6 @@ module Asterism
       s = name!("field type:", t)
       base = s.end_with?("[]") ? s[0, s.size - 2] : s
       raise ArgumentError, "field type #{s.inspect}: no type before []" if base.empty?
-      n = number(base)
-      if n
-        return n if base == s
-        # docs/protocol.md 10: the form of an array of a built-in type is
-        # not decided yet.
-        raise ArgumentError, "field type #{s.inspect}: an array of a built-in type cannot be written yet"
-      end
       s
     end
 
@@ -649,9 +644,10 @@ module Asterism
   # Defines an application type (docs/protocol.md 10), told to the readers
   # by asterism/<node>/<app>/@profile?types. name: a String
   # ("mygame/board.strokes"); fields: [[name, type], ...], each type a
-  # built-in one (:vector3 or its number), a basic one ("int", "float",
-  # "str", "bin", "bool") or another application type's name, with "[]" at
-  # the end for an array ("int[]", "mygame/point[]"); desc: a text. Defining
+  # built-in one (its number, or its name: "vector3", :vector3), a basic
+  # one ("int", "float", "str", "bin", "bool") or another application
+  # type's name, with "[]" at the end for an array ("vector3[]", "int[]",
+  # "mygame/point[]"); names are sent as written. desc: a text. Defining
   # a name again replaces it. Kept across connect and close. Returns the
   # definition as sent ({"f" => [...], "d" => ...}).
   def self.define_type(name, fields, desc: nil)
