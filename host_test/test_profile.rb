@@ -72,7 +72,7 @@ other = Asterism.profile_of("mnode")
 check(other && other["kind"] == "picoruby" && other["host"] == "host_test" && other["name"] == "mruby node",
       "profile_of: #{other.inspect[0, 120]}")
 check(other && other["icon"] == ICON && other["icon_hash"] == info[2], "the icon came whole")
-check(other && other["protocol"] == 1, "the other node speaks protocol 1")
+check(other && other["protocol"] == 2, "the other node speaks protocol 2")
 check(other && other["icon"].encoding == "ASCII-8BIT", "the icon came as a bin (a binary String)")
 check(MessagePack.pack(Asterism::Profile.binary("\x89PNG")).getbyte(0) == 0xc4,
       "an icon's bytes are a binary String (sent as a bin)")
@@ -130,6 +130,52 @@ while Time.now - t < 0.5
 end
 check(again == 0, "the same status again puts nothing (#{again})")
 check(Asterism.status_of("mnode", "nothing", timeout: 1.0).nil?, "no status: nil")
+
+# --- topics (topic.rb), on mruby and from node.rb
+check(Asterism::Types.number(:vector3) == 2, "a built-in type's number")
+check(Asterism::Types.definition!([["pts", "int[]"], ["at", :vector3]], "d") ==
+      { "f" => [["pts", "int[]"], ["at", 2]], "d" => "d" }, "a definition")
+raises(ArgumentError, "an array of a built-in type") { Asterism::Types.definition!([["a", "vector3[]"]], nil) }
+check(Asterism::Pubs.encoding_id("image/jpeg") == 17 && Asterism::Pubs.encoding_id("video/vp9") == 52,
+      "encoding numbers")
+check(Asterism::Pubs.check({ "a" => { "t" => 2, "x" => 1 }, 5 => {} }) == { "a" => { "t" => 2 } }, "pubs check")
+raises(ArgumentError, "a topic name with a wildcard") { Asterism.publish("a/*") }
+raises(ArgumentError, "encoding zenoh/bytes") { Asterism.publish("a", encoding: "zenoh/bytes") }
+# Sequence numbers as a subscription reads them (a stand-in for a sample).
+class FakeSample
+  attr_reader :key, :payload, :attachment, :kind, :encoding, :timestamp
+  def initialize(key, seq)
+    @key = key
+    @payload = MessagePack.pack(seq)
+    @attachment = MessagePack.pack([seq])
+    @kind = :put
+    @encoding = "zenoh/bytes"
+    @timestamp = nil
+  end
+end
+fs = Asterism::Subscription.new("x", nil, nil)
+lost = [5, 6, 9, 2].map { |n| i = fs.unwrap(FakeSample.new("asterism/n/a/x", n))[1]; [i.lost, i.restarted?] }
+check(lost == [[0, false], [0, false], [2, false], [2, true]], "lost and restarted: #{lost.inspect}")
+fs.unwrap(FakeSample.new("asterism/n/a/w", Asterism::Topic::SEQ_MAX))
+w = fs.unwrap(FakeSample.new("asterism/n/a/w", 0))[1]
+check(w.lost == 0 && !w.restarted?, "the wrap")
+pubs = Asterism.pubs_of("mnode", "t")
+check(pubs == { "imu" => { "t" => 2, "u" => "m/s2", "ts" => true } }, "pubs_of: #{pubs.inspect}")
+got = []
+plain = []
+Asterism.subscribe("mnode/t/imu") { |v, info| got << [v, info.seq, info.encoding, info.time.is_a?(Integer)] }
+Asterism.subscribe("mnode/*/**") { |v| plain << v }
+t = Time.now
+Asterism.poll while Time.now - t < 0.3
+s.put("test/imu", "7")
+s.put("test/imu", "8")
+t = Time.now
+while got.size < 2 && Time.now - t < 3
+  Asterism.poll
+  usleep 2000
+end
+check(got == [[[1, 2, 7], 0, "msgpack", true], [[1, 2, 8], 1, "msgpack", true]], "values with |v, info|: #{got.inspect}")
+check(plain == [[1, 2, 7], [1, 2, 8]], "values with |v|: #{plain.inspect}")
 s.put("test/stop", "")
 Asterism.poll
 Asterism.close

@@ -1,5 +1,5 @@
-# The conformance driver (docs/protocol.md 11): checks an implementation of
-# the Asterism wire protocol 1 against test/protocol/samples.json, over Zenoh.
+# The conformance driver (docs/protocol.md 14): checks an implementation of
+# the Asterism wire protocol 2 against test/protocol/samples.json, over Zenoh.
 # It uses only the plain Zenoh API (asterism-zenoh) and msgpack, never
 # Asterism's object layer, so what it checks is what goes on the wire.
 #
@@ -139,6 +139,12 @@ end
 s.subscribe("asterism/#{IUT}/@profile") { |sm| lock.synchronize { profile_puts << sm.payload.b } }
 status_puts = []
 s.subscribe("asterism/#{IUT}/*/@status") { |sm| lock.synchronize { status_puts << [sm.key, sm.payload.b] } }
+pubs_puts = []
+s.subscribe("asterism/#{IUT}/*/@pubs") { |sm| lock.synchronize { pubs_puts << [sm.key, sm.payload.b] } }
+data_puts = []
+s.subscribe("asterism/#{IUT}/**") do |sm|
+  lock.synchronize { data_puts << [sm.key, sm.payload.b, sm.encoding, sm.attachment&.b] }
+end
 
 icon_file = File.join(Dir.mktmpdir("asterism-protocol"), "icon.png")
 File.binwrite(icon_file, hexbytes(SAMPLES["icon"]["hex"]))
@@ -207,7 +213,9 @@ begin
   by_call = outs.select { |o| o["do"].key?("call") }.to_h { |o| [o["do"]["call"], o] }
   meta = outs.find { |o| o["do"].key?("respond_to") }
   profile_steps = outs.select { |o| o["do"].key?("profile_of") }
-  status_steps = outs.select { |o| o["do"].key?("status_of") }
+  app_steps = outs.select { |o| o["do"].key?("status_of") || o["do"].key?("pubs_of") || o["do"].key?("types_of") }
+  feed = outs.find { |o| o["do"].key?("feed") }
+  by_call["feed"] = feed if feed
   requests = {} # id => [ok, detail]
   reports = []
   done = false
@@ -260,6 +268,14 @@ begin
         q.reply(q.key, MessagePack.pack({ "value" => nil }))
       elsif (o = by_call[method])
         lock.synchronize { requests[o["id"]] = check_request.(o, q) }
+        # rec.feed: the values go out before the answer (the same link
+        # keeps their order).
+        (o["do"]["feed"] || []).each do |fp|
+          opts = {}
+          opts[:attachment] = hexbytes(fp["attachment_hex"]) if fp["attachment_hex"]
+          opts[:encoding] = fp["encoding"] if fp["encoding"]
+          s.put(fp["key"], hexbytes(fp["payload_hex"]), **opts)
+        end
         answer.(o, q)
       else
         lock.synchronize { requests["unexpected #{method.inspect}"] = "unexpected call #{q.key} #{TV.from_ruby(req).to_json[0, 120]}" }
@@ -277,10 +293,10 @@ begin
       answer.(o, q)
     end
   end
-  status_n = 0
-  s.queryable("asterism/#{DRV}/#{APP}/@status") do |q|
-    o = status_steps[status_n]
-    status_n += 1
+  app_n = 0
+  s.queryable("asterism/#{DRV}/#{APP}/@profile") do |q|
+    o = app_steps[app_n]
+    app_n += 1
     if o
       lock.synchronize { requests[o["id"]] = check_request.(o, q) }
       answer.(o, q)
@@ -348,6 +364,50 @@ begin
   end
   R.add("status puts", "no other puts (none for the same status again)", st_now.size == SAMPLES["status_puts"].size,
         "#{st_now.size} puts")
+
+  # ---------------------------------------------------------- @pubs puts
+  pp_now = lock.synchronize { pubs_puts.dup }
+  want = SAMPLES["pubs_puts"]
+  bad_keys = pp_now.reject { |k, _| k == want["key"] }.map(&:first)
+  R.add("pubs puts", "on the key", bad_keys.empty?, bad_keys.empty? ? nil : bad_keys.uniq.inspect)
+  [["declared", -2], ["after_unpublish", -1]].each do |what, at|
+    k, b = pp_now[at]
+    if b.nil?
+      R.add("pubs puts", what, false, "#{pp_now.size} puts came")
+    else
+      st, v = decode(b)
+      why = st == :ok ? TV.mismatch(want[what], v) : "not MessagePack"
+      R.add("pubs puts", what, why.nil?, why)
+    end
+  end
+
+  # ---------------------------------------------------------- values on the topics
+  dp_now = lock.synchronize { data_puts.dup }
+  SAMPLES["data_puts"].each_with_index do |p, n|
+    k, b, enc, att = dp_now[n]
+    id = "#{n} #{p['key']}"
+    if b.nil?
+      R.add("data puts", id, false, "#{dp_now.size} puts came")
+      next
+    end
+    why = k == p["key"] ? nil : "key #{k}"
+    why ||= enc == p["encoding"] ? nil : "encoding #{enc.inspect}, expected #{p['encoding']}"
+    if why.nil?
+      if p["payload_hex"]
+        why = b == hexbytes(p["payload_hex"]) ? nil : "payload #{b.unpack1('H*')[0, 40]}"
+      else
+        st, v = decode(b)
+        why = st == :ok ? TV.mismatch(p["payload"], v) : "payload not MessagePack"
+      end
+    end
+    if why.nil?
+      st, v = decode(att)
+      why = st == :ok ? TV.mismatch(p["attachment"], v) : "attachment #{st}"
+      why &&= "attachment: #{why}"
+    end
+    R.add("data puts", id, why.nil?, why)
+  end
+  R.add("data puts", "no other puts", dp_now.size == SAMPLES["data_puts"].size, "#{dp_now.size} puts")
 ensure
   begin
     exited = wait(5) { Process.waitpid(pid, Process::WNOHANG) }

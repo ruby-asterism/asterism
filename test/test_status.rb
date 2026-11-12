@@ -1,8 +1,9 @@
-# Application statuses: the checks (no network), and
-# asterism/<node>/<app>/@status between two CRuby processes: status_of, the
-# puts on a change (and none for the same status again), the CRuby API's
-# on_status, an application without a status, answers that are not
-# acceptable, and Asterism.apps.
+# Application statuses: the checks (no network), and statuses between two
+# CRuby processes: status_of (a query of asterism/<node>/<app>/@profile
+# with ?status), the puts on asterism/<node>/<app>/@status on a change (and
+# none for the same status again), the CRuby API's on_status, an
+# application without a status, answers that are not acceptable, and
+# Asterism.apps.
 require_relative "helper"
 require "asterism"
 require "rbconfig"
@@ -72,7 +73,7 @@ class TestStatus < Minitest::Test
       Asterism.connect(nil, node: "child", app: "t", mode: :peer, listen: loc)
     end
     s = Asterism.session
-    bad = s.queryable("asterism/bad/*/@status")
+    bad = s.queryable("asterism/bad/*/@profile")
     answers = { "list" => [1, 2], "junk" => "x", "intkeys" => { 1 => 2, "ok" => true } }
     STDOUT.puts "ready"
     STDOUT.flush
@@ -80,7 +81,7 @@ class TestStatus < Minitest::Test
       Asterism.poll
       bad.each_pending do |q|
         app = q.key.split("/")[2]
-        q.reply(q.key, MessagePack.pack(answers[app])) if answers.key?(app)
+        q.reply(q.key, MessagePack.pack({ "status" => answers[app] })) if answers.key?(app)
         q.finish
       end
       r, = IO.select([STDIN], nil, nil, 0.002)
@@ -132,11 +133,20 @@ class TestStatus < Minitest::Test
     assert_empty notices.each_pending, "the same status again puts nothing"
     assert_equal 2, Asterism.status_of("child", "t")["tables"]
 
-    # @status is a verbatim chunk: asterism/child/t/** does not reach it.
+    # @profile is a verbatim chunk: asterism/child/t/** does not reach it.
     replies = []
     g = s.get("asterism/child/t/**", timeout_ms: 800)
     assert wait_for(2) { Asterism.poll; replies.concat(g.each_reply); g.done? }
     assert_empty replies
+    # Nothing answers on @status any more (only puts go there).
+    g = s.get("asterism/child/t/@status", timeout_ms: 800)
+    assert wait_for(2) { Asterism.poll; replies.concat(g.each_reply); g.done? }
+    assert_empty replies
+    # The application's profile without parameters: the status (no topics).
+    g = s.get("asterism/child/t/@profile", timeout_ms: 800)
+    assert wait_for(2) { Asterism.poll; replies.concat(g.each_reply); g.done? }
+    assert_equal [["asterism/child/t/@profile", { "status" => { "tables" => 2, "st" => "wait" } }]],
+                 replies.map { |k, pl| [k, MessagePack.unpack(pl)] }
 
     # No status set (this node's own, and nobody there): nil.
     assert_nil Asterism.status_of("parent", "t")

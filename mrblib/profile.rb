@@ -7,7 +7,7 @@
 #
 # Key: asterism/<node>/@profile (a queryable of every application connected
 # as that node). The reply is a MessagePack Hash:
-#   "protocol"   the wire protocol the node speaks (Asterism::PROTOCOL, 1);
+#   "protocol"   the wire protocol the node speaks (Asterism::PROTOCOL, 2);
 #                a node without it speaks protocol 0
 #   "kind"       what Ruby runs the node: "family_mruby", "picoruby",
 #                "cruby", "console" (others are allowed)
@@ -21,8 +21,9 @@
 # Each connect, and each change while connected, also puts the profile
 # without its icon on the same key, for those who follow it (a console).
 #
-# Room left for later: an application's own profile would be
-# asterism/<node>/<app>/@profile, with the same Hash.
+# An application's own profile (its status, topics and types) is one chunk
+# further down, asterism/<node>/<app>/@profile (status.rb, topic.rb;
+# docs/protocol.md 8).
 module Asterism
   module Profile
     # The kinds this version knows. Others pass: a kind is any lower-case

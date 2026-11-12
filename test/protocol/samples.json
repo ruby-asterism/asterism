@@ -1,8 +1,8 @@
 {
   "format": "asterism-protocol-samples",
-  "version": 4,
-  "protocol": 1,
-  "describes": "the Asterism wire protocol 1 as asterism 0.7.0 speaks it (docs/protocol.md)",
+  "version": 5,
+  "protocol": 2,
+  "describes": "the Asterism wire protocol 2 (docs/protocol.md)",
   "names": {
     "iut": "iut",
     "app": "conf",
@@ -35,6 +35,45 @@
         ]
       ]
     },
+    "types": [
+      {
+        "name": "conf/stroke",
+        "fields": [
+          [
+            "pts",
+            "int[]"
+          ],
+          [
+            "color",
+            "str"
+          ],
+          [
+            "at",
+            "vector3"
+          ]
+        ],
+        "desc": "one stroke"
+      }
+    ],
+    "topics": [
+      {
+        "name": "imu",
+        "type": "vector3",
+        "unit": "m/s2",
+        "desc": "acceleration",
+        "ts": true
+      },
+      {
+        "name": "board1/strokes",
+        "type": "conf/stroke"
+      },
+      {
+        "name": "camera",
+        "type": "image",
+        "encoding": "image/jpeg"
+      }
+    ],
+    "subscribe": "drv/conf/**",
     "objects": [
       {
         "name": "subject",
@@ -2474,7 +2513,7 @@
               [
                 "protocol",
                 {
-                  "int": "1"
+                  "int": "2"
                 }
               ],
               [
@@ -2517,7 +2556,7 @@
               [
                 "protocol",
                 {
-                  "int": "1"
+                  "int": "2"
                 }
               ],
               [
@@ -2553,7 +2592,7 @@
               [
                 "protocol",
                 {
-                  "int": "1"
+                  "int": "2"
                 }
               ],
               [
@@ -2589,7 +2628,7 @@
               [
                 "protocol",
                 {
-                  "int": "1"
+                  "int": "2"
                 }
               ],
               [
@@ -2625,7 +2664,7 @@
               [
                 "protocol",
                 {
-                  "int": "1"
+                  "int": "2"
                 }
               ],
               [
@@ -2676,7 +2715,7 @@
               [
                 "protocol",
                 {
-                  "int": "1"
+                  "int": "2"
                 }
               ],
               [
@@ -2707,101 +2746,554 @@
       "portable": true
     },
     {
-      "id": "status",
-      "key": "asterism/iut/conf/@status",
+      "id": "app profile",
+      "key": "asterism/iut/conf/@profile",
       "params": null,
       "payload_hex": null,
       "replies": [
         {
-          "key": "asterism/iut/conf/@status",
+          "key": "asterism/iut/conf/@profile",
           "payload": {
             "map": [
               [
-                "st",
-                "wait"
+                "status",
+                {
+                  "map": [
+                    [
+                      "st",
+                      "wait"
+                    ],
+                    [
+                      "n",
+                      {
+                        "int": "1"
+                      }
+                    ]
+                  ]
+                }
               ],
               [
-                "n",
+                "pubs",
                 {
-                  "int": "1"
+                  "map": [
+                    [
+                      "imu",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "2"
+                            }
+                          ],
+                          [
+                            "u",
+                            "m/s2"
+                          ],
+                          [
+                            "d",
+                            "acceleration"
+                          ],
+                          [
+                            "ts",
+                            true
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "board1/strokes",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            "conf/stroke"
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "camera",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "4"
+                            }
+                          ],
+                          [
+                            "e",
+                            {
+                              "int": "17"
+                            }
+                          ]
+                        ]
+                      }
+                    ]
+                  ]
                 }
               ]
             ]
           }
         }
       ],
-      "note": "a map with str keys, the application's own",
+      "note": "without parameters: the status and the topics (the types only when asked for)",
       "portable": true
     },
     {
-      "id": "status ignores parameters",
-      "key": "asterism/iut/conf/@status",
+      "id": "app profile ?status",
+      "key": "asterism/iut/conf/@profile",
+      "params": "status",
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/conf/@profile",
+          "payload": {
+            "map": [
+              [
+                "status",
+                {
+                  "map": [
+                    [
+                      "st",
+                      "wait"
+                    ],
+                    [
+                      "n",
+                      {
+                        "int": "1"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "app profile ?pubs",
+      "key": "asterism/iut/conf/@profile",
+      "params": "pubs",
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/conf/@profile",
+          "payload": {
+            "map": [
+              [
+                "pubs",
+                {
+                  "map": [
+                    [
+                      "imu",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "2"
+                            }
+                          ],
+                          [
+                            "u",
+                            "m/s2"
+                          ],
+                          [
+                            "d",
+                            "acceleration"
+                          ],
+                          [
+                            "ts",
+                            true
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "board1/strokes",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            "conf/stroke"
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "camera",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "4"
+                            }
+                          ],
+                          [
+                            "e",
+                            {
+                              "int": "17"
+                            }
+                          ]
+                        ]
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "note": "t: a built-in type's number or an application type's name; e: the encoding's number (image/jpeg is 17)",
+      "portable": true
+    },
+    {
+      "id": "app profile ?types",
+      "key": "asterism/iut/conf/@profile",
+      "params": "types",
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/conf/@profile",
+          "payload": {
+            "map": [
+              [
+                "types",
+                {
+                  "map": [
+                    [
+                      "conf/stroke",
+                      {
+                        "map": [
+                          [
+                            "f",
+                            [
+                              [
+                                "pts",
+                                "int[]"
+                              ],
+                              [
+                                "color",
+                                "str"
+                              ],
+                              [
+                                "at",
+                                {
+                                  "int": "2"
+                                }
+                              ]
+                            ]
+                          ],
+                          [
+                            "d",
+                            "one stroke"
+                          ]
+                        ]
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "note": "f: [name, type] pairs (a built-in number, a basic type, another type's name; [] for an array)",
+      "portable": true
+    },
+    {
+      "id": "app profile two parts",
+      "key": "asterism/iut/conf/@profile",
+      "params": "status;types",
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/conf/@profile",
+          "payload": {
+            "map": [
+              [
+                "status",
+                {
+                  "map": [
+                    [
+                      "st",
+                      "wait"
+                    ],
+                    [
+                      "n",
+                      {
+                        "int": "1"
+                      }
+                    ]
+                  ]
+                }
+              ],
+              [
+                "types",
+                {
+                  "map": [
+                    [
+                      "conf/stroke",
+                      {
+                        "map": [
+                          [
+                            "f",
+                            [
+                              [
+                                "pts",
+                                "int[]"
+                              ],
+                              [
+                                "color",
+                                "str"
+                              ],
+                              [
+                                "at",
+                                {
+                                  "int": "2"
+                                }
+                              ]
+                            ]
+                          ],
+                          [
+                            "d",
+                            "one stroke"
+                          ]
+                        ]
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "app profile unknown parameters",
+      "key": "asterism/iut/conf/@profile",
       "params": "x=1",
       "payload_hex": null,
       "replies": [
         {
-          "key": "asterism/iut/conf/@status",
+          "key": "asterism/iut/conf/@profile",
           "payload": {
             "map": [
               [
-                "st",
-                "wait"
+                "status",
+                {
+                  "map": [
+                    [
+                      "st",
+                      "wait"
+                    ],
+                    [
+                      "n",
+                      {
+                        "int": "1"
+                      }
+                    ]
+                  ]
+                }
               ],
               [
-                "n",
+                "pubs",
                 {
-                  "int": "1"
+                  "map": [
+                    [
+                      "imu",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "2"
+                            }
+                          ],
+                          [
+                            "u",
+                            "m/s2"
+                          ],
+                          [
+                            "d",
+                            "acceleration"
+                          ],
+                          [
+                            "ts",
+                            true
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "board1/strokes",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            "conf/stroke"
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "camera",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "4"
+                            }
+                          ],
+                          [
+                            "e",
+                            {
+                              "int": "17"
+                            }
+                          ]
+                        ]
+                      }
+                    ]
+                  ]
                 }
               ]
             ]
           }
         }
       ],
+      "note": "parameters naming no part: the default reply",
       "portable": true
     },
     {
-      "id": "status not under **",
-      "key": "asterism/iut/conf/**",
-      "params": null,
-      "payload_hex": null,
-      "replies": [],
-      "note": "@status is a verbatim chunk: asterism/<node>/<app>/** does not reach it",
-      "portable": true
-    },
-    {
-      "id": "status under */*",
-      "key": "asterism/*/*/@status",
+      "id": "app profile under */*",
+      "key": "asterism/*/*/@profile",
       "params": null,
       "payload_hex": null,
       "replies": [
         {
-          "key": "asterism/iut/conf/@status",
+          "key": "asterism/iut/conf/@profile",
           "payload": {
             "map": [
               [
-                "st",
-                "wait"
+                "status",
+                {
+                  "map": [
+                    [
+                      "st",
+                      "wait"
+                    ],
+                    [
+                      "n",
+                      {
+                        "int": "1"
+                      }
+                    ]
+                  ]
+                }
               ],
               [
-                "n",
+                "pubs",
                 {
-                  "int": "1"
+                  "map": [
+                    [
+                      "imu",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "2"
+                            }
+                          ],
+                          [
+                            "u",
+                            "m/s2"
+                          ],
+                          [
+                            "d",
+                            "acceleration"
+                          ],
+                          [
+                            "ts",
+                            true
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "board1/strokes",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            "conf/stroke"
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "camera",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "4"
+                            }
+                          ],
+                          [
+                            "e",
+                            {
+                              "int": "17"
+                            }
+                          ]
+                        ]
+                      }
+                    ]
+                  ]
                 }
               ]
             ]
           }
         }
       ],
-      "note": "wildcard node and app chunks do reach it",
+      "note": "wildcard node and app chunks reach it (a node's profile has one chunk less)",
       "portable": true
     },
     {
-      "id": "status of no such app",
-      "key": "asterism/iut/nothing/@status",
+      "id": "app profile not under **",
+      "key": "asterism/iut/conf/**",
       "params": null,
       "payload_hex": null,
       "replies": [],
-      "note": "an application without a status answers nothing",
+      "note": "@profile is a verbatim chunk: asterism/<node>/<app>/** does not reach it",
+      "portable": true
+    },
+    {
+      "id": "nothing answers @status",
+      "key": "asterism/iut/conf/@status",
+      "params": null,
+      "payload_hex": null,
+      "replies": [],
+      "note": "the status is only put there; it is asked for at @profile?status",
+      "portable": true
+    },
+    {
+      "id": "app profile of no such app",
+      "key": "asterism/iut/nothing/@profile",
+      "params": null,
+      "payload_hex": null,
+      "replies": [],
+      "note": "an application that is not there answers nothing",
       "portable": true
     },
     {
@@ -3611,7 +4103,7 @@
         "payload": null
       },
       "reply_hex": [
-        "86a870726f746f636f6c01a46b696e64a56372756279a46e616d65a3647276a4686f737405a5657874726101a969636f6e5f68617368a83030303061626364"
+        "86a870726f746f636f6c02a46b696e64a56372756279a46e616d65a3647276a4686f737405a5657874726101a969636f6e5f68617368a83030303061626364"
       ],
       "outcome": [
         "ok",
@@ -3620,7 +4112,7 @@
             [
               "protocol",
               {
-                "int": "1"
+                "int": "2"
               }
             ],
             [
@@ -3652,7 +4144,7 @@
         "payload": null
       },
       "reply_hex": [
-        "84a870726f746f636f6c01a46b696e64a56372756279a469636f6ec5011c89504e470d0a1a0a0000000d4948445200000020000000200806000000737a7af4000000e34944415478daed96bd0dc230104633825b1a4a4413e18201324236c035cb308247704b83bc0092d7a0bb11c0ee281c7c7f4648e4a4577fafb8cfe76158679d5f9fc7f9643229f3ac713f8e4ba48cd110884be10d81429486fb4fe1088182e786bb563852a0e0a8e113269c205098b0e136031d042063451b2f146837a3b5f1356e873d89ebb88be2c57be7b2dd5071e2ea09043c7611430781a0f6fc320452c6706e00280800399cf22620c2adf41ecc028159eb243b8680d3fe17788280eff539090881f0d5df91b86e4c09a80840f7f05a3dd5eac6ada76add38f554afdb3a7f372fc2f15417ff524d5a0000000049454e44ae426082a969636f6e5f68617368a86666666666666666"
+        "84a870726f746f636f6c02a46b696e64a56372756279a469636f6ec5011c89504e470d0a1a0a0000000d4948445200000020000000200806000000737a7af4000000e34944415478daed96bd0dc230104633825b1a4a4413e18201324236c035cb308247704b83bc0092d7a0bb11c0ee281c7c7f4648e4a4577fafb8cfe76158679d5f9fc7f9643229f3ac713f8e4ba48cd110884be10d81429486fb4fe1088182e786bb563852a0e0a8e113269c205098b0e136031d042063451b2f146837a3b5f1356e873d89ebb88be2c57be7b2dd5071e2ea09043c7611430781a0f6fc320452c6706e00280800399cf22620c2adf41ecc028159eb243b8680d3fe17788280eff539090881f0d5df91b86e4c09a80840f7f05a3dd5eac6ada76add38f554afdb3a7f372fc2f15417ff524d5a0000000049454e44ae426082a969636f6e5f68617368a86666666666666666"
       ],
       "outcome": [
         "ok",
@@ -3661,7 +4153,7 @@
             [
               "protocol",
               {
-                "int": "1"
+                "int": "2"
               }
             ],
             [
@@ -3708,7 +4200,7 @@
           ]
         }
       ],
-      "note": "a node of protocol 0 (no protocol field)"
+      "note": "a node without a protocol field (protocol 0)"
     },
     {
       "id": "profile that is not one",
@@ -3759,12 +4251,12 @@
         ]
       },
       "request": {
-        "key": "asterism/drv/conf/@status",
-        "params": "",
+        "key": "asterism/drv/conf/@profile",
+        "params": "status",
         "payload": null
       },
       "reply_hex": [
-        "84a573656174730205a178a001a46c697374920181a161c0"
+        "81a673746174757384a573656174730205a178a001a46c697374920181a161c0"
       ],
       "outcome": [
         "ok",
@@ -3795,7 +4287,7 @@
           ]
         }
       ],
-      "note": "the reader keeps the entries with a non-empty str key"
+      "note": "asked at the application's profile with ?status; the reader keeps the entries with a non-empty str key"
     },
     {
       "id": "status that is not one",
@@ -3806,12 +4298,12 @@
         ]
       },
       "request": {
-        "key": "asterism/drv/conf/@status",
-        "params": "",
+        "key": "asterism/drv/conf/@profile",
+        "params": "status",
         "payload": null
       },
       "reply_hex": [
-        "920102"
+        "81a6737461747573920102"
       ],
       "outcome": [
         "ok",
@@ -3828,18 +4320,62 @@
         ]
       },
       "request": {
-        "key": "asterism/drv/conf/@status",
-        "params": "",
+        "key": "asterism/drv/conf/@profile",
+        "params": "status",
         "payload": null
       },
       "reply_hex": [
-        "81a3626967da044c7878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878"
+        "81a673746174757381a3626967da044c7878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878"
       ],
       "outcome": [
         "ok",
         null
       ],
       "note": "more than 1024 bytes: no status (nil)"
+    },
+    {
+      "id": "status left out",
+      "do": {
+        "status_of": [
+          "drv",
+          "conf"
+        ]
+      },
+      "request": {
+        "key": "asterism/drv/conf/@profile",
+        "params": "status",
+        "payload": null
+      },
+      "reply_hex": [
+        "80"
+      ],
+      "outcome": [
+        "ok",
+        null
+      ],
+      "note": "an application without a status leaves the part out: no status (nil)"
+    },
+    {
+      "id": "app profile that is not a map",
+      "do": {
+        "status_of": [
+          "drv",
+          "conf"
+        ]
+      },
+      "request": {
+        "key": "asterism/drv/conf/@profile",
+        "params": "status",
+        "payload": null
+      },
+      "reply_hex": [
+        "920102"
+      ],
+      "outcome": [
+        "ok",
+        null
+      ],
+      "note": "no status (nil)"
     },
     {
       "id": "no status",
@@ -3850,8 +4386,8 @@
         ]
       },
       "request": {
-        "key": "asterism/drv/conf/@status",
-        "params": "",
+        "key": "asterism/drv/conf/@profile",
+        "params": "status",
         "payload": null
       },
       "reply_hex": [],
@@ -3860,6 +4396,174 @@
         null
       ],
       "note": "nobody answers: no status (nil), not an error"
+    },
+    {
+      "id": "topics of another app",
+      "do": {
+        "pubs_of": [
+          "drv",
+          "conf"
+        ]
+      },
+      "request": {
+        "key": "asterism/drv/conf/@profile",
+        "params": "pubs",
+        "payload": null
+      },
+      "reply_hex": [
+        "81a47075627385a16182a17402a17801a3622f6385a174a3782f79a16511a175a16da164a164a27473c3a36f646484a17400a165a46a706567a2747301a175050580a56e6f6d617001"
+      ],
+      "outcome": [
+        "ok",
+        {
+          "map": [
+            [
+              "a",
+              {
+                "map": [
+                  [
+                    "t",
+                    {
+                      "int": "2"
+                    }
+                  ]
+                ]
+              }
+            ],
+            [
+              "b/c",
+              {
+                "map": [
+                  [
+                    "t",
+                    "x/y"
+                  ],
+                  [
+                    "e",
+                    {
+                      "int": "17"
+                    }
+                  ],
+                  [
+                    "u",
+                    "m"
+                  ],
+                  [
+                    "d",
+                    "d"
+                  ],
+                  [
+                    "ts",
+                    true
+                  ]
+                ]
+              }
+            ],
+            [
+              "odd",
+              {
+                "map": []
+              }
+            ]
+          ]
+        }
+      ],
+      "note": "the reader keeps the declarations (maps under a str name) and their known keys that pass"
+    },
+    {
+      "id": "no topics",
+      "do": {
+        "pubs_of": [
+          "drv",
+          "conf"
+        ]
+      },
+      "request": {
+        "key": "asterism/drv/conf/@profile",
+        "params": "pubs",
+        "payload": null
+      },
+      "reply_hex": [
+        "81a673746174757380"
+      ],
+      "outcome": [
+        "ok",
+        {
+          "map": []
+        }
+      ],
+      "note": "an application that answers without topics has none (an empty map)"
+    },
+    {
+      "id": "topics of nobody",
+      "do": {
+        "pubs_of": [
+          "drv",
+          "conf"
+        ]
+      },
+      "request": {
+        "key": "asterism/drv/conf/@profile",
+        "params": "pubs",
+        "payload": null
+      },
+      "reply_hex": [],
+      "outcome": [
+        "ok",
+        null
+      ],
+      "note": "nobody answers: nil"
+    },
+    {
+      "id": "types of another app",
+      "do": {
+        "types_of": [
+          "drv",
+          "conf"
+        ]
+      },
+      "request": {
+        "key": "asterism/drv/conf/@profile",
+        "params": "types",
+        "payload": null
+      },
+      "reply_hex": [
+        "81a5747970657383a3782f7083a1669292a178a5666c6f617492a17901a164a76120706f696e74a17a01a5782f62616481a1669191a178a5782f6e6f6680"
+      ],
+      "outcome": [
+        "ok",
+        {
+          "map": [
+            [
+              "x/p",
+              {
+                "map": [
+                  [
+                    "f",
+                    [
+                      [
+                        "x",
+                        "float"
+                      ],
+                      [
+                        "y",
+                        {
+                          "int": "1"
+                        }
+                      ]
+                    ]
+                  ],
+                  [
+                    "d",
+                    "a point"
+                  ]
+                ]
+              }
+            ]
+          ]
+        }
+      ],
+      "note": "the reader keeps the definitions whose f is a list of [str, int or str]"
     },
     {
       "id": "change the status",
@@ -3912,6 +4616,352 @@
         null
       ],
       "note": "nothing is put (see status_puts)"
+    },
+    {
+      "id": "put values",
+      "do": {
+        "put": [
+          [
+            "imu",
+            [
+              {
+                "float": 1.5
+              },
+              {
+                "int": "-2"
+              },
+              {
+                "float": 9.8
+              }
+            ]
+          ],
+          [
+            "camera",
+            {
+              "bin_hex": "ffd8ffe04a464946ffd9"
+            }
+          ],
+          [
+            "board1/strokes",
+            {
+              "map": [
+                [
+                  "pts",
+                  [
+                    {
+                      "int": "1"
+                    },
+                    {
+                      "int": "2"
+                    }
+                  ]
+                ],
+                [
+                  "color",
+                  "red"
+                ],
+                [
+                  "at",
+                  [
+                    {
+                      "int": "0"
+                    },
+                    {
+                      "int": "0"
+                    },
+                    {
+                      "int": "0"
+                    }
+                  ]
+                ]
+              ]
+            }
+          ],
+          [
+            "imu",
+            [
+              {
+                "float": 1.5
+              },
+              {
+                "int": "-2"
+              },
+              {
+                "float": 9.8
+              }
+            ]
+          ]
+        ]
+      },
+      "request": null,
+      "reply_hex": [],
+      "outcome": [
+        "ok",
+        null
+      ],
+      "note": "each value goes on its topic's key (see data_puts)"
+    },
+    {
+      "id": "withdraw a topic",
+      "do": {
+        "unpublish": "camera"
+      },
+      "request": null,
+      "reply_hex": [],
+      "outcome": [
+        "ok",
+        null
+      ],
+      "note": "the declarations are put again without it (see pubs_puts)"
+    },
+    {
+      "id": "receive values",
+      "do": {
+        "feed": [
+          {
+            "key": "asterism/drv/conf/feed/a",
+            "payload_hex": "01",
+            "attachment_hex": "9100",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/conf/feed/a",
+            "payload_hex": "a374776f",
+            "attachment_hex": "9201cf0000018bcfe5687b",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/conf/feed/a",
+            "payload_hex": "c0",
+            "attachment_hex": "9104",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/conf/feed/cam",
+            "payload_hex": "ffd8ffe04a464946ffd9",
+            "attachment_hex": "9100",
+            "encoding": "image/jpeg"
+          },
+          {
+            "key": "asterism/drv/conf/feed/a",
+            "payload_hex": "9101",
+            "attachment_hex": "9102",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/conf/feed/w",
+            "payload_hex": "00",
+            "attachment_hex": "91ce7fffffff",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/conf/feed/w",
+            "payload_hex": "01",
+            "attachment_hex": "9100",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/conf/feed/n",
+            "payload_hex": "81a16b01",
+            "attachment_hex": null,
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/conf/feed/bad",
+            "payload_hex": "c1",
+            "attachment_hex": "9100",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/conf/feed/t",
+            "payload_hex": "68656c6c6f",
+            "attachment_hex": "9100",
+            "encoding": "text/plain;charset=utf-8"
+          },
+          {
+            "key": "asterism/drv/conf/feed/a",
+            "payload_hex": "05",
+            "attachment_hex": "9203a178",
+            "encoding": null
+          }
+        ],
+        "expect": 10
+      },
+      "request": {
+        "key": "asterism/drv/conf/rec/call/iut",
+        "params": "",
+        "call": {
+          "method": "feed",
+          "args": [],
+          "kwargs": {
+            "map": []
+          }
+        }
+      },
+      "reply_hex": [
+        "81a576616c7565c0"
+      ],
+      "outcome": [
+        "ok",
+        [
+          [
+            "drv/conf/feed/a",
+            {
+              "int": "1"
+            },
+            {
+              "int": "0"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false
+          ],
+          [
+            "drv/conf/feed/a",
+            "two",
+            {
+              "int": "1"
+            },
+            {
+              "int": "1700000000123"
+            },
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false
+          ],
+          [
+            "drv/conf/feed/a",
+            null,
+            {
+              "int": "4"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "2"
+            },
+            false
+          ],
+          [
+            "drv/conf/feed/cam",
+            {
+              "bin_hex": "ffd8ffe04a464946ffd9"
+            },
+            {
+              "int": "0"
+            },
+            null,
+            "image/jpeg",
+            {
+              "int": "0"
+            },
+            false
+          ],
+          [
+            "drv/conf/feed/a",
+            [
+              {
+                "int": "1"
+              }
+            ],
+            {
+              "int": "2"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "2"
+            },
+            true
+          ],
+          [
+            "drv/conf/feed/w",
+            {
+              "int": "0"
+            },
+            {
+              "int": "2147483647"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false
+          ],
+          [
+            "drv/conf/feed/w",
+            {
+              "int": "1"
+            },
+            {
+              "int": "0"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false
+          ],
+          [
+            "drv/conf/feed/n",
+            {
+              "map": [
+                [
+                  "k",
+                  {
+                    "int": "1"
+                  }
+                ]
+              ]
+            },
+            null,
+            null,
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false
+          ],
+          [
+            "drv/conf/feed/t",
+            {
+              "bin_hex": "68656c6c6f"
+            },
+            {
+              "int": "0"
+            },
+            null,
+            "text/plain;charset=utf-8",
+            {
+              "int": "0"
+            },
+            false
+          ],
+          [
+            "drv/conf/feed/a",
+            {
+              "int": "5"
+            },
+            {
+              "int": "3"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false
+          ]
+        ]
+      ],
+      "note": "no encoding: MessagePack (\"msgpack\"); 4 after 1: 2 lost; 2 after 4: the sender started again (2 lost of its new run); 0 after 2^31-1: the numbers wrapped; no attachment: no number; not MessagePack without an encoding: left out; a time that is not an int: none"
     }
   ],
   "liveliness": {
@@ -3935,7 +4985,7 @@
           [
             "protocol",
             {
-              "int": "1"
+              "int": "2"
             }
           ],
           [
@@ -3963,7 +5013,7 @@
           [
             "protocol",
             {
-              "int": "1"
+              "int": "2"
             }
           ],
           [
@@ -4020,6 +5070,208 @@
           ]
         ]
       }
+    }
+  ],
+  "pubs_puts": {
+    "key": "asterism/iut/conf/@pubs",
+    "declared": {
+      "map": [
+        [
+          "imu",
+          {
+            "map": [
+              [
+                "t",
+                {
+                  "int": "2"
+                }
+              ],
+              [
+                "u",
+                "m/s2"
+              ],
+              [
+                "d",
+                "acceleration"
+              ],
+              [
+                "ts",
+                true
+              ]
+            ]
+          }
+        ],
+        [
+          "board1/strokes",
+          {
+            "map": [
+              [
+                "t",
+                "conf/stroke"
+              ]
+            ]
+          }
+        ],
+        [
+          "camera",
+          {
+            "map": [
+              [
+                "t",
+                {
+                  "int": "4"
+                }
+              ],
+              [
+                "e",
+                {
+                  "int": "17"
+                }
+              ]
+            ]
+          }
+        ]
+      ]
+    },
+    "after_unpublish": {
+      "map": [
+        [
+          "imu",
+          {
+            "map": [
+              [
+                "t",
+                {
+                  "int": "2"
+                }
+              ],
+              [
+                "u",
+                "m/s2"
+              ],
+              [
+                "d",
+                "acceleration"
+              ],
+              [
+                "ts",
+                true
+              ]
+            ]
+          }
+        ],
+        [
+          "board1/strokes",
+          {
+            "map": [
+              [
+                "t",
+                "conf/stroke"
+              ]
+            ]
+          }
+        ]
+      ]
+    }
+  },
+  "data_puts": [
+    {
+      "key": "asterism/iut/conf/imu",
+      "encoding": "zenoh/bytes",
+      "payload": [
+        {
+          "float": 1.5
+        },
+        {
+          "int": "-2"
+        },
+        {
+          "float": 9.8
+        }
+      ],
+      "attachment": [
+        {
+          "int": "0"
+        },
+        {
+          "any": "int"
+        }
+      ]
+    },
+    {
+      "key": "asterism/iut/conf/camera",
+      "encoding": "image/jpeg",
+      "payload_hex": "ffd8ffe04a464946ffd9",
+      "attachment": [
+        {
+          "int": "0"
+        }
+      ]
+    },
+    {
+      "key": "asterism/iut/conf/board1/strokes",
+      "encoding": "zenoh/bytes",
+      "payload": {
+        "map": [
+          [
+            "pts",
+            [
+              {
+                "int": "1"
+              },
+              {
+                "int": "2"
+              }
+            ]
+          ],
+          [
+            "color",
+            "red"
+          ],
+          [
+            "at",
+            [
+              {
+                "int": "0"
+              },
+              {
+                "int": "0"
+              },
+              {
+                "int": "0"
+              }
+            ]
+          ]
+        ]
+      },
+      "attachment": [
+        {
+          "int": "0"
+        }
+      ]
+    },
+    {
+      "key": "asterism/iut/conf/imu",
+      "encoding": "zenoh/bytes",
+      "payload": [
+        {
+          "float": 1.5
+        },
+        {
+          "int": "-2"
+        },
+        {
+          "float": 9.8
+        }
+      ],
+      "attachment": [
+        {
+          "int": "1"
+        },
+        {
+          "any": "int"
+        }
+      ]
     }
   ]
 }

@@ -10,7 +10,7 @@
 #                      repeated and swapped pieces, a connection down, a
 #                      receiver started again, sha256; over a stand-in for
 #                      the calls (no Zenoh)
-#   rake test:objects  the object layer, node profiles, statuses and Asterism::ROS
+#   rake test:objects  the object layer, node profiles, statuses, topics and Asterism::ROS
 #                      between CRuby sessions; needs asterism-zenoh (below)
 #   rake test:api      the Ruby-like API of CRuby (lib/asterism/cruby/):
 #                      blocks, receiving threads, Enumerators; needs
@@ -27,6 +27,10 @@
 #                      PICORUBY_ASTERISM_ZENOH_DIR) provides the pinned mruby
 #                      and zenoh-pico (its `rake mruby:fetch zenoh:fetch`).
 #                      Not part of `rake` (it builds a C toolchain's worth)
+#   rake test:cross    topics between an mruby node and a CRuby one, both
+#                      through Asterism: declarations, values both ways
+#                      (seq, time, encoding, lost). Builds mruby as
+#                      test:mruby does; not part of `rake`
 #   rake test:credentials  a zenohd asking for client certificates (docker)
 #                      and two CRuby nodes connecting with a console's .tar
 #                      each (credentials:). Not part of `rake`
@@ -87,6 +91,7 @@ namespace :test do
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_asterism.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_profile.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_status.rb")
+    sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_topic.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_meta_apps.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_session.rb")
   end
@@ -221,6 +226,36 @@ namespace :test do
         nil
       end
       peer.close
+    end
+  end
+end
+
+namespace :test do
+  desc "Topics between an mruby node and a CRuby one, both through Asterism (builds mruby; needs asterism-zenoh)"
+  task cross: "mruby:build" do
+    require "socket"
+    require "timeout"
+    lib = asterism_zenoh_lib
+    incs = ["-I", File.join(ROOT, "lib")]
+    incs += ["-I", lib] if lib
+    bin = File.join(MRUBY_BUILD_DIR, "host", "bin", "mruby")
+    port = TCPServer.new("127.0.0.1", 0).then { |s| s.addr[1].tap { s.close } }
+    stub = File.join(ROOT, "host_test", "msgpack.rb")
+    node = IO.popen([bin, "-r", stub, File.join(ROOT, "host_test", "data_node.rb"), port.to_s], err: [:child, :out])
+    begin
+      line = Timeout.timeout(10) { node.gets }
+      abort "host_test/data_node.rb did not start: #{line.inspect}" unless line&.start_with?("ready")
+      ok = system({ "ASTERISM_CROSS_PORT" => port.to_s }, RbConfig.ruby, *incs, File.join(ROOT, "test", "cross_mruby.rb"))
+      rest = Timeout.timeout(10) { node.read }
+      puts "data node: #{rest}" unless rest.to_s.empty?
+      abort "test:cross failed" unless ok
+    ensure
+      begin
+        Process.kill("TERM", node.pid)
+      rescue Errno::ESRCH
+        nil
+      end
+      node.close
     end
   end
 end

@@ -7,16 +7,19 @@
 #   Asterism.status                            # => {"tables" => 3, ...} or nil
 #   Asterism.status_of("games", "games")       # another application's, or nil
 #
-# Key: asterism/<node>/<app>/@status (docs/protocol.md 8). The application
-# answers queries there with its status, and puts it on the same key when
-# it changes (only then: the same status again puts nothing), at connect
-# and after a lost connection comes back. An application that never set a
-# status declares nothing there and answers nothing.
+# The status is one part of the application's own profile,
+# asterism/<node>/<app>/@profile (docs/protocol.md 8): the application
+# answers queries there with {"status" => ..., "pubs" => ...} (the topics,
+# topic.rb), or with the one part a query names (?status, ?pubs, ?types).
+# It puts the status on asterism/<node>/<app>/@status when it changes (only
+# then: the same status again puts nothing), at connect and after a lost
+# connection comes back. An application with neither a status, a topic nor
+# a type of its own declares nothing there and answers nothing.
 #
 # The value is a MessagePack map with str keys; the values are any values
 # of the protocol nested at most MAX_DEPTH levels below the map, and the
-# whole map packs into MAX_BYTES at most. It is not the profile
-# (profile.rb): a profile says once what a node is; a status changes.
+# whole map packs into MAX_BYTES at most. It is not the node's profile
+# (profile.rb): that says once what a node is; a status changes.
 module Asterism
   module Status
     KEY = "@status"
@@ -110,40 +113,41 @@ module Asterism
   end
 
   # Another application's status (Asterism::Status.check has cleaned it),
-  # or nil when it does not answer in time (no status set, an older
-  # version of Asterism, an application that is gone). timeout: in seconds
+  # or nil when it does not answer in time or has no status (an
+  # application that is gone, one without a status). timeout: in seconds
   # (or timeout_ms:), 2.0 by default. Waits like a call (polling, answering
   # calls meanwhile); raises Disconnected when not connected. This
   # application's own status comes without the network.
   def self.status_of(node, app, timeout: nil, timeout_ms: nil)
-    f = status_async(node, app, timeout, timeout_ms)
-    begin
-      raw = f.raw_value
-    rescue Disconnected
-      raise
-    rescue Error
-      return nil # no answer in time, or not MessagePack
-    end
-    Status.check(raw)
+    raw = app_profile_part(node, app, "status", timeout, timeout_ms)
+    raw.nil? ? nil : Status.check(raw["status"])
   end
 
+  # A query of asterism/<node>/<app>/@profile (part: "status", "pubs",
+  # "types", or nil for the default reply) -> a Future.
   # @api private
-  def self.status_async(node, app, timeout, timeout_ms)
+  def self.app_profile_async(node, app, part, timeout, timeout_ms)
     node = check_name("node", node)
     app = check_name("app", app)
-    ms = time_ms("Asterism.status_of", timeout, timeout_ms, nil, DEFAULT_TIMEOUT_MS)
-    path = "#{node}/#{app}/#{Status::KEY}"
+    ms = time_ms("Asterism.#{part || 'profile'}_of", timeout, timeout_ms, nil, DEFAULT_TIMEOUT_MS)
+    path = "#{node}/#{app}/#{Profile::KEY}"
+    what = part || "profile"
     if @session && node == @node && app == @app
-      return Future.answered(path, "status", Codec.pack(@status)) if @status
-      return Future.answered(path, "status", Codec.pack(nil))
+      return Future.answered(path, what, Codec.pack(app_profile_hash(part)))
     end
     begin
-      g = session!.get("#{ROOT}/#{path}", timeout_ms: ms)
+      g = session!.get("#{ROOT}/#{path}", timeout_ms: ms, params: part)
     rescue Asterism::Zenoh::Error => e
       lost_if_closed(e.message)
       raise Disconnected, e.message
     end
-    Future.new(path, "status", g, now_ms + ms, ms)
+    Future.new(path, what, g, now_ms + ms, ms)
+  end
+
+  # The old name of the status's query (status_of uses app_profile_async).
+  # @api private
+  def self.status_async(node, app, timeout, timeout_ms)
+    app_profile_async(node, app, "status", timeout, timeout_ms)
   end
 
   # The applications alive now ("<node>/<app>", from their liveliness
@@ -158,26 +162,67 @@ module Asterism
     list
   end
 
-  # Puts the status on its key while connected: when it changed since the
-  # last put of this connection, or always with force (a connection that
-  # came back). Declares the status queryable with the first put.
+  # Puts the status on asterism/<node>/<app>/@status while connected: when
+  # it changed since the last put of this connection, or always with force
+  # (a connection that came back). Declares the application's profile
+  # queryable with the first put.
   # @api private
   def self.tell_status(force)
     s = @session
     return unless s && @status
     bytes = Codec.pack(@status)
     return if !force && !@status_put.nil? && @status_put == bytes
-    key = "#{ROOT}/#{@node}/#{@app}/#{Status::KEY}"
-    @status_queryable ||= s.queryable(key, depth: 4)
-    s.put(key, bytes)
+    app_queryable(s)
+    s.put("#{ROOT}/#{@node}/#{@app}/#{Status::KEY}", bytes)
     @status_put = bytes
   rescue Asterism::Zenoh::Error
     nil # the next poll notices a lost connection
   end
 
+  # Declares the queryable asterism/<node>/<app>/@profile once this
+  # application has something to tell there (a status, a topic, a type):
+  # an application with none of them declares nothing (and costs nothing).
   # @api private
-  def self.answer_status
-    qa = @status_queryable
+  def self.app_queryable(s)
+    @app_queryable ||= s.queryable("#{ROOT}/#{@node}/#{@app}/#{Profile::KEY}", depth: 4)
+  end
+
+  # The parts a query of the application's profile asks for: its
+  # parameters split on ";", each part's name before "="; the known names
+  # are status, pubs and types. None of them: status and pubs.
+  # @api private
+  def self.app_profile_parts(params)
+    want = []
+    unless params.nil? || params.empty?
+      params.split(";").each do |pair|
+        n = pair.split("=")[0].to_s
+        want << n if (n == "status" || n == "pubs" || n == "types") && !want.include?(n)
+      end
+    end
+    want.empty? ? ["status", "pubs"] : want
+  end
+
+  # The reply of asterism/<node>/<app>/@profile: the parts asked for
+  # (part: one name, or the parameters of a query), each left out when
+  # this application has none.
+  # @api private
+  def self.app_profile_hash(params)
+    h = {}
+    app_profile_parts(params).each do |n|
+      if n == "status"
+        h["status"] = @status if @status
+      elsif n == "pubs"
+        h["pubs"] = pubs_hash if @topics && !@topics.empty?
+      elsif @types && !@types.empty?
+        h["types"] = @types
+      end
+    end
+    h
+  end
+
+  # @api private
+  def self.answer_app_profile
+    qa = @app_queryable
     return unless qa && qa.pending > 0
     queries = qa.each_pending
     i = 0
@@ -185,7 +230,7 @@ module Asterism
       q = queries[i]
       i += 1
       begin
-        q.reply("#{ROOT}/#{@node}/#{@app}/#{Status::KEY}", Codec.pack(@status || {}))
+        q.reply("#{ROOT}/#{@node}/#{@app}/#{Profile::KEY}", Codec.pack(app_profile_hash(q.params)))
       ensure
         begin
           q.finish

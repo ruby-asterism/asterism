@@ -7,7 +7,7 @@
 #                                      # Asterism["...", timeout: 5.0])
 #   Asterism.poll                      # call regularly (answers incoming calls)
 #
-# Keys and payloads: protocol 1 (docs/protocol.md):
+# Keys and payloads: protocol 2 (docs/protocol.md):
 #   asterism/<node>/<app>/<object>/call/<caller>
 #                     get: {"method" => name, "args" => [...], "kwargs" => {...}}
 #                     reply {"value" => v} or
@@ -18,7 +18,11 @@
 #   asterism/<node>/<app>             liveliness: the application is up
 #   asterism/<node>/<app>/<object>    liveliness: the object is exposed
 #   asterism/<node>/@profile          get: reply the node's profile (profile.rb)
-#   asterism/<node>/<app>/@status     get: reply the application's status (status.rb)
+#   asterism/<node>/<app>/@profile    get: reply the application's own profile, its
+#                                     status, topics and types (status.rb, topic.rb)
+#   asterism/<node>/<app>/@status     put: the application's status when it changes
+#   asterism/<node>/<app>/@pubs       put: the application's topics when they change
+#   asterism/<node>/<app>/<name>      put: a value of a topic (Asterism.publish)
 #
 # Everything is polled: nothing runs behind the application's back. A call
 # that waits for its answer keeps polling meanwhile and answers the calls
@@ -26,8 +30,8 @@
 module Asterism
   ROOT = "asterism"
   # The version of the wire protocol this implementation speaks (and the
-  # only one: protocol 0, the 0.x releases before 0.7.0, is not spoken).
-  PROTOCOL = 1
+  # only one: protocol 1 and protocol 0 are not spoken).
+  PROTOCOL = 2
   # The time limit of a call (Asterism[path] without timeout:), in seconds
   # and in milliseconds.
   DEFAULT_TIMEOUT = 2.0
@@ -302,8 +306,12 @@ module Asterism
     @nodes_changed = false # liveliness changed since tell_nodes last compared
     @was_reconnecting = false
     @status_put = nil
+    @topics = {}
+    @subscriptions = []
+    @pubs_put = nil
     tell_profile   # for those who follow the profiles (the reply is the queryable's)
     tell_status(true) # a status set before connecting (status.rb)
+    app_queryable(s) if @types && !@types.empty? # types defined before connecting (topic.rb)
     self
   end
 
@@ -396,8 +404,9 @@ module Asterism
     @queryable = nil
     @watch = nil
     @profile_queryable = nil
-    @status_queryable = nil
+    @app_queryable = nil
     @status_put = nil
+    release_data
   end
 
   # The Zenoh session of the connection (an Asterism::Zenoh::Session), for
@@ -569,8 +578,9 @@ module Asterism
   # ------------------------------------------------------------ polling
 
   # Call from the application's update loop. Answers the calls that came
-  # in, follows who is alive and calls the on_join / on_leave blocks. false
-  # once the connection is closed.
+  # in, follows who is alive, calls the on_join / on_leave blocks and hands
+  # the values that came to the subscriptions' blocks (Asterism.subscribe).
+  # false once the connection is closed.
   #
   # Cheap when nothing came: each queue is looked at by its count first,
   # and the list of nodes (and the comparison behind on_join / on_leave)
@@ -578,6 +588,7 @@ module Asterism
   def self.poll
     ok = @session ? pump : false
     tell_nodes
+    deliver_samples if @session
     ok
   end
 
@@ -784,7 +795,7 @@ module Asterism
     back_again(s)
     answer_calls
     answer_profile
-    answer_status
+    answer_app_profile
     follow_liveliness
     !@session.nil?
   rescue Asterism::Zenoh::Error => e
@@ -792,8 +803,9 @@ module Asterism
     !@session.nil?
   end
 
-  # After the binding opened a lost connection again: tell the profile and
-  # the status again (a put made while the router was away reached nobody).
+  # After the binding opened a lost connection again: tell the profile, the
+  # status and the topics again (a put made while the router was away
+  # reached nobody).
   # @api private
   def self.back_again(s)
     now = s.respond_to?(:reconnecting?) && s.reconnecting?
@@ -802,6 +814,7 @@ module Asterism
     return unless was && !now
     tell_profile
     tell_status(true)
+    tell_pubs(true)
   end
 
   # A Zenoh error during a call or a poll: the connection is gone only when

@@ -27,7 +27,8 @@ module Asterism
   # singleton class, so the shared methods themselves are not changed.
   module Locked
     %i[expose unexpose poll nodes [] call_async meta connected? reconnecting? exposed on_join on_leave off_join off_leave
-       on_app_join on_app_leave off_app_join off_app_leave profile profile_async status status_async apps session].each do |m|
+       on_app_join on_app_leave off_app_join off_app_leave profile profile_async status status_async
+       app_profile_async apps session publish unpublish published topic_put define_type subscribe unsubscribe].each do |m|
       define_method(m) do |*args, **kw, &blk|
         ::Asterism::LOCK.synchronize { super(*args, **kw, &blk) }
       end
@@ -80,6 +81,14 @@ module Asterism
       net = @net
       return super unless net
       net.runner.guard(where) { super }
+    end
+
+    # A subscription's block (called from Asterism.poll): with a Net, what
+    # it raises goes to its on_error and the other values still come.
+    def tell_sample(blk, value, info)
+      net = @net
+      return super unless net
+      net.runner.guard("subscribe") { super }
     end
 
     # Lists under the lock, yields outside it (the block may make calls).
@@ -212,6 +221,37 @@ module Asterism
         got = ::Asterism::Status.parse(sample.key, sample.payload)
         blk.call(*got) if got
       end
+    end
+
+    # Asterism.publish: declares a topic (an Asterism::Topic; topic.put
+    # sends a value). Topic#put may be called from any thread.
+    def publish(name, type: nil, unit: nil, desc: nil, ts: false, encoding: nil)
+      ::Asterism.publish(name, type: type, unit: unit, desc: desc, ts: ts, encoding: encoding)
+    end
+
+    def unpublish(topic) = ::Asterism.unpublish(topic)
+    def published = ::Asterism.published
+
+    # Asterism.define_type: an application type, told by @profile?types.
+    def define_type(name, fields, desc: nil)
+      ::Asterism.define_type(name, fields, desc: desc)
+    end
+
+    # Asterism.subscribe: the values on <node>/<app>/<name> (wildcards
+    # allowed), |v, info| on the receiving thread. What the block raises
+    # goes to on_error. Returns the subscription (close it to stop).
+    def subscribe(path, depth: nil, &blk)
+      ::Asterism.subscribe(path, depth: depth, &blk)
+    end
+
+    # Asterism.pubs_of / types_of: another application's topics and types
+    # (nil when it does not answer). Wait like a call.
+    def pubs_of(node, app, timeout: nil, timeout_ms: nil)
+      ::Asterism.pubs_of(node, app, timeout: timeout, timeout_ms: timeout_ms)
+    end
+
+    def types_of(node, app, timeout: nil, timeout_ms: nil)
+      ::Asterism.types_of(node, app, timeout: timeout, timeout_ms: timeout_ms)
     end
 
     # Asterism.apps: the applications alive now, "<node>/<app>".

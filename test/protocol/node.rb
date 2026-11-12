@@ -74,10 +74,21 @@ end
 
 Asterism.profile(name: "iut", icon: icon)
 Asterism.status({ "st" => "wait", "n" => 1 })
+Asterism.define_type("conf/stroke", [["pts", "int[]"], ["color", "str"], ["at", :vector3]], desc: "one stroke")
 if mode == "peer"
   Asterism.connect(locator, node: "iut", app: "conf", mode: :peer)
 else
   Asterism.connect(locator, node: "iut", app: "conf")
+end
+imu = Asterism.publish("imu", type: :vector3, unit: "m/s2", desc: "acceleration", ts: true)
+strokes = Asterism.publish("board1/strokes", type: "conf/stroke")
+cam = Asterism.publish("camera", type: :image, encoding: "image/jpeg")
+# What the subscription got: [path, value, seq, time, encoding, lost,
+# restarted] (the bytes of a value with an encoding as a bin).
+got = []
+Asterism.subscribe("drv/conf/**") do |v, info|
+  v = Asterism::Profile.binary(v) unless info.encoding == "msgpack"
+  got << [info.path, v, info.seq, info.time, info.encoding, info.lost, info.restarted?]
 end
 Asterism.expose("subject", Subject.new,
                 methods: { echo: 1, kw: 1, add: 2, boom: 0, any: -1, "ok?" => 0, unsendable: 0, whoami: 0 })
@@ -124,9 +135,32 @@ steps = [
   ["status of another app", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
   ["status that is not one", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
   ["status too large", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
+  ["status left out", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
+  ["app profile that is not a map", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
   ["no status", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
+  ["topics of another app", -> { Asterism.pubs_of("drv", "conf", timeout: 1.5) }],
+  ["no topics", -> { Asterism.pubs_of("drv", "conf", timeout: 1.5) }],
+  ["topics of nobody", -> { Asterism.pubs_of("drv", "conf", timeout: 1.5) }],
+  ["types of another app", -> { Asterism.types_of("drv", "conf", timeout: 1.5) }],
   ["change the status", -> { Asterism.status({ "st" => "play", "n" => 1 }); nil }],
-  ["the same status again", -> { Asterism.status({ "st" => "play", "n" => 1 }); nil }]
+  ["the same status again", -> { Asterism.status({ "st" => "play", "n" => 1 }); nil }],
+  ["put values", lambda do
+    imu.put([1.5, -2, 9.8])
+    cam.put("\xff\xd8\xff\xe0JFIF\xff\xd9".b)
+    strokes.put({ "pts" => [1, 2], "color" => "red", "at" => [0, 0, 0] })
+    imu.put([1.5, -2, 9.8])
+    nil
+  end],
+  ["withdraw a topic", -> { cam.close; nil }],
+  ["receive values", lambda do
+    rec.feed
+    t0 = Asterism.now_ms
+    while got.size < 10 && Asterism.now_ms - t0 < 3000
+      Asterism.poll
+      Asterism.pause(2)
+    end
+    got
+  end]
 ]
 fails = 0
 i = 0

@@ -4,9 +4,9 @@
 # the objects, the nodes' profiles and the applications' statuses
 # (docs/protocol.md 5, 7, 8) with one get for each node or application.
 #
-# Not one wildcard get for all (asterism/*/*/@status): behind a router's
+# Not one wildcard get for all (asterism/*/*/@profile): behind a router's
 # access control a query must fit the rules of every node it would reach
-# (a game host may answer asterism/games/*/@status, not asterism/*/*/@status),
+# (a game host may answer asterism/games/*/@profile, not asterism/*/*/@profile),
 # so a wildcard over the nodes is refused where the plain keys pass. The
 # gets go out at once and are read as their replies come (zenoh-c fills
 # them on its own threads), so a listing costs one time limit at most,
@@ -102,11 +102,12 @@ module Asterism
       end
 
       # {"<node>/<app>" => status} of the applications that answered (one
-      # get per application, all at once).
+      # get per application on its own profile, ?status, all at once).
       def statuses(list = apps)
         out = {}
-        gets(list.map { "asterism/#{_1}/@status" }).each do |key, replies|
-          st = replies.first && ::Asterism::Status.check(::Asterism::Codec.unpack(replies.first[1]))
+        gets(list.map { "asterism/#{_1}/@profile" }, params: "status").each do |key, replies|
+          raw = replies.first && ::Asterism::Codec.unpack(replies.first[1])
+          st = raw.is_a?(Hash) && ::Asterism::Status.check(raw["status"])
           parts = key.split("/")
           out["#{parts[1]}/#{parts[2]}"] = st if st
         end

@@ -735,7 +735,7 @@ class TestCLI < Minitest::Test
 
       out, err, code = cli("node", "info", "calcnode")
       assert_equal 0, code, err
-      assert_equal "calcnode\n  profile: kind=cruby protocol=1 name=\"Calc node\" icon_hash=HASH\n  calc\n" \
+      assert_equal "calcnode\n  profile: kind=cruby protocol=2 name=\"Calc node\" icon_hash=HASH\n  calc\n" \
                    "    status:\n      tables=1 st=wait\n    objects:\n      calc  5 methods\n" \
                    "      other  1 method\n        The other calculator.\n", out.sub(/icon_hash=\h{8}/, "icon_hash=HASH")
       j, = cli("node", "info", "calcnode", "-o", "json")

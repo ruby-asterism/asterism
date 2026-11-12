@@ -218,7 +218,7 @@ q.("meta of every object", "#{base}/*/meta", nil,
 q.("meta of no such object", "#{base}/nothing/meta", nil, [],
   note: "no reply (the caller sees nobody answer)")
 prof = ->(icon) do
-  pairs = [["protocol", i(1)], ["kind", KIND_WORD], ["name", "iut"]]
+  pairs = [["protocol", i(2)], ["kind", KIND_WORD], ["name", "iut"]]
   pairs << ["icon", { "bin_hex" => ICON.unpack1("H*") }] if icon
   pairs << ["icon_hash", ICON_HASH]
   [{ "key" => "asterism/#{IUT}/@profile", "payload" => m(*pairs) }]
@@ -231,14 +231,33 @@ q.("profile icon=1", "asterism/#{IUT}/@profile", nil, prof.(true), params: "icon
 q.("profile not under **", "asterism/#{IUT}/**", nil, [],
   note: "@profile is a verbatim chunk: ** does not reach it, and nothing else answers asterism/<node>/**")
 q.("profile not under *", "asterism/*/@profile", nil, prof.(true), note: "a wildcard node does reach it")
-status = [{ "key" => "asterism/#{IUT}/#{APP}/@status", "payload" => m(["st", "wait"], ["n", i(1)]) }]
-q.("status", "asterism/#{IUT}/#{APP}/@status", nil, status, note: "a map with str keys, the application's own")
-q.("status ignores parameters", "asterism/#{IUT}/#{APP}/@status", nil, status, params: "x=1")
-q.("status not under **", "#{base}/**", nil, [],
-  note: "@status is a verbatim chunk: asterism/<node>/<app>/** does not reach it")
-q.("status under */*", "asterism/*/*/@status", nil, status, note: "wildcard node and app chunks do reach it")
-q.("status of no such app", "asterism/#{IUT}/nothing/@status", nil, [],
-  note: "an application without a status answers nothing")
+# The application's own profile: its status, its topics (declared by the
+# implementation under test after connecting) and its types (defined before).
+app_prof = "asterism/#{IUT}/#{APP}/@profile"
+st_tv = m(["st", "wait"], ["n", i(1)])
+pubs_tv = m(["imu", m(["t", i(2)], ["u", "m/s2"], ["d", "acceleration"], ["ts", true])],
+            ["board1/strokes", m(["t", "conf/stroke"])],
+            ["camera", m(["t", i(4)], ["e", i(17)])])
+types_tv = m(["conf/stroke", m(["f", [["pts", "int[]"], ["color", "str"], ["at", i(2)]]], ["d", "one stroke"])])
+ap = ->(*pairs) { [{ "key" => app_prof, "payload" => m(*pairs) }] }
+q.("app profile", app_prof, nil, ap.(["status", st_tv], ["pubs", pubs_tv]),
+  note: "without parameters: the status and the topics (the types only when asked for)")
+q.("app profile ?status", app_prof, nil, ap.(["status", st_tv]), params: "status")
+q.("app profile ?pubs", app_prof, nil, ap.(["pubs", pubs_tv]), params: "pubs",
+  note: "t: a built-in type's number or an application type's name; e: the encoding's number (image/jpeg is 17)")
+q.("app profile ?types", app_prof, nil, ap.(["types", types_tv]), params: "types",
+  note: "f: [name, type] pairs (a built-in number, a basic type, another type's name; [] for an array)")
+q.("app profile two parts", app_prof, nil, ap.(["status", st_tv], ["types", types_tv]), params: "status;types")
+q.("app profile unknown parameters", app_prof, nil, ap.(["status", st_tv], ["pubs", pubs_tv]), params: "x=1",
+  note: "parameters naming no part: the default reply")
+q.("app profile under */*", "asterism/*/*/@profile", nil, ap.(["status", st_tv], ["pubs", pubs_tv]),
+  note: "wildcard node and app chunks reach it (a node's profile has one chunk less)")
+q.("app profile not under **", "#{base}/**", nil, [],
+  note: "@profile is a verbatim chunk: asterism/<node>/<app>/** does not reach it")
+q.("nothing answers @status", "asterism/#{IUT}/#{APP}/@status", nil, [],
+  note: "the status is only put there; it is asked for at @profile?status")
+q.("app profile of no such app", "asterism/#{IUT}/nothing/@profile", nil, [],
+  note: "an application that is not there answers nothing")
 q.("method name as bin", call_key, pk({ "method" => "add".b, "args" => [2, 3] }),
   [{ "key" => call_key, "payload" => { "any" => "value" } }], portable: false,
   note: "the name is a str; the Ruby implementations also take a bin name by its bytes (answered 5)")
@@ -309,51 +328,119 @@ o.("meta", { "respond_to" => ["plain", "x?", "nope"], "ruby" => "[:plain, :x?, :
   note: "the meta is fetched once per proxy")
 o.("profile without the icon", { "profile_of" => DRV, "icon" => false },
   { "key" => "asterism/#{DRV}/@profile", "params" => "icon=0", "payload" => nil },
-  [pk({ "protocol" => 1, "kind" => "cruby", "name" => "drv", "host" => 5, "extra" => 1, "icon_hash" => "0000abcd" })],
-  ["ok", m(["protocol", i(1)], ["kind", "cruby"], ["name", "drv"], ["icon_hash", "0000abcd"])],
+  [pk({ "protocol" => 2, "kind" => "cruby", "name" => "drv", "host" => 5, "extra" => 1, "icon_hash" => "0000abcd" })],
+  ["ok", m(["protocol", i(2)], ["kind", "cruby"], ["name", "drv"], ["icon_hash", "0000abcd"])],
   note: "the reader keeps only the known fields that pass their checks")
 o.("profile with the icon", { "profile_of" => DRV, "icon" => true },
   { "key" => "asterism/#{DRV}/@profile", "params" => "", "payload" => nil },
-  [pk({ "protocol" => 1, "kind" => "cruby", "icon" => ICON, "icon_hash" => "ffffffff" })],
-  ["ok", m(["protocol", i(1)], ["kind", "cruby"], ["icon", { "bin_hex" => ICON.unpack1("H*") }], ["icon_hash", ICON_HASH])],
+  [pk({ "protocol" => 2, "kind" => "cruby", "icon" => ICON, "icon_hash" => "ffffffff" })],
+  ["ok", m(["protocol", i(2)], ["kind", "cruby"], ["icon", { "bin_hex" => ICON.unpack1("H*") }], ["icon_hash", ICON_HASH])],
   note: "icon_hash is computed again from the icon; the one sent is not trusted")
 o.("profile without a protocol", { "profile_of" => DRV, "icon" => false },
   { "key" => "asterism/#{DRV}/@profile", "params" => "icon=0", "payload" => nil },
-  [pk({ "kind" => "cruby" })], ["ok", m(["kind", "cruby"])], note: "a node of protocol 0 (no protocol field)")
+  [pk({ "kind" => "cruby" })], ["ok", m(["kind", "cruby"])], note: "a node without a protocol field (protocol 0)")
 o.("profile that is not one", { "profile_of" => DRV, "icon" => false },
   { "key" => "asterism/#{DRV}/@profile", "params" => "icon=0", "payload" => nil },
   [pk({ "kind" => "Not A Word" })], ["ok", nil], note: "no valid kind: no profile (nil)")
 o.("change the profile", { "set_profile" => m(["name", "iut 2"]) }, nil, [], ["ok", nil],
   note: "the change is put on asterism/iut/@profile (see profile_puts)")
-o.("status of another app", { "status_of" => [DRV, APP] },
-  { "key" => "asterism/#{DRV}/#{APP}/@status", "params" => "", "payload" => nil },
-  [pk({ "seats" => 2, 5 => "x", "" => 1, "list" => [1, { "a" => nil }] })],
+drv_prof = "asterism/#{DRV}/#{APP}/@profile"
+askp = ->(part) { { "key" => drv_prof, "params" => part, "payload" => nil } }
+o.("status of another app", { "status_of" => [DRV, APP] }, askp.("status"),
+  [pk({ "status" => { "seats" => 2, 5 => "x", "" => 1, "list" => [1, { "a" => nil }] } })],
   ["ok", m(["seats", i(2)], ["list", [i(1), m(["a", nil])]])],
-  note: "the reader keeps the entries with a non-empty str key")
-o.("status that is not one", { "status_of" => [DRV, APP] },
-  { "key" => "asterism/#{DRV}/#{APP}/@status", "params" => "", "payload" => nil },
-  [pk([1, 2])], ["ok", nil], note: "not a map: no status (nil)")
-o.("status too large", { "status_of" => [DRV, APP] },
-  { "key" => "asterism/#{DRV}/#{APP}/@status", "params" => "", "payload" => nil },
-  [pk({ "big" => "x" * 1100 })], ["ok", nil], note: "more than 1024 bytes: no status (nil)")
-o.("no status", { "status_of" => [DRV, APP] },
-  { "key" => "asterism/#{DRV}/#{APP}/@status", "params" => "", "payload" => nil },
+  note: "asked at the application's profile with ?status; the reader keeps the entries with a non-empty str key")
+o.("status that is not one", { "status_of" => [DRV, APP] }, askp.("status"),
+  [pk({ "status" => [1, 2] })], ["ok", nil], note: "not a map: no status (nil)")
+o.("status too large", { "status_of" => [DRV, APP] }, askp.("status"),
+  [pk({ "status" => { "big" => "x" * 1100 } })], ["ok", nil], note: "more than 1024 bytes: no status (nil)")
+o.("status left out", { "status_of" => [DRV, APP] }, askp.("status"),
+  [pk({})], ["ok", nil], note: "an application without a status leaves the part out: no status (nil)")
+o.("app profile that is not a map", { "status_of" => [DRV, APP] }, askp.("status"),
+  [pk([1, 2])], ["ok", nil], note: "no status (nil)")
+o.("no status", { "status_of" => [DRV, APP] }, askp.("status"),
   [], ["ok", nil], note: "nobody answers: no status (nil), not an error")
+o.("topics of another app", { "pubs_of" => [DRV, APP] }, askp.("pubs"),
+  [pk({ "pubs" => { "a" => { "t" => 2, "x" => 1 }, "b/c" => { "t" => "x/y", "e" => 17, "u" => "m", "d" => "d", "ts" => true },
+                    "odd" => { "t" => 0, "e" => "jpeg", "ts" => 1, "u" => 5 }, 5 => {}, "nomap" => 1 } })],
+  ["ok", m(["a", m(["t", i(2)])], ["b/c", m(["t", "x/y"], ["e", i(17)], ["u", "m"], ["d", "d"], ["ts", true])],
+           ["odd", m])],
+  note: "the reader keeps the declarations (maps under a str name) and their known keys that pass")
+o.("no topics", { "pubs_of" => [DRV, APP] }, askp.("pubs"), [pk({ "status" => {} })], ["ok", m],
+  note: "an application that answers without topics has none (an empty map)")
+o.("topics of nobody", { "pubs_of" => [DRV, APP] }, askp.("pubs"), [], ["ok", nil],
+  note: "nobody answers: nil")
+o.("types of another app", { "types_of" => [DRV, APP] }, askp.("types"),
+  [pk({ "types" => { "x/p" => { "f" => [["x", "float"], ["y", 1]], "d" => "a point", "z" => 1 },
+                     "x/bad" => { "f" => [["x"]] }, "x/nof" => {} } })],
+  ["ok", m(["x/p", m(["f", [["x", "float"], ["y", i(1)]]], ["d", "a point"])])],
+  note: "the reader keeps the definitions whose f is a list of [str, int or str]")
 o.("change the status", { "set_status" => m(["st", "play"], ["n", i(1)]) }, nil, [], ["ok", nil],
   note: "the change is put on asterism/iut/conf/@status (see status_puts)")
 o.("the same status again", { "set_status" => m(["st", "play"], ["n", i(1)]) }, nil, [], ["ok", nil],
   note: "nothing is put (see status_puts)")
+JPEG = "\xff\xd8\xff\xe0JFIF\xff\xd9".b
+stroke = m(["pts", [i(1), i(2)]], ["color", "red"], ["at", [i(0), i(0), i(0)]])
+o.("put values", { "put" => [["imu", [f(1.5), i(-2), f(9.8)]], ["camera", { "bin_hex" => JPEG.unpack1("H*") }],
+                             ["board1/strokes", stroke], ["imu", [f(1.5), i(-2), f(9.8)]]] },
+  nil, [], ["ok", nil], note: "each value goes on its topic's key (see data_puts)")
+o.("withdraw a topic", { "unpublish" => "camera" }, nil, [], ["ok", nil],
+  note: "the declarations are put again without it (see pubs_puts)")
+# Values the driver puts on asterism/drv/conf/feed/... while it answers
+# rec.feed; the implementation's subscription to drv/conf/** hands them to
+# its block, and the implementation reports what each came with:
+# [path, value, seq, time, encoding, lost, restarted] (the bytes of a value
+# with an encoding as a bin).
+feed = "asterism/#{DRV}/#{APP}/feed"
+fp = ->(name, payload_hex, att, enc = nil) do
+  { "key" => "#{feed}/#{name}", "payload_hex" => payload_hex, "attachment_hex" => att && pk(att), "encoding" => enc }
+end
+got = ->(name, v, seq, time, enc, lost, restarted) { ["#{DRV}/#{APP}/feed/#{name}", v, seq, time, enc, lost, restarted] }
+mx = 2**31 - 1
+o.("receive values", { "feed" => [
+  fp.("a", pk(1), [0]),
+  fp.("a", pk("two"), [1, 1_700_000_000_123]),
+  fp.("a", pk(nil), [4]),
+  fp.("cam", JPEG.unpack1("H*"), [0], "image/jpeg"),
+  fp.("a", pk([1]), [2]),
+  fp.("w", pk(0), [mx]),
+  fp.("w", pk(1), [0]),
+  fp.("n", pk({ "k" => 1 }), nil),
+  fp.("bad", "c1", [0]),
+  fp.("t", "hello".unpack1("H*"), [0], "text/plain;charset=utf-8"),
+  fp.("a", pk(5), [3, "x"])
+], "expect" => 10 },
+  { "key" => rec_call, "params" => "", "call" => { "method" => "feed", "args" => [], "kwargs" => m } }, okv.(nil),
+  ["ok", [got.("a", i(1), i(0), nil, "msgpack", i(0), false),
+          got.("a", "two", i(1), i(1_700_000_000_123), "msgpack", i(0), false),
+          got.("a", nil, i(4), nil, "msgpack", i(2), false),
+          got.("cam", { "bin_hex" => JPEG.unpack1("H*") }, i(0), nil, "image/jpeg", i(0), false),
+          got.("a", [i(1)], i(2), nil, "msgpack", i(2), true),
+          got.("w", i(0), i(mx), nil, "msgpack", i(0), false),
+          got.("w", i(1), i(0), nil, "msgpack", i(0), false),
+          got.("n", m(["k", i(1)]), nil, nil, "msgpack", i(0), false),
+          got.("t", { "bin_hex" => "hello".unpack1("H*") }, i(0), nil, "text/plain;charset=utf-8", i(0), false),
+          got.("a", i(5), i(3), nil, "msgpack", i(0), false)]],
+  note: "no encoding: MessagePack (\"msgpack\"); 4 after 1: 2 lost; 2 after 4: the sender started again (2 lost of " \
+        "its new run); 0 after 2^31-1: the numbers wrapped; no attachment: no number; not MessagePack without " \
+        "an encoding: left out; a time that is not an int: none")
 
 samples = {
   "format" => "asterism-protocol-samples",
-  "version" => 4,
-  "protocol" => 1,
-  "describes" => "the Asterism wire protocol 1 as asterism 0.7.0 speaks it (docs/protocol.md)",
+  "version" => 5,
+  "protocol" => 2,
+  "describes" => "the Asterism wire protocol 2 (docs/protocol.md)",
   "names" => { "iut" => IUT, "app" => APP, "driver" => DRV },
   "icon" => { "hex" => ICON.unpack1("H*"), "icon_hash" => ICON_HASH },
   "iut" => {
     "profile" => m(["name", "iut"]),
     "status" => m(["st", "wait"], ["n", i(1)]),
+    "types" => [{ "name" => "conf/stroke", "fields" => [["pts", "int[]"], ["color", "str"], ["at", "vector3"]],
+                  "desc" => "one stroke" }],
+    "topics" => [{ "name" => "imu", "type" => "vector3", "unit" => "m/s2", "desc" => "acceleration", "ts" => true },
+                 { "name" => "board1/strokes", "type" => "conf/stroke" },
+                 { "name" => "camera", "type" => "image", "encoding" => "image/jpeg" }],
+    "subscribe" => "#{DRV}/#{APP}/**",
     "objects" => [
       { "name" => "subject", "methods" => [["echo", i(1)], ["kw", i(1)], ["add", i(2)], ["boom", i(0)],
                                            ["any", i(-1)], ["ok?", i(0)], ["unsendable", i(0)], ["whoami", i(0)]] },
@@ -370,14 +457,36 @@ samples = {
   },
   "profile_puts" => [
     { "when" => "connect", "key" => "asterism/#{IUT}/@profile",
-      "payload" => m(["protocol", i(1)], ["kind", KIND_WORD], ["name", "iut"], ["icon_hash", ICON_HASH]) },
+      "payload" => m(["protocol", i(2)], ["kind", KIND_WORD], ["name", "iut"], ["icon_hash", ICON_HASH]) },
     { "when" => "change the profile", "key" => "asterism/#{IUT}/@profile",
-      "payload" => m(["protocol", i(1)], ["kind", KIND_WORD], ["name", "iut 2"], ["icon_hash", ICON_HASH]) }
+      "payload" => m(["protocol", i(2)], ["kind", KIND_WORD], ["name", "iut 2"], ["icon_hash", ICON_HASH]) }
   ],
   "status_puts" => [
     { "when" => "connect", "key" => "asterism/#{IUT}/#{APP}/@status", "payload" => m(["st", "wait"], ["n", i(1)]) },
     { "when" => "change the status", "key" => "asterism/#{IUT}/#{APP}/@status",
       "payload" => m(["st", "play"], ["n", i(1)]) }
+  ],
+  # The last two puts on asterism/iut/conf/@pubs: the declarations once the
+  # three topics are there (an implementation may put once per topic before
+  # it, or once for several), then without the camera.
+  "pubs_puts" => {
+    "key" => "asterism/#{IUT}/#{APP}/@pubs",
+    "declared" => pubs_tv,
+    "after_unpublish" => m(["imu", m(["t", i(2)], ["u", "m/s2"], ["d", "acceleration"], ["ts", true])],
+                           ["board1/strokes", m(["t", "conf/stroke"])])
+  },
+  # The puts on the topics' keys (asterism/iut/conf/<name>), in order, and
+  # no others: the payload (a value: MessagePack; payload_hex: the bytes as
+  # they are), the encoding zenoh reports, the attachment (MessagePack).
+  "data_puts" => [
+    { "key" => "asterism/#{IUT}/#{APP}/imu", "encoding" => "zenoh/bytes", "payload" => [f(1.5), i(-2), f(9.8)],
+      "attachment" => [i(0), { "any" => "int" }] },
+    { "key" => "asterism/#{IUT}/#{APP}/camera", "encoding" => "image/jpeg", "payload_hex" => JPEG.unpack1("H*"),
+      "attachment" => [i(0)] },
+    { "key" => "asterism/#{IUT}/#{APP}/board1/strokes", "encoding" => "zenoh/bytes", "payload" => stroke,
+      "attachment" => [i(0)] },
+    { "key" => "asterism/#{IUT}/#{APP}/imu", "encoding" => "zenoh/bytes", "payload" => [f(1.5), i(-2), f(9.8)],
+      "attachment" => [i(1), { "any" => "int" }] }
   ]
 }
 
