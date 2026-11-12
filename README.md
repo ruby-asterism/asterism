@@ -112,11 +112,11 @@ ruby -I lib -I ../asterism-zenoh/lib your_script.rb    # after `rake compile` in
 
 `Asterism::ROS::TYPE_PATH` is `data/msgs` there; add your own directories.
 MessagePack sends a binary (ASCII-8BIT) String as bin and any other String
-as str (protocol 1; [Values](#values)).
+as str (the wire protocol; [Values](#values)).
 
 mruby / PicoRuby: add this repository and picoruby-asterism-zenoh as gems
 (`conf.gem "path/to/asterism"`; a `MessagePack` module with `pack` /
-`unpack` is needed too: for protocol 1 it must write a binary String
+`unpack` is needed too: for the wire protocol it must write a binary String
 (`String#b`) as bin and read a bin as one, and refuse ext types, integers
 outside int64 and bytes after the value), and put `data/msgs` on the device's file system at
 `/usr/share/asterism/msgs` (or add the place to
@@ -784,6 +784,10 @@ Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 | `Asterism.profile_of(node, icon: true, timeout: 2.0)` | Hash or nil | Another node's profile, nil when it does not answer (an older version, a ROS 2 node). |
 | `Asterism.status(hash = nil, **fields)` / `Asterism.status` | Hash or nil | This application's status: a Hash is the whole status, keywords change those fields (nil removes one); put on the network when it changes. Without arguments, returns it. See [Status](#status). |
 | `Asterism.status_of(node, app, timeout: 2.0)` | Hash or nil | Another application's status, nil when it has none or does not answer. |
+| `Asterism.publish(name, type:, unit:, desc:, ts:, encoding:)` | `Asterism::Topic` | Declares a topic of this application; `topic.put(value)` sends. See [Topics](#topics). |
+| `Asterism.subscribe(path, depth: nil) { \|v, info\| }` | `Asterism::Subscription` | The values on `<node>/<app>/<topic>` (wildcards allowed), from `Asterism.poll`; `close` ends it. |
+| `Asterism.pubs_of(node, app)` / `Asterism.types_of(node, app)` | Hash or nil | Another application's topics / types, `{}` when it has none, nil when it does not answer. |
+| `Asterism.define_type(name, fields, desc: nil)` | Hash | An application type, told by `@profile?types`. |
 
 ## Describing the methods
 
@@ -876,26 +880,67 @@ Asterism.status                                 # => {"mahjong1" => {...}} (nil 
 Asterism.status_of("games", "games")            # another application's, or nil
 ```
 
-- **On the network.** `asterism/<node>/<app>/@status`
-  ([docs/protocol.md](docs/protocol.md) 8): the application answers a get
-  there with its status, and puts it there when it changes (setting the
-  same status again puts nothing), at connect and after a lost connection
-  comes back. An application that never set one answers nothing.
+- **On the network.** The application's own profile,
+  `asterism/<node>/<app>/@profile` ([docs/protocol.md](docs/protocol.md)
+  8), answers the status (`?status`; with no parameters the status and
+  the topics), and the status is put on `asterism/<node>/<app>/@status`
+  when it changes (setting the same status again puts nothing), at connect
+  and after a lost connection comes back. An application that has neither
+  a status nor a topic nor a type answers nothing.
 - **The value.** A Hash with String (or Symbol) keys; the values are
   anything a call can carry, nested at most 4 levels below the Hash, and
   the whole packs into 1024 bytes at most. `ArgumentError` otherwise.
-  Whoever may read `asterism/*/*/@status` reads it: counts and states, not
-  secrets.
+  Whoever may read `asterism/*/*/@profile` or `asterism/*/*/@status` reads
+  it: counts and states, not secrets.
 - **Following.** Subscribe to `asterism/*/*/@status` and read each put with
   `Asterism::Status.parse(key, payload)` (`[node, app, status]` or nil); on
   CRuby, `net.on_status("*/*") { |node, app, status| }`. Only changes are
   put: ask `status_of` once for an application that appeared.
-- **Behind access control.** `@status` is a verbatim chunk: `asterism/**`
-  does not match it. A router's rules need `asterism/*/*/@status` for a
-  reader (query, subscription) and `asterism/<node>/*/@status` for the
-  application (put, queryable, reply).
+- **Behind access control.** `@profile`, `@status` and `@pubs` are
+  verbatim chunks: `asterism/**` does not match them. A router's rules
+  need `asterism/*/*/@profile` (query) and `asterism/*/*/@status`,
+  `asterism/*/*/@pubs` (subscription) for a reader, and the same under
+  `asterism/<node>/*/` for the application (queryable and reply, put).
 - Kept across `connect` and `close`, like the profile (it belongs to the
   process, or the VM on a board).
+
+## Topics
+
+An application streams values on topics it declares: the type, unit and
+description are said once, and each value goes with only a sequence number
+(and the sender's time, when asked for).
+
+```ruby
+imu = Asterism.publish("imu", type: :vector3, unit: "m/s2", desc: "acceleration", ts: true)
+imu.put([0.1, 0.0, 9.8])                       # MessagePack, no encoding
+cam = Asterism.publish("camera", type: :image, encoding: "image/jpeg")
+cam.put(File.binread("frame.jpg"))             # the bytes as they are
+Asterism.define_type("mygame/board.strokes", [["pts", "int[]"], ["color", "str"]], desc: "one stroke")
+Asterism.publish("board1/strokes", type: "mygame/board.strokes")
+
+Asterism.subscribe("*/demo/imu") do |v, info|   # from Asterism.poll
+  puts "#{info.node} #{v.inspect} seq=#{info.seq} lost=#{info.lost} at #{info.time}"
+end
+Asterism.pubs_of("linux", "demo")              # => {"imu" => {"t" => 2, "u" => "m/s2", ...}}
+```
+
+- **Keys.** `asterism/<node>/<app>/<topic>` (a topic name may have several
+  chunks). The declarations are answered at `@profile?pubs` and put on
+  `asterism/<node>/<app>/@pubs` when they change; types at `@profile?types`
+  ([docs/protocol.md](docs/protocol.md) 9-12).
+- **type:** a built-in type (`:number`, `:vector3`, `:pose`, `:image`,
+  `:state`, `:log`, `:text`, or its number `Asterism::Types::VECTOR3`) or an
+  application type's name (a String). **encoding:** one of Zenoh's
+  encodings with a number (`image/jpeg`, `image/png`, `text/plain`, ...):
+  the values are then Strings, sent as they are.
+- **info** (`Asterism::SampleInfo`): `key`, `node`, `app`, `name`, `seq`,
+  `time` (the sender's, ms since 1970, with `ts: true`), `encoding`
+  (`"msgpack"` for a MessagePack value), `timestamp` (the router's, when it
+  stamped the value), `lost` (values of this key missed since the last
+  one) and `restarted?` (the sender started the topic over). A block that
+  takes only `|v|` gets the value.
+- Topics and subscriptions end with the connection (declare them again
+  after a new `connect`); the types are kept, like the status.
 
 ## One connection: `Asterism.session`
 
@@ -1138,7 +1183,7 @@ Asterism.expose("wheels", Rover.new, methods: { drive: 2 }, caller: :from)
 
 ## Keys and encoding
 
-Wire protocol 1. The full description, for implementations in other
+Wire protocol 2. The full description, for implementations in other
 languages, is [docs/protocol.md](docs/protocol.md) (with the conformance
 tests); why it has this shape (the review of protocol 0's Ruby-shaped
 parts, and what was decided) is
@@ -1260,9 +1305,10 @@ where the build has it, else plain Ruby (`data/transfer/sha256.rb`, slow).
 
 - Objects cannot be passed by reference (a return value is a copy), blocks
   cannot be sent, there are no events (later stages).
-- The wire protocol is protocol 1 only: nodes of asterism before 0.7.0
-  (protocol 0) do not see 0.7.0's objects and a call between the two
-  fails (a protocol 0 call is refused with `remote_kind` `protocol`).
+- The wire protocol is protocol 2 only: every node of a network moves to
+  it together (nodes of asterism before 0.7.0, protocol 0, do not see its
+  objects, and a protocol 0 call is refused with `remote_kind`
+  `protocol`).
 - No authentication by default (plain TCP): a trusted LAN is assumed, or
   TLS through a router (CRuby; [Over TLS](#over-tls-a-router-on-the-internet)).
 - One object-layer connection per process (per VM on the boards).
