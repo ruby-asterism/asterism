@@ -804,8 +804,8 @@ Every value of a topic carries a Zenoh attachment: a MessagePack array
   with an int from 0 to `2^31 - 1`, has no sequence number; a `time` that
   is not an int is no time.
 
-The cost: the array and a `seq` below 128 take 2 bytes, up to 65535 four
-bytes, beyond six; a time adds 9 bytes. Replies to queries (calls, meta,
+The cost: 2 to 6 bytes with the array's header: a `seq` below 128 takes
+2 bytes, up to 65535 four, beyond six; a time adds 9 bytes. Replies to queries (calls, meta,
 profiles) carry no attachment.
 
 ### 9.4 Reading the sequence numbers
@@ -819,11 +819,15 @@ one by its distance forward, `d = (seq - last) mod 2^31`:
   or more): the sender **restarted** the topic (it declared it again, or
   connected again). The values of the new run before this one, `seq` of
   them, were not received;
-- the first value of a key: nothing lost (a reader that subscribes late
-  does not count what came before it). Zenoh may also leave out the first
-  values a publisher puts before it knows of the subscriber.
+- the first value of a key: nothing lost, `lost` 0 (a reader that
+  subscribes late does not count what came before it). Zenoh may also
+  leave out the first values a publisher puts before it knows of the
+  subscriber.
 
-The step from `2^31 - 1` to `0` is `d = 1`, the wrap: nothing lost.
+The step from `2^31 - 1` to `0` is `d = 1`, the wrap: a step forward,
+nothing lost. A restart is told apart from it (`info.restarted?` in Ruby,
+9.5). A value without an encoding that does not decode as one MessagePack
+value is not handed to the application; it is counted (`malformed`).
 
 ### 9.5 Subscribing (the Ruby API)
 
@@ -898,7 +902,7 @@ are several numbers):
 |---|---|---|
 | 1 | number | an int or a float |
 | 2 | vector3 | `[x, y, z]`, ints or floats |
-| 3 | pose | the position and the orientation in one array (ints or floats). The order is not fixed yet; `[x, y, z, qx, qy, qz, qw]` (the orientation as a quaternion) is the proposal |
+| 3 | pose | `[x, y, z, qx, qy, qz, qw]`: the position, then the orientation as a quaternion, flat, in ROS 2's `Pose` order (ints or floats) |
 | 4 | image | the image's bytes, in the topic's encoding (`image/jpeg`, `image/png`, ...) |
 | 5 | state | a str or an int: a scene, a mode, on / off |
 | 6 | log | a map: `level` (`"debug"`, `"info"`, `"warn"`, `"error"`, `"fatal"`, or 10 to 50 as ROS 2), `msg` (str), `time` (seconds since 1970, a float); optional `name`, `file`, `line`, `function` |
@@ -921,12 +925,15 @@ is a map, type name => definition:
 
 | Key | Value |
 |---|---|
-| `f` | the fields, in order: an array of `[name, type]`, name a str; type an int (a built-in number), or a str: a basic type (`int`, `float`, `str`, `bin`, `bool`) or another application type's name, either with `[]` at the end for an array of them (`int[]`, `asterism-games/point[]`) |
+| `f` | the fields, in order: an array of `[name, type]`, name a str; type an int (a built-in type's number), or a str: a built-in type's name (`number`, `vector3`, `pose`, `image`, `state`, `log`, `text`), a basic type (`int`, `float`, `str`, `bin`, `bool`) or another application type's name, any of them with `[]` at the end for an array of them (`vector3[]`, `int[]`, `asterism-games/point[]`) |
 | `d` | optional, a str: what the type is |
 
 The value of such a type is a MessagePack map with the fields as str keys.
-An array of a built-in type in a field is not written yet (its form is
-not decided); the implementation refuses it. A reader
+A built-in type is written in a field by its number or by its name (an
+array of one only by its name, `"vector3[]"`); the implementation sends
+the form the application wrote. A topic's declaration (`t`, 10.1) always
+uses the number. The names of the built-in types and of the basic types
+are not application types' names. A reader
 (`Asterism::Types.check`) keeps the definitions with a non-empty str name
 whose `f` is an array of `[str, int or non-empty str]`, and `d` when it is
 a str.
