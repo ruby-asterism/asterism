@@ -38,6 +38,12 @@ class TestTopic < Minitest::Test
     assert_equal({ "f" => [] }, Asterism::Types.definition!([], nil))
     assert_raises(ArgumentError) { Asterism::Types.definition!([["a"]], nil) }
     assert_raises(ArgumentError) { Asterism::Types.definition!([["a", "[]"]], nil) }
+    assert_raises(ArgumentError) { Asterism::Types.definition!([["a", "[][]"]], nil) }
+    assert_equal({ "f" => [["grid", "int[][]"], ["x", "any"], ["mb", "any[]"], ["paths", "vector3[][]"]] },
+                 Asterism::Types.definition!([["grid", "int[][]"], ["x", "any"], ["mb", "any[]"],
+                                              ["paths", "vector3[][]"]], nil),
+                 "[] repeated: arrays of arrays; any: a value of any shape")
+    assert_includes Asterism::Types::BASIC, "any"
     assert_raises(ArgumentError) { Asterism::Types.definition!([["a", 9]], nil) }
     assert_raises(ArgumentError) { Asterism::Types.definition!({ "a" => "int" }, nil) }
     assert_raises(ArgumentError) { Asterism::Types.definition!([], 5) }
@@ -140,6 +146,7 @@ class TestTopic < Minitest::Test
     require "asterism"
     loc = ARGV[0]
     Asterism.define_type("t/stroke", [["pts", "int[]"], ["color", "str"]], desc: "one stroke")
+    Asterism.define_type("t/view", [["mb", "any[]"], ["fin", "int[][]"]], app: "watch")
     if ARGV[1] == "router"
       Asterism.connect(loc, node: "child", app: "t")
     else
@@ -148,6 +155,7 @@ class TestTopic < Minitest::Test
     imu = Asterism.publish("imu", type: :vector3, unit: "m/s2", desc: "accel", ts: true)
     strokes = Asterism.publish("board1/strokes", type: "t/stroke")
     cam = Asterism.publish("camera", type: :image, encoding: "image/jpeg")
+    view = Asterism.publish("t1/state", type: "t/view", app: "watch")
     STDOUT.puts "ready"
     STDOUT.flush
     loop do
@@ -165,6 +173,8 @@ class TestTopic < Minitest::Test
       when "wrap" then imu.instance_variable_set(:@seq, Asterism::Topic::SEQ_MAX)
       when "drop" then cam.close
       when "again" then imu = Asterism.publish("imu", type: :vector3, unit: "m/s2", desc: "accel", ts: true)
+      when "view" then view.put({ "mb" => [["a", 0, 1]], "fin" => [[0, 1]] })
+      when "unview" then Asterism.unpublish("t1/state", app: "watch")
       end
       STDOUT.puts "done #{cmd}"
       STDOUT.flush
@@ -210,6 +220,24 @@ class TestTopic < Minitest::Test
     assert_equal [["asterism/child/t/@profile", { "pubs" => pubs, "types" => types }]], ask.("pubs;types")
     assert_equal [["asterism/child/t/@profile", {}]], ask.("status")
     assert_nil Asterism.pubs_of("child", "nothing", timeout: 0.5)
+    # Another name of the child's connection (publish / define_type app:):
+    # its own @profile (no status) and @pubs; no token, so not in apps.
+    vpubs = { "t1/state" => { "t" => "t/view" } }
+    vtypes = { "t/view" => { "f" => [["mb", "any[]"], ["fin", "int[][]"]] } }
+    assert_equal vpubs, Asterism.pubs_of("child", "watch")
+    assert_equal vtypes, Asterism.types_of("child", "watch")
+    assert_nil Asterism.status_of("child", "watch"), "no status for another name"
+    vask = lambda do |params|
+      replies = []
+      g = s.get("asterism/child/watch/@profile", timeout_ms: 800, params: params)
+      wait_for(2) { Asterism.poll; replies.concat(g.each_reply); g.done? }
+      replies.map { |k, pl| [k, MessagePack.unpack(pl)] }
+    end
+    assert_equal [["asterism/child/watch/@profile", { "pubs" => vpubs }]], vask.(nil)
+    assert_equal [["asterism/child/watch/@profile", {}]], vask.("status")
+    refute_includes Asterism.apps, "child/watch", "another name has no token"
+    assert_equal({ "pubs" => vpubs, "types" => vtypes }.keys.sort,
+                 vask.("pubs;types")[0][1].keys.sort)
     # This application's own, without the network: nothing yet.
     assert_equal({}, Asterism.pubs_of("parent", "t"))
     assert_equal({}, Asterism.types_of("parent", "t"))
@@ -276,6 +304,19 @@ class TestTopic < Minitest::Test
     assert_equal [["child", "t", pubs.reject { |k, _| k == "camera" }]], parsed
     assert_equal pubs.reject { |k, _| k == "camera" }, Asterism.pubs_of("child", "t")
 
+    # A value under the other name, and its @pubs when it changes.
+    vgot = []
+    Asterism.subscribe("child/watch/**") { |v, info| vgot << [v, info.app, info.name, info.seq] }
+    sleep 0.3
+    cmd.("view")
+    assert wait_for { Asterism.poll; vgot.any? }
+    assert_equal [[{ "mb" => [["a", 0, 1]], "fin" => [[0, 1]] }, "watch", "t1/state", 0]], vgot
+    seen = []
+    cmd.("unview")
+    assert wait_for { Asterism.poll; seen.concat(pubs_puts.each_pending); seen.any? }
+    assert_equal [["child", "watch", {}]], seen.map { |k, pl| Asterism::Pubs.parse(k, pl) }
+    assert_equal({}, Asterism.pubs_of("child", "watch"))
+
     # close: nothing more comes.
     sub.close
     assert sub.closed?
@@ -289,6 +330,17 @@ class TestTopic < Minitest::Test
     t = Asterism.publish("echo/x", desc: "mine")
     assert_equal({ "echo/x" => { "d" => "mine" } }, Asterism.pubs_of("parent", "t"))
     assert_equal ["echo/x"], Asterism.published
+    o = Asterism.publish("o/state", app: "other")
+    assert_equal "asterism/parent/other/o/state", o.key
+    assert_equal "other", o.app
+    assert_equal ["o/state"], Asterism.published(app: "other")
+    assert_equal ["echo/x"], Asterism.published, "the application's own apart"
+    assert_equal({ "o/state" => {} }, Asterism.pubs_of("parent", "other"), "its own other name without the network")
+    assert_nil Asterism.publish("o2", app: "t").app, "app: its own name is the application's"
+    Asterism.unpublish("o2")
+    assert_raises(ArgumentError) { Asterism.publish("x", app: "a/b") }
+    assert o.close
+    assert_equal [], Asterism.published(app: "other")
     assert_raises(ArgumentError) { Asterism.publish("x", encoding: "zenoh/bytes") }
     assert_raises(ArgumentError) { Asterism.publish("x", encoding: "application/msgpack") }
     assert_raises(ArgumentError) { Asterism.publish("x", ts: 1) }

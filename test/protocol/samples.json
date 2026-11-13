@@ -58,6 +58,14 @@
           [
             "pose",
             "pose"
+          ],
+          [
+            "grid",
+            "int[][]"
+          ],
+          [
+            "extra",
+            "any"
           ]
         ],
         "desc": "one stroke"
@@ -3003,6 +3011,14 @@
                               [
                                 "pose",
                                 "pose"
+                              ],
+                              [
+                                "grid",
+                                "int[][]"
+                              ],
+                              [
+                                "extra",
+                                "any"
                               ]
                             ]
                           ],
@@ -3082,6 +3098,14 @@
                               [
                                 "pose",
                                 "pose"
+                              ],
+                              [
+                                "grid",
+                                "int[][]"
+                              ],
+                              [
+                                "extra",
+                                "any"
                               ]
                             ]
                           ],
@@ -3288,9 +3312,15 @@
               ]
             ]
           }
+        },
+        {
+          "key": "asterism/iut/watch/@profile",
+          "payload": {
+            "map": []
+          }
         }
       ],
-      "note": "wildcard node and app chunks reach it (a node's profile has one chunk less)",
+      "note": "wildcard node and app chunks reach it (a node's profile has one chunk less), and the other name's (define_type app: watch) too",
       "portable": true
     },
     {
@@ -3309,6 +3339,78 @@
       "payload_hex": null,
       "replies": [],
       "note": "the status is only put there; it is asked for at @profile?status",
+      "portable": true
+    },
+    {
+      "id": "other name ?types",
+      "key": "asterism/iut/watch/@profile",
+      "params": "types",
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/watch/@profile",
+          "payload": {
+            "map": [
+              [
+                "types",
+                {
+                  "map": [
+                    [
+                      "conf/cell",
+                      {
+                        "map": [
+                          [
+                            "f",
+                            [
+                              [
+                                "mb",
+                                "any[]"
+                              ]
+                            ]
+                          ]
+                        ]
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "note": "another name of the connection (define_type app: watch) answers its own profile",
+      "portable": true
+    },
+    {
+      "id": "other name, no parameters",
+      "key": "asterism/iut/watch/@profile",
+      "params": null,
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/watch/@profile",
+          "payload": {
+            "map": []
+          }
+        }
+      ],
+      "note": "no topics and no status there: an empty map",
+      "portable": true
+    },
+    {
+      "id": "other name ?status",
+      "key": "asterism/iut/watch/@profile",
+      "params": "status",
+      "payload_hex": null,
+      "replies": [
+        {
+          "key": "asterism/iut/watch/@profile",
+          "payload": {
+            "map": []
+          }
+        }
+      ],
+      "note": "another name has no status",
       "portable": true
     },
     {

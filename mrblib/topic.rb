@@ -35,7 +35,7 @@ module Asterism
     # The built-in types by name; the number is the index + 1.
     NAMES = ["number", "vector3", "pose", "image", "state", "log", "text"]
     # The basic types of a field of an application's own type.
-    BASIC = ["int", "float", "str", "bin", "bool"]
+    BASIC = ["int", "float", "str", "bin", "bool", "any"]
     NAME_MAX = 128   # bytes of a type's name and a field's name
     FIELDS_MAX = 64  # fields of one type
 
@@ -89,7 +89,8 @@ module Asterism
         raise ArgumentError, "field type #{t} is not a built-in type (1 to #{NAMES.size})"
       end
       s = name!("field type:", t)
-      base = s.end_with?("[]") ? s[0, s.size - 2] : s
+      base = s
+      base = base[0, base.size - 2] while base.end_with?("[]")
       raise ArgumentError, "field type #{s.inspect}: no type before []" if base.empty?
       s
     end
@@ -218,9 +219,14 @@ module Asterism
 
     attr_reader :name, :key, :encoding
 
+    # The other name it was declared under (publish's app:), nil for the
+    # application's own.
+    attr_reader :app
+
     # @api private
-    def initialize(name, key, publisher, decl, encoding, ts)
+    def initialize(name, key, publisher, decl, encoding, ts, app = nil)
       @name = name
+      @app = app
       @key = key
       @publisher = publisher
       @decl = decl
@@ -486,12 +492,16 @@ module Asterism
   # Zenoh encoding with a fixed number ("image/jpeg"): the values are then
   # Strings sent as they are, not MessagePack. Publishing a name again
   # replaces the topic (its numbers start again at 0). The declaration is
-  # put on asterism/<node>/<app>/@pubs. Raises ArgumentError for what it
-  # does not accept and Disconnected when not connected. The topics end
-  # with the connection.
-  def self.publish(name, type: nil, unit: nil, desc: nil, ts: false, encoding: nil)
+  # put on asterism/<node>/<app>/@pubs. app: another name of this
+  # connection to declare it under (docs/protocol.md 10.4: the topic is
+  # asterism/<node>/<app:>/<name>, told by that name's own @profile and
+  # @pubs; the name has no objects and no token). Raises ArgumentError for
+  # what it does not accept and Disconnected when not connected. The
+  # topics end with the connection.
+  def self.publish(name, type: nil, unit: nil, desc: nil, ts: false, encoding: nil, app: nil)
     s = session!
     name = check_topic_name(name)
+    a = other_app(app)
     decl = {}
     t = Types.topic_type!(type)
     decl["t"] = t unless t.nil?
@@ -521,22 +531,22 @@ module Asterism
     end
     raise ArgumentError, "ts: expects true or false" unless ts == true || ts == false
     decl["ts"] = true if ts
-    @topics ||= {}
-    old = @topics[name] # replaced in place: the order of @pubs stays
+    tbl = topic_table(a)
+    old = tbl[name] # replaced in place: the order of @pubs stays
     close_topic(old) if old
-    key = "#{ROOT}/#{@node}/#{@app}/#{name}"
+    key = "#{ROOT}/#{@node}/#{a || @app}/#{name}"
     begin
       zp = enc ? s.publisher(key, encoding: enc) : s.publisher(key)
     rescue Asterism::Zenoh::Error
       if old
-        @topics.delete(name)
+        tbl.delete(name)
         tell_pubs(false)
       end
       raise
     end
-    topic = Topic.new(name, key, zp, decl, enc, ts)
-    @topics[name] = topic
-    app_queryable(s)
+    topic = Topic.new(name, key, zp, decl, enc, ts, a)
+    tbl[name] = topic
+    a ? other_queryable(s, a) : app_queryable(s)
     tell_pubs(false)
     topic
   rescue Asterism::Zenoh::Error => e
@@ -544,10 +554,10 @@ module Asterism
     raise Disconnected, e.message
   end
 
-  # Withdraws a topic (a Topic, or its name): its declaration leaves
-  # @pubs. True when there was one.
-  def self.unpublish(topic)
-    tbl = @topics || {}
+  # Withdraws a topic (a Topic, or its name; app: the other name it was
+  # declared under): its declaration leaves @pubs. True when there was one.
+  def self.unpublish(topic, app: nil)
+    tbl = topic_table(topic.is_a?(Topic) ? topic.app : other_app(app))
     name = topic.is_a?(Topic) ? topic.name : topic.to_s
     cur = tbl[name]
     if cur.nil? || (topic.is_a?(Topic) && !cur.equal?(topic))
@@ -560,9 +570,41 @@ module Asterism
     true
   end
 
-  # The names of this application's topics.
-  def self.published
-    @topics ? @topics.keys : []
+  # The names of this application's topics (app: those of another name).
+  def self.published(app: nil)
+    topic_table(other_app(app)).keys
+  end
+
+  # The other name app: gives (nil: none, or this application's own).
+  # @api private
+  def self.other_app(app)
+    return nil if app.nil?
+    a = check_name("app", app)
+    a == @app ? nil : a
+  end
+
+  # What a name other than the application's own holds: {"topics" =>
+  # {name => Topic}, "types" => {name => definition}, "qa" => its
+  # @profile queryable, "pubs_put" => the last @pubs put}.
+  # @api private
+  def self.other_entry(a)
+    @others ||= {}
+    @others[a] ||= { "topics" => {}, "types" => {}, "qa" => nil, "pubs_put" => nil }
+  end
+
+  # The topics of the application (a nil) or of another name.
+  # @api private
+  def self.topic_table(a)
+    return (@topics ||= {}) if a.nil?
+    other_entry(a)["topics"]
+  end
+
+  # The queryable asterism/<node>/<a>/@profile of another name, declared
+  # once it has something to tell (as app_queryable).
+  # @api private
+  def self.other_queryable(s, a)
+    e = other_entry(a)
+    e["qa"] ||= s.queryable("#{ROOT}/#{@node}/#{a}/#{Profile::KEY}", depth: 4)
   end
 
   # @api private
@@ -607,27 +649,38 @@ module Asterism
     s
   end
 
-  # The declarations as sent: {name => {"t", "e", "u", "d", "ts"}}.
+  # The declarations as sent: {name => {"t", "e", "u", "d", "ts"}} (a:
+  # another name's).
   # @api private
-  def self.pubs_hash
+  def self.pubs_hash(a = nil)
     h = {}
-    (@topics || {}).each { |name, t| h[name] = t.decl_raw }
+    topic_table(a).each { |name, t| h[name] = t.decl_raw }
     h
   end
 
-  # Puts the declarations on asterism/<node>/<app>/@pubs while connected:
-  # when they changed since the last put of this connection, or always with
-  # force (a connection that came back) once there were any.
+  # Puts the declarations on asterism/<node>/<app>/@pubs while connected
+  # (and those of each other name on its own @pubs): when they changed
+  # since the last put of this connection, or always with force (a
+  # connection that came back) once there were any.
   # @api private
   def self.tell_pubs(force)
     s = @session
     return unless s
     tbl = @topics || {}
-    return if tbl.empty? && @pubs_put.nil?
-    bytes = Codec.pack(pubs_hash)
-    return if !force && !@pubs_put.nil? && @pubs_put == bytes
-    s.put("#{ROOT}/#{@node}/#{@app}/#{Pubs::KEY}", bytes)
-    @pubs_put = bytes
+    unless tbl.empty? && @pubs_put.nil?
+      bytes = Codec.pack(pubs_hash)
+      if force || @pubs_put.nil? || @pubs_put != bytes
+        s.put("#{ROOT}/#{@node}/#{@app}/#{Pubs::KEY}", bytes)
+        @pubs_put = bytes
+      end
+    end
+    (@others || {}).each do |a, e|
+      next if e["topics"].empty? && e["pubs_put"].nil?
+      bytes = Codec.pack(pubs_hash(a))
+      next unless force || e["pubs_put"].nil? || e["pubs_put"] != bytes
+      s.put("#{ROOT}/#{@node}/#{a}/#{Pubs::KEY}", bytes)
+      e["pubs_put"] = bytes
+    end
   rescue Asterism::Zenoh::Error
     nil # the next poll notices a lost connection
   end
@@ -647,15 +700,24 @@ module Asterism
   # built-in one (its number, or its name: "vector3", :vector3), a basic
   # one ("int", "float", "str", "bin", "bool") or another application
   # type's name, with "[]" at the end for an array ("vector3[]", "int[]",
-  # "mygame/point[]"); names are sent as written. desc: a text. Defining
-  # a name again replaces it. Kept across connect and close. Returns the
+  # "mygame/point[]", "int[][]"; "any" for a value of any shape); names
+  # are sent as written. desc: a text. app: another name of this
+  # connection whose @profile tells it (as publish's). Defining a name
+  # again replaces it. Kept across connect and close. Returns the
   # definition as sent ({"f" => [...], "d" => ...}).
-  def self.define_type(name, fields, desc: nil)
+  def self.define_type(name, fields, desc: nil, app: nil)
     name = Types.name!("define_type: name:", name)
     d = Types.definition!(fields, desc)
-    (@types ||= {})[name] = d
+    a = other_app(app)
+    if a
+      other_entry(a)["types"][name] = d
+    else
+      (@types ||= {})[name] = d
+    end
     s = @session
-    app_queryable(s) if s
+    if s
+      a ? other_queryable(s, a) : app_queryable(s)
+    end
     d
   end
 
@@ -765,6 +827,12 @@ module Asterism
   def self.release_data
     (@topics || {}).each_value { |t| t.closed! }
     @topics = {}
+    (@others || {}).each_value do |e|
+      e["topics"].each_value { |t| t.closed! }
+      e["topics"] = {}
+      e["qa"] = nil
+      e["pubs_put"] = nil
+    end
     (@subscriptions || []).each { |sub| sub.closed! }
     @subscriptions = []
     @pubs_put = nil

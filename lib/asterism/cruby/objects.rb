@@ -225,16 +225,18 @@ module Asterism
 
     # Asterism.publish: declares a topic (an Asterism::Topic; topic.put
     # sends a value). Topic#put may be called from any thread.
-    def publish(name, type: nil, unit: nil, desc: nil, ts: false, encoding: nil)
-      ::Asterism.publish(name, type: type, unit: unit, desc: desc, ts: ts, encoding: encoding)
+    # app: another name of this connection to declare it under.
+    def publish(name, type: nil, unit: nil, desc: nil, ts: false, encoding: nil, app: nil)
+      ::Asterism.publish(name, type: type, unit: unit, desc: desc, ts: ts, encoding: encoding, app: app)
     end
 
-    def unpublish(topic) = ::Asterism.unpublish(topic)
-    def published = ::Asterism.published
+    def unpublish(topic, app: nil) = ::Asterism.unpublish(topic, app: app)
+    def published(app: nil) = ::Asterism.published(app: app)
 
-    # Asterism.define_type: an application type, told by @profile?types.
-    def define_type(name, fields, desc: nil)
-      ::Asterism.define_type(name, fields, desc: desc)
+    # Asterism.define_type: an application type, told by @profile?types
+    # (app: by another name's).
+    def define_type(name, fields, desc: nil, app: nil)
+      ::Asterism.define_type(name, fields, desc: desc, app: app)
     end
 
     # Asterism.subscribe: the values on <node>/<app>/<name> (wildcards

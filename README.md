@@ -803,10 +803,10 @@ Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
 | `Asterism.profile_of(node, icon: true, timeout: 2.0)` | Hash or nil | Another node's profile, nil when it does not answer (an older version, a ROS 2 node). |
 | `Asterism.status(hash = nil, **fields)` / `Asterism.status` | Hash or nil | This application's status: a Hash is the whole status, keywords change those fields (nil removes one); put on the network when it changes. Without arguments, returns it. See [Status](#status). |
 | `Asterism.status_of(node, app, timeout: 2.0)` | Hash or nil | Another application's status, nil when it has none or does not answer. |
-| `Asterism.publish(name, type:, unit:, desc:, ts:, encoding:)` | `Asterism::Topic` | Declares a topic of this application; `topic.put(value)` sends. See [Topics](#topics). |
+| `Asterism.publish(name, type:, unit:, desc:, ts:, encoding:, app: nil)` | `Asterism::Topic` | Declares a topic of this application (`app:` another name of the connection); `topic.put(value)` sends. See [Topics](#topics). |
 | `Asterism.subscribe(path, depth: nil) { \|v, info\| }` | `Asterism::Subscription` | The values on `<node>/<app>/<topic>` (wildcards allowed), from `Asterism.poll`; `close` ends it. |
 | `Asterism.pubs_of(node, app)` / `Asterism.types_of(node, app)` | Hash or nil | Another application's topics / types, `{}` when it has none, nil when it does not answer. |
-| `Asterism.define_type(name, fields, desc: nil)` | Hash | An application type, told by `@profile?types`. |
+| `Asterism.define_type(name, fields, desc: nil, app: nil)` | Hash | An application type, told by `@profile?types` (`app:` by another name's). |
 
 ## Describing the methods
 
@@ -948,8 +948,15 @@ Asterism.pubs_of("linux", "demo")              # => {"imu" => {"t" => 2, "u" => 
   `asterism/<node>/<app>/@pubs` when they change; types at `@profile?types`
   ([docs/protocol.md](docs/protocol.md) 9-12).
 - **define_type** fields: a built-in type by number or name (`2`,
-  `"vector3"`, an array `"vector3[]"`), a basic one (`"int"`, `"str[]"`)
-  or another application type's name.
+  `"vector3"`, an array `"vector3[]"`), a basic one (`"int"`, `"str[]"`,
+  `"any"` for a value of any shape) or another application type's name;
+  `[]` repeats for arrays of arrays (`"int[][]"`).
+- **app:** (`publish`, `define_type`, `unpublish`, `published`) another
+  application name of this node on the same connection: its topics go on
+  `asterism/<node>/<app:>/...` and it gets its own `@profile` (topics and
+  types, no status) and `@pubs`, but no objects and no liveliness token
+  (docs/protocol.md 10.4). A game host puts its spectators' view under
+  `spectate` this way.
 - **type:** a built-in type (`:number`, `:vector3`, `:pose`, `:image`,
   `:state`, `:log`, `:text`, or its number `Asterism::Types::VECTOR3`) or an
   application type's name (a String). **encoding:** one of Zenoh's
