@@ -7,16 +7,16 @@ repository holds the pure Ruby layers, written once for every Ruby:
 
 | Path | What |
 |---|---|
-| `mrblib/` | The layers: remote objects (`Asterism`), `Asterism::CDR`, `Asterism::ROS`. The source of truth for both forms below |
+| `mrblib/` | The layers: remote objects (`Asterism::Connection`), `Asterism::CDR`, `Asterism::ROS`. The source of truth for both forms below |
 | `mrbgem.rake` | The mrbgem `picoruby-asterism` (mruby / PicoRuby): compiles `mrblib/` |
 | `asterism.gemspec`, `lib/` | The CRuby gem `asterism`: `lib/asterism.rb` loads `mrblib/` as it is, `lib/asterism/cruby.rb` adds what CRuby needs, `lib/asterism/cruby/` the CRuby API (CRuby only) |
 | `data/icon.png` | CRuby's default profile icon (32x32 PNG; [Profiles](#profiles)) |
 | `data/msgs/` | ROS 2 message types generated from ROS 2 Jazzy's definitions (Apache-2.0; tf2_msgs BSD-3-Clause; see NOTICE) |
 | `tools/` | The type generator `asterism_msggen.rb`, the Jazzy definitions it reads, `ros2_types.rb` (refreshes them from a ROS 2 image) |
 | `exe/asterism`, `lib/asterism/cli*` | The command line: look at a network, call an object, an MCP server ([The command line](#the-command-line); CRuby only) |
-| `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_profile.rb` (node profiles), `test_status.rb` (application statuses), `test_meta_apps.rb` (the meta's args / doc, on_app_join / on_app_leave), `test_cli.rb` (the command line), `test_session.rb` (`Asterism.session`, `on_join` / `on_leave`), `test_api_*.rb` (the CRuby API), `bench_poll.rb` (`rake bench:poll`) |
+| `test/` | `test/msgs` (types, CDR; CRuby only), `test_asterism.rb` (objects and ROS between CRuby sessions), `test_profile.rb` (node profiles), `test_status.rb` (application statuses), `test_meta_apps.rb` (the meta's args / doc, on_app_join / on_app_leave), `test_cli.rb` (the command line), `test_session.rb` (`Connection#session`, `on_join` / `on_leave`), `test_connections.rb` (several connections in one program), `test_api_*.rb` (the CRuby API), `bench_poll.rb` (`rake bench:poll`) |
 | `test/protocol/` | the conformance samples of the wire protocol (`samples.json`), the driver that checks an implementation against them, and the Ruby node it checks (`rake test:protocol`, `rake test:protocol_mruby`; [docs/protocol.md](docs/protocol.md)) |
-| `host_test/` | `rake test:mruby`: the shared layer on mruby (profiles between two mruby processes; `Asterism.session`, `on_join` / `on_leave` and the time of a poll against `peer.rb`) |
+| `host_test/` | `rake test:mruby`: the shared layer on mruby (profiles between two mruby processes; `Connection#session`, `on_join` / `on_leave` and the time of a poll against `peer.rb`); with `rake test:cross`, topics with a CRuby node and several connections in one mruby program |
 | `examples/` | CRuby: `node.rb` (objects with a board), `node_polled.rb` (the same with the portable API of the boards), `ros2_talker.rb` (topics, a timer, services with ROS 2), `ros2_rover.rb` (drive a ROS 2 robot: `/cmd_vel`, `/odom`, `/imu`), `zenoh.rb` (plain Zenoh), `mujoco/` (MuJoCo run from CRuby through Fiddle, its robot exposed as Asterism objects; see its README) |
 
 The Zenoh binding underneath is a separate gem with the same Ruby API on
@@ -41,15 +41,18 @@ asterism-zenoh too). What changed in each version is in
 ([docs/api_review.md](docs/api_review.md)) and only adds and deprecates
 (see [Deprecations and 1.0](#deprecations-and-10)); 0.5.0 adds node
 profiles ([Profiles](#profiles): what a node runs on, where, a name and an
-icon); 0.6.0 adds `Asterism.session`
-([One connection](#one-connection-asterismsession): the object layer's
-session for plain Zenoh and ROS 2 too) and makes `Asterism.poll` cheap when
-nothing changed. **0.7.0 speaks wire protocol 1 only**
+icon); 0.6.0 adds the object layer's session
+([The connection's session](#the-connections-session-netsession): for plain
+Zenoh and ROS 2 too) and makes polling cheap when nothing changed. **0.7.0 speaks wire protocol 1 only**
 ([docs/protocol.md](docs/protocol.md)): it does not talk to the object
 layer of earlier versions, so every node of a network moves to 0.7.0
-together. It adds who called (`Asterism.current_call`, `expose(...,
+together. It adds who called (`current_call`, `expose(...,
 caller: :from)`; [Who called](#who-called)), the kind of a remote error
-(`RemoteError#remote_kind`) and `proxy.asterism_call`.
+(`RemoteError#remote_kind`) and `proxy.asterism_call`. Protocol 2 adds
+topics, types and an application's own profile ([Topics](#topics)), and
+the connection becomes an object: `Asterism.connect` returns an
+`Asterism::Connection`, whose methods are the whole API, and a program may
+hold several ([Several connections](#several-connections)).
 
 A mechanism-by-mechanism comparison with dRuby and Rinda is in
 [docs/comparison.md](docs/comparison.md).
@@ -61,7 +64,7 @@ the boards have the first one only.
 
 | You write for | Use | Why |
 |---|---|---|
-| A board, or code that must run on both | the **portable API** ([below](#the-portable-api): `Asterism.poll`, `node.poll`, `each_pending`) | the only one on the boards; nothing runs behind your back |
+| A board, or code that must run on both | the **portable API** ([below](#the-portable-api): `net.poll`, `node.poll`, `each_pending`) | the only one on the boards; nothing runs behind your back |
 | CRuby only (tools, servers, scripts) | the **CRuby API** ([The CRuby API](#the-cruby-api): `Asterism.connect { }`, `Asterism::Zenoh.open { }`, `Asterism::ROS.connect { }`) | blocks, a receiving thread, Enumerators, `Data` values |
 | CRuby, but you own the loop (a game loop, a test) | the portable API | same as the boards |
 
@@ -71,8 +74,8 @@ Entry points and what they give:
 |---|---|---|
 | `Asterism::Zenoh::Session.open` | a `Session` (portable) | zenoh-c / zenoh-pico |
 | `Asterism::Zenoh.open` | a `Zenoh::Connection` (CRuby) | `c.session` is the `Session` |
-| `Asterism.connect` | `Asterism` itself (portable; one connection per process or VM), or a `Net` to the block (CRuby) | a `Session` of its own |
-| `Asterism.session` | that `Session` (portable), for put, subscribe and a ROS 2 node on the same connection; `net.session` is it as a `Zenoh::Connection` (CRuby) | the object layer's (Asterism closes it) |
+| `Asterism.connect` | an `Asterism::Connection` (portable: one application; a program may open several), also to the block (CRuby) | a `Session` of its own |
+| `net.session` | that `Session` (portable), for put, subscribe and a ROS 2 node on the same connection; `net.zenoh` is it as a `Zenoh::Connection` (CRuby) | the connection's (its `close` closes it) |
 | `Asterism::ROS::Node.new(session, ...)` | a `Node` (portable) | the `Session` given |
 | `Asterism::ROS.connect` | a `ROS::Connection` (CRuby) | `ros.zenoh` is the `Zenoh::Connection` |
 
@@ -129,14 +132,15 @@ these repositories.
 rake                  # every suite
 rake test:msgs        # generator, type hashes, CDR, bundled types (CRuby only; no Zenoh, no docker)
 rake test:transfer    # files in pieces (Asterism::Transfer) over a stand-in for the calls: lost, repeated, swapped pieces, a connection down, a receiver started again
-rake test:objects     # objects and Asterism::ROS between CRuby sessions over a local peer link
+rake test:objects     # objects, profiles, statuses, topics, several connections in one program and Asterism::ROS between CRuby sessions
 rake test:api         # the CRuby API (blocks, receiving threads, Enumerators)
 rake test:cli         # the command line (exe/asterism), its Tab completion and its MCP bridge (the mcp gem's client; skipped without it)
 ASTERISM_TEST_ROUTER=tcp/127.0.0.1:7447 rake test:objects test:api   # the same through a zenohd router
 rake test:mruby       # the shared layer on mruby (builds mruby; not part of `rake`)
+rake test:cross       # topics between an mruby node and a CRuby one, and several connections in one mruby program through a router (builds mruby; not part of `rake`)
 rake test:protocol    # the wire protocol's conformance samples and driver against CRuby (docs/protocol.md)
 rake test:protocol_mruby   # the same driver against mruby (builds mruby; not part of `rake`)
-rake bench:poll       # the time and allocations of one Asterism.poll by nodes and objects (prints a table)
+rake bench:poll       # the time and allocations of one Connection#poll by nodes and objects (prints a table)
 ```
 
 `test:mruby` builds mruby with picoruby-asterism-zenoh and this gem
@@ -265,17 +269,17 @@ end
 
 | Call | Notes |
 |---|---|
-| `Asterism.connect(...) { \|net\| }` | yields an `Asterism::Net`, `Asterism.close` when the block ends; returns the block's value. Without a block, as before |
-| `Asterism.net` | the `Net` of the connection made without a block (nil when not connected) |
-| `net.expose` / `unexpose` / `exposed` | as `Asterism.expose` (also `caller: :from`). The methods run on the receiving thread, in `run`, or in whatever polls |
-| `net.current_call` | `Asterism.current_call`: the call being answered on this thread (the receiving thread while it answers), or nil |
-| `net[path, timeout: 2.0]` | a proxy (`timeout` in seconds, or `timeout_ms:`) |
-| `net.each(pattern = "**")` | the proxies alive now; an Enumerator without a block. With a block it returns their number (1.0: `self`, as Ruby's `each` does; `net.count` is the number) |
-| `net.on_join { \|node\| }` / `net.on_leave { \|node\| }` | `Asterism.on_join` / `on_leave` of the portable API (the same blocks, told from `Asterism.poll`), here on the receiving thread; what they raise goes to `on_error`. `net.off_join(proc)` / `off_leave(proc)` remove one |
-| `net.start` / `stop` / `run` / `running?` / `on_error` | as for Zenoh. A method of an exposed object that raises is answered to its caller as a `RemoteError`, as before; `on_error` gets what `on_join` / `on_leave` raise |
-| `net.profile(**fields)` / `net.profile_of(node, icon: true, timeout: 2.0)` | `Asterism.profile` / `profile_of` ([Profiles](#profiles)); `profile_of` waits for the receiving thread's ticks while it runs |
-| `net.session` | `Asterism.session` as a `Zenoh::Connection` (`subscribe { }`, `put`, `publisher`, ...) on this receiving thread: its blocks run there, between the calls answered. `shared?` is true; its `close` does nothing and `start` / `stop` / `run` are the `Net`'s. A ROS 2 node on it: `Asterism::ROS::Connection.new(net.session).node("name")`. See [One connection](#one-connection-asterismsession) |
-| `net.nodes`, `node_id`, `app`, `connected?`, `lost_reason`, `poll`, `close` | |
+The connection (`Asterism::Connection`) is the portable API's (the same
+object and methods on a board); CRuby adds to it:
+
+| Call | Notes |
+|---|---|
+| `Asterism.connect(...) { \|net\| }` | yields the `Asterism::Connection`, `net.close` when the block ends; returns the block's value. Without a block, returns the connection (as on a board) |
+| `net.start` / `stop` / `run` / `running?` / `on_error` | the connection's receiving thread, as for Zenoh. The exposed objects' methods, the `on_join` / `on_leave` / `on_app_*` blocks and the `subscribe` blocks run there (or in `run`, or in whatever polls). A method of an exposed object that raises is answered to its caller as a `RemoteError`; `on_error` gets what the blocks raise |
+| `net.zenoh` | `net.session` as a `Zenoh::Connection` (`subscribe { }`, `put`, `publisher`, ...) on this receiving thread: its blocks run there, between the calls answered. `shared?` is true; its `close` does nothing and `start` / `stop` / `run` are the connection's. A ROS 2 node on it: `Asterism::ROS::Connection.new(net.zenoh).node("name")`. See [The connection's session](#the-connections-session-netsession) |
+| `net.on_status(pattern = "*/*") { \|node, app, status\| }` | the statuses put by the applications matching, on the receiving thread ([Status](#status)) |
+| `net.each(pattern)` | as on the boards (an Array without a block); the connection is `Enumerable` over `each("**")` (`net.map(&:asterism_path)`, `net.count`) |
+| Waiting calls (`net[path].method`, `status_of`, `profile_of`, ...) | from another thread while the receiving thread runs, they wait for its ticks; on that thread, or while nothing receives, they poll as on the boards |
 
 ### Over TLS (a router on the internet)
 
@@ -359,7 +363,7 @@ end
 | `node.call(name, type, request = nil, request:, timeout: 2.0, **fields)` | waits for the response. Here `timeout:` is always the time limit (see [Reserved keywords](#reserved-keywords)) |
 | `ros.spin` (`run`) / `start` / `stop` / `running?` / `on_error` / `close` | |
 | `ros.zenoh` | the `Asterism::Zenoh::Connection` underneath (same receiving thread) |
-| `Asterism::ROS::Connection.new(net.session, domain: 0)` | nodes on the object layer's session (the same Zenoh ID as the objects), spun by the `Net`'s receiving thread. Its `close` withdraws its nodes only |
+| `Asterism::ROS::Connection.new(net.zenoh, domain: 0)` | nodes on an Asterism connection's session (the same Zenoh ID as its objects), spun by that connection's receiving thread. Its `close` withdraws its nodes only |
 
 `type` is a generated type or its name (`"geometry_msgs/msg/Twist"`).
 Messages and `Attachment` take part in pattern matching (`deconstruct_keys`,
@@ -380,10 +384,10 @@ that is not bundled: generate it with `tools/asterism_msggen.rb -o DIR`
 - zenoh-c never calls Ruby: it fills the queues, and the receiving thread
   empties them every 2 ms (`interval:`) with the portable API.
 - A tick of the receiving thread holds the connection's lock (a `Monitor`;
-  for the object layer, which is one connection per process,
-  `Asterism::LOCK`). The application's calls into the same layer take it
-  too, so the layers written for one thread are never entered by two at
-  once.
+  for the object layer one for all its connections, `Asterism::LOCK`: a
+  call waiting on one connection answers the calls of the others). The
+  application's calls into the same layer take it too, so the layers
+  written for one thread are never entered by two at once.
 - A call that waits for an answer (`proxy.method`, `node.call`) from another
   thread while the receiving thread runs does not poll by itself: it waits
   until a tick brings the answer. On the receiving thread itself (a block
@@ -404,7 +408,7 @@ What may be shared between threads:
 | `Asterism::Zenoh::Session` and its subscribers, queryables, gets, publishers, queriers (CRuby) | yes; each queued entry goes to exactly one taker |
 | `Zenoh::Connection` | yes; its blocks run one at a time on the receiving thread |
 | An Enumerator (`Subscription#each`, `Watch#each`, `get`, `topic`) | one thread per iteration |
-| The object layer (`Asterism.*`, `Net`, proxies, `Future`) | yes; serialized by `Asterism::LOCK` (one connection per process) |
+| The object layer (`Asterism::Connection`, proxies, `Future`) | yes; serialized by `Asterism::LOCK` (one for all the connections of the process) |
 | `ROS::Connection` and the nodes it makes | yes (its runner's lock) |
 | A `ROS::Node` made with `Node.new` (portable API) on CRuby | **no**: one thread, as on the boards |
 | A session opened before `fork` | not in the child: its calls raise `Zenoh::ClosedError`; connect after fork |
@@ -627,12 +631,12 @@ commands on a page) runs the same commands on its own connection:
 
 ```ruby
 require "asterism/cli"
-cli = Asterism::CLI.new(out: io, err: io, env: {}, net: Asterism.net,
+cli = Asterism::CLI.new(out: io, err: io, env: {}, net: conn,
                         stop: -> { asked_to_stop }, permit: ->(plan) { nil })
 cli.run(%w[node list])        # the exit code; the text went to io
 ```
 
-- `net:` the `Asterism::Net` to run on. It is neither started nor closed:
+- `net:` the `Asterism::Connection` to run on. It is neither started nor closed:
   what a command subscribes to or hooks onto it (watch, echo, hz, get) is
   released when the command ends. Its own application is left out of the
   listings, as the command line's own is.
@@ -757,56 +761,69 @@ and the short pauses while waiting; otherwise `Time` and `sleep`. Besides
 
 ```ruby
 # on the machine that has the object
-Asterism.connect("tcp/192.0.2.2:7447", node: "fmruby-bbbbbb", app: "demo")
-Asterism.expose("apu", apu, methods: [:play, :stop])
-loop { Asterism.poll; ... }               # in the update loop
+net = Asterism.connect("tcp/192.0.2.2:7447", node: "fmruby-bbbbbb", app: "demo")
+net.expose("apu", apu, methods: [:play, :stop])
+loop { net.poll; ... }                    # in the update loop
 
 # on another machine
-Asterism.connect("tcp/192.0.2.2:7447", node: "linux", app: "demo")
-apu = Asterism["fmruby-bbbbbb/demo/apu"]  # <node>/<app>/<object>
+net = Asterism.connect("tcp/192.0.2.2:7447", node: "linux", app: "demo")
+apu = net["fmruby-bbbbbb/demo/apu"]       # <node>/<app>/<object>
 apu.play("t120 o4 cdefg")                 # runs there, returns its value
 apu.respond_to?(:play)                    # => true (from the exposed list)
 f = apu.async.play("cde")                 # does not wait
 f.done?; f.value
-Asterism["fmruby-bbbbbb/demo/apu", timeout: 5.0].play("c")   # a longer time limit
-Asterism.each("*/*/apu") { |a| a.stop }   # every apu alive now
-Asterism.nodes                            # => ["linux", "fmruby-bbbbbb"]
+net["fmruby-bbbbbb/demo/apu", timeout: 5.0].play("c")   # a longer time limit
+net.each("*/*/apu") { |a| a.stop }        # every apu alive now
+net.nodes                                 # => ["linux", "fmruby-bbbbbb"]
 ```
+
+`Asterism.connect` returns the connection (an `Asterism::Connection`): one
+application on the network, with everything of it (its session, its
+token, its objects, its status, topics and types). Everything below is a
+method of it (`net.` in the tables); the module keeps only
+`Asterism.connect`, `Asterism.connections`, `Asterism.poll_all` and
+`Asterism.profile_defaults`, and the stateless helpers (`Asterism::Codec`,
+`Asterism::Profile`, `Asterism::Status`, `Asterism::Types`,
+`Asterism::Pubs`).
 
 ## API
 
 | Call | Returns | Raises / notes |
 |---|---|---|
-| `Asterism.connect(locator = nil, node: nil, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil, check_timeout: 1.5, credentials: nil)` (`credentials:` see [Over TLS](#over-tls-a-router-on-the-internet)) | `Asterism` | `locator`, `mode:`, `listen:` (and `config:` / `connect_timeout:` when given: TLS and the rest of zenoh's configuration on CRuby; the boards take the TLS keys of `config:` only and raise `ArgumentError` for the rest) go to `Asterism::Zenoh::Session.open` (client of a router by default; `mode: :peer` with or without `listen:` without one). `node:` is this machine's ID, `app:` the application's name (one key chunk each: no `/ * $ ? #`, not starting with `@`; else `ArgumentError`). `Disconnected` when it cannot connect; `Error` when objects of the same `<node>/<app>` are already alive (a second copy of the application), or when already connected. Waits up to `check_timeout:` seconds for that check (a router answers at once; give more over a slow relay). Returns the module itself: on a board the module is the connection (one per application). The default is plain text without authentication; see [Over TLS](#over-tls-a-router-on-the-internet). |
-| `Asterism.expose(name, obj, methods:, caller: nil, doc: nil)` | `"<node>/<app>/<name>"` | `methods:` is an Array of names, or a Hash `name => number of arguments` (checked before the call; `-1` or the Array form: any) or `name => { args: [names], doc: "text" }` ([Describing the methods](#describing-the-methods)); `doc:` the object's own text. `ArgumentError` when `obj` has no such public method. Exposing a name again replaces it. `caller: :from` passes the calling node's ID to every method as the keyword `from:` and refuses a call that brings `from:` itself ([Who called](#who-called)). |
-| `Asterism.current_call` | `Asterism::CurrentCall` or nil | While an exposed method runs for a call: `from` (the calling node's ID), `verified` (`:claimed`, or `:local` for a call from this application), `object`, `method`. nil outside a call ([Who called](#who-called)). |
-| `Asterism.unexpose(name)` | true / false | |
-| `Asterism.poll` | true / false | Call from the update loop: polls Zenoh, answers the calls that came in, follows who is alive and calls the `on_join` / `on_leave` blocks. `false` once the connection is closed or lost. Cheap when nothing came (0.6.0): each queue is looked at by its count, and the list of nodes is made again only after a liveliness change. |
-| `Asterism.on_app_join { \|node, app\| }` / `Asterism.on_app_leave { \|node, app\| }` | `Asterism` | An application of another node appeared (its token `asterism/<node>/<app>`) / is gone. A node may run several: each comes and goes on its own while the node stays. Told like `on_join` (from `Asterism.poll`; at connect for those there; all leave when the connection is lost); `off_app_join(proc)` / `off_app_leave(proc)`; CRuby `net.on_app_join` / `net.on_app_leave` |
-| `Asterism.on_join { \|node\| }` / `Asterism.on_leave { \|node\| }` | `Asterism` | Another node appeared (one of its applications or objects) / is gone (no application and no object left). The nodes there already join on the first polls after connecting; when the connection is lost, every node known until then leaves (on the next `Asterism.poll`). The blocks run from `Asterism.poll` only, never from the polling inside a waiting call; what they raise comes out of `Asterism.poll`. Each call adds a block; `Asterism.off_join(proc)` / `off_leave(proc)` remove one; `Asterism.close` forgets them (a lost connection does not). |
-| `Asterism[path, timeout: 2.0]` | `Proxy` | `path` is `<node>/<app>/<object>` without wildcards (`ArgumentError`). `timeout:` (seconds) or `timeout_ms:` is the time limit of its calls. Nothing is sent until a method is called. |
+| `Asterism.connect(locator = nil, node: nil, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil, check_timeout: 1.5, credentials: nil)` (`credentials:` see [Over TLS](#over-tls-a-router-on-the-internet)) | `Asterism::Connection` | `locator`, `mode:`, `listen:` (and `config:` / `connect_timeout:` when given: TLS and the rest of zenoh's configuration on CRuby; the boards take the TLS keys of `config:` only and raise `ArgumentError` for the rest) go to `Asterism::Zenoh::Session.open` (client of a router by default; `mode: :peer` with or without `listen:` without one). `node:` is this machine's ID, `app:` the application's name (one key chunk each: no `/ * $ ? #`, not starting with `@`; else `ArgumentError`). `Disconnected` when it cannot connect; `Error` when the same `<node>/<app>` is already there: open in this program, or its token or objects alive on the network (a second copy of the application). Waits up to `check_timeout:` seconds for that check (a router answers at once; give more over a slow relay). A program may connect several times, as several applications ([Several connections](#several-connections)). The default is plain text without authentication; see [Over TLS](#over-tls-a-router-on-the-internet). |
+| `Asterism.connections` | `[Connection]` | The connections of this program that are open (or lost, until their `on_leave` blocks were told), in the order they were opened. |
+| `Asterism.poll_all` | true / false | `poll` on each of them; true while one is connected. |
+| `Asterism.profile_defaults(kind:, name:, host:, icon:)` / `Asterism.profile_defaults` | Hash | The profile every node of this program starts with (a board's firmware sets it before the application connects); see [Profiles](#profiles). |
+| `net.expose(name, obj, methods:, caller: nil, doc: nil)` | `"<node>/<app>/<name>"` | `methods:` is an Array of names, or a Hash `name => number of arguments` (checked before the call; `-1` or the Array form: any) or `name => { args: [names], doc: "text" }` ([Describing the methods](#describing-the-methods)); `doc:` the object's own text. `ArgumentError` when `obj` has no such public method. Exposing a name again replaces it. `caller: :from` passes the calling node's ID to every method as the keyword `from:` and refuses a call that brings `from:` itself ([Who called](#who-called)). |
+| `net.current_call` | `Asterism::CurrentCall` or nil | While an exposed method of this connection runs for a call: `from` (the calling node's ID), `verified` (`:claimed`, or `:local` for a call from this application), `object`, `method`. nil outside a call ([Who called](#who-called)). |
+| `net.unexpose(name)` | true / false | |
+| `net.poll` | true / false | Call from the update loop: polls Zenoh, answers the calls that came in, follows who is alive, calls the `on_join` / `on_leave` blocks and hands the values to the `subscribe` blocks. `false` once the connection is closed or lost. Cheap when nothing came (0.6.0): each queue is looked at by its count, and the list of nodes is made again only after a liveliness change. |
+| `net.on_app_join { \|node, app\| }` / `net.on_app_leave { \|node, app\| }` | the connection | An application of another node appeared (its token `asterism/<node>/<app>`) / is gone. A node may run several (another connection of this program among them): each comes and goes on its own while the node stays. Told like `on_join` (from `poll`; at connect for those there; all leave when the connection is lost); `off_app_join(proc)` / `off_app_leave(proc)` |
+| `net.on_join { \|node\| }` / `net.on_leave { \|node\| }` | the connection | Another node appeared (one of its applications or objects) / is gone (no application and no object left). The nodes there already join on the first polls after connecting; when the connection is lost, every node known until then leaves (on the next `poll`). The blocks run from `poll` only, never from the polling inside a waiting call; what they raise comes out of `poll`. Each call adds a block; `off_join(proc)` / `off_leave(proc)` remove one; `close` forgets them (a lost connection does not). |
+| `net[path, timeout: 2.0]` | `Proxy` | `path` is `<node>/<app>/<object>` without wildcards (`ArgumentError`). `timeout:` (seconds) or `timeout_ms:` is the time limit of its calls, which go out on this connection. Nothing is sent until a method is called. |
 | `proxy.<method>(*args, **kw)` | the remote return value | Waits for the answer (the proxy's time limit). `RemoteError` when it raised there or could not be called (`remote_kind` says which: `raised`, or not exposed `not_exposed` (`NoMethodError`), wrong number of arguments `arguments` (`ArgumentError`), no such object `no_object` (`NameError`); [Errors](#errors)), `TimeoutError` when no answer came in time (also at once when nobody answers that key), `Disconnected`, `EncodeError` (before anything is sent) for a value MessagePack cannot carry. A block cannot be sent (`ArgumentError`). |
 | `proxy.asterism_call(name, *args, **kw)` | the remote return value | The same call by the method's name (a String or Symbol): for names a proxy cannot forward (those `Object` and `Kernel` have: `display`, `hash`, `class`, `fail`, ...) and names that are not Ruby identifiers. `proxy.async.asterism_call(...)` returns a `Future`. |
 | `proxy.async.<method>(...)` | `Future` | Sends and returns at once. `EncodeError` / `Disconnected` are raised here. |
-| `future.done?` | true / false | Never waits (`Asterism.poll` moves it on). True once the answer came, the time ran out or the connection closed. |
+| `future.done?` | true / false | Never waits (`net.poll` moves it on). True once the answer came, the time ran out or the connection closed. |
 | `future.value` | the return value | Waits (polling) if not done; raises like a waiting call. `future.took` (seconds) / `took_ms`: time to the answer. |
 | `proxy.respond_to?(name)` / `proxy.remote_methods` | true / false, `[Symbol]` | From the object's meta (fetched once, `proxy.asterism_refresh` forgets it). `respond_to?` is false when the object does not answer; `remote_methods` raises then. (`proxy.methods` returns the same with a deprecation warning; from 1.0 it is `Object#methods`.) |
-| `proxy.asterism_meta` / `proxy.asterism_path` | Hash, String | `{"methods" => [{"name" => name, "arity" => n}, ...]}` |
-| `Asterism.each(pattern = "**") { \|proxy\| }` | count (Array without a block) | The exposed objects alive now (this application's own included) whose `<node>/<app>/<object>` matches; `*` is one chunk, `**` any number. 1.0 returns the proxies from the block form instead of their number (Ruby's `each` returns its receiver); write `Asterism.each(pattern).size` for the count. |
-| `Asterism.nodes` | `[String]` | Node IDs alive now, this one first. |
-| `Asterism.apps(pattern = "*/*")` | `[String]` | The applications alive now, `"<node>/<app>"` (from their liveliness tokens; this one first). |
-| `Asterism.connected?` / `node_id` / `app` / `exposed` / `lost_reason` | | |
-| `Asterism.reconnecting?` | true / false | True while the router is away and the binding opens the connection again ([When the connection is lost](#when-the-connection-is-lost)). |
-| `Asterism.session` | `Asterism::Zenoh::Session` | The connection's own session, for put / subscribe / a ROS 2 node on the same connection ([One connection](#one-connection-asterismsession)). The same object until the connection closes. `Disconnected` when not connected. Its `close` does nothing (warns once); `Asterism.close` closes it. |
-| `Asterism.close` | nil | Withdraws every exposed object. Idempotent. |
-| `Asterism.profile(kind:, name:, host:, icon:)` / `Asterism.profile` | Hash | This node's profile: sets the fields given and returns it; without arguments, returns it. See [Profiles](#profiles). |
-| `Asterism.profile_of(node, icon: true, timeout: 2.0)` | Hash or nil | Another node's profile, nil when it does not answer (an older version, a ROS 2 node). |
-| `Asterism.status(hash = nil, **fields)` / `Asterism.status` | Hash or nil | This application's status: a Hash is the whole status, keywords change those fields (nil removes one); put on the network when it changes. Without arguments, returns it. See [Status](#status). |
-| `Asterism.status_of(node, app, timeout: 2.0)` | Hash or nil | Another application's status, nil when it has none or does not answer. |
-| `Asterism.publish(name, type:, unit:, desc:, ts:, encoding:)` | `Asterism::Topic` | Declares a topic of this application; `topic.put(value)` sends. See [Topics](#topics). |
-| `Asterism.subscribe(path, depth: nil) { \|v, info\| }` | `Asterism::Subscription` | The values on `<node>/<app>/<topic>` (wildcards allowed), from `Asterism.poll`; `close` ends it. |
-| `Asterism.pubs_of(node, app)` / `Asterism.types_of(node, app)` | Hash or nil | Another application's topics / types, `{}` when it has none, nil when it does not answer. |
-| `Asterism.define_type(name, fields, desc: nil)` | Hash | An application type, told by `@profile?types`. |
+| `proxy.asterism_meta` / `proxy.asterism_path` / `proxy.asterism_connection` | Hash, String, `Connection` | `{"methods" => [{"name" => name, "arity" => n}, ...]}` |
+| `net.each(pattern = "**") { \|proxy\| }` | count (Array without a block) | The exposed objects alive now (this application's own included) whose `<node>/<app>/<object>` matches; `*` is one chunk, `**` any number. 1.0 returns the connection from the block form instead of the number (Ruby's `each` returns its receiver); write `net.each(pattern).size` for the count. |
+| `net.nodes` | `[String]` | Node IDs alive now, this one first. |
+| `net.apps(pattern = "*/*")` | `[String]` | The applications alive now, `"<node>/<app>"` (from their liveliness tokens; this one first). |
+| `net.node_id` / `app` / `path` / `connected?` / `exposed` / `lost_reason` | | `path` is `"<node>/<app>"` |
+| `net.reconnecting?` | true / false | True while the router is away and the binding opens the connection again ([When the connection is lost](#when-the-connection-is-lost)). |
+| `net.session` | `Asterism::Zenoh::Session` | The connection's own session, for put / subscribe / a ROS 2 node on the same connection ([The connection's session](#the-connections-session-netsession)). The same object until the connection closes. `Disconnected` when not connected. Its `close` does nothing (warns once); `net.close` closes it. |
+| `net.close` | nil | Withdraws every exposed object, topic and subscription, and closes the session. Idempotent. A closed connection is not opened again: `Asterism.connect` makes a new one. |
+| `net.profile(kind:, name:, host:, icon:)` / `net.profile` | Hash | This node's profile (the node of this connection): sets the fields given and returns it; without arguments, returns it. See [Profiles](#profiles). |
+| `net.profile_of(node, icon: true, timeout: 2.0)` | Hash or nil | Another node's profile, nil when it does not answer (an older version, a ROS 2 node). |
+| `net.status(hash = nil, **fields)` / `net.status` | Hash or nil | This application's status: a Hash is the whole status, keywords change those fields (nil removes one); put on the network when it changes. Without arguments, returns it. See [Status](#status). |
+| `net.status_of(node, app, timeout: 2.0)` | Hash or nil | Another application's status, nil when it has none or does not answer. |
+| `net.publish(name, type:, unit:, desc:, ts:, encoding:)` | `Asterism::Topic` | Declares a topic of this application; `topic.put(value)` sends. See [Topics](#topics). |
+| `net.subscribe(path, depth: nil) { \|v, info\| }` | `Asterism::Subscription` | The values on `<node>/<app>/<topic>` (wildcards allowed), from `net.poll`; `close` ends it. |
+| `net.pubs_of(node, app)` / `net.types_of(node, app)` | Hash or nil | Another application's topics / types, `{}` when it has none, nil when it does not answer. |
+| `net.define_type(name, fields, desc: nil)` | Hash | An application type, told by `@profile?types`. |
+| `net.published` / `net.unpublish(topic or name)` / `net.unsubscribe(sub)` | | |
 
 ## Describing the methods
 
@@ -817,11 +834,11 @@ descriptions; `asterism objects` prints them). Give them at `expose`, next
 to the numbers:
 
 ```ruby
-Asterism.expose("othello1", table, caller: :from, doc: "An othello table. Call view for the board.",
-                methods: { join: 1,                                   # a number, as before
-                           "move" => { args: %w[token n square],
-                                       doc: "Plays square (\"d3\") on the board version n of view." },
-                           view: { args: [:token], doc: "The board as this member sees it." } })
+net.expose("othello1", table, caller: :from, doc: "An othello table. Call view for the board.",
+           methods: { join: 1,                                   # a number, as before
+                      "move" => { args: %w[token n square],
+                                  doc: "Plays square (\"d3\") on the board version n of view." },
+                      view: { args: [:token], doc: "The board as this member sees it." } })
 ```
 
 - The names give the number of arguments checked (`args: %w[a b]` is 2);
@@ -838,34 +855,41 @@ A node tells what it is (0.5.0): what Ruby runs it, where, a display name
 and an icon. A console draws it with that; anyone can ask.
 
 ```ruby
-Asterism.profile(name: "Rover", icon: File.binread("rover.png"))   # this node's (any time)
-Asterism.profile
-# => {"protocol" => 1, "kind" => "cruby", "name" => "Rover", "icon" => "\x89PNG...", "icon_hash" => "2a8c0626"}
-Asterism.profile_of("fmruby-aaaaaa")
-# => {"protocol" => 1, "kind" => "family_mruby", "host" => "atoms3r", "icon" => "\x89PNG...", "icon_hash" => "..."}
-Asterism.profile_of("fmruby-aaaaaa", icon: false)   # the same without the icon bytes
-Asterism.profile_of("an-older-node")                 # => nil
+net.profile(name: "Rover", icon: File.binread("rover.png"))   # this node's (any time)
+net.profile
+# => {"protocol" => 2, "kind" => "cruby", "name" => "Rover", "icon" => "\x89PNG...", "icon_hash" => "2a8c0626"}
+net.profile_of("fmruby-aaaaaa")
+# => {"protocol" => 2, "kind" => "family_mruby", "host" => "atoms3r", "icon" => "\x89PNG...", "icon_hash" => "..."}
+net.profile_of("fmruby-aaaaaa", icon: false)   # the same without the icon bytes
+net.profile_of("an-older-node")                # => nil
+Asterism.profile_defaults(kind: :family_mruby, host: "atoms3r")   # what every node of the program starts with
 ```
 
 | Field | Value | Default |
 |---|---|---|
-| `protocol` | set by Asterism, never given: the wire protocol the node speaks (`Asterism::PROTOCOL`, 1). A node whose profile has none speaks protocol 0 (asterism before 0.7.0), which 0.7.0 does not talk to | |
+| `protocol` | set by Asterism, never given: the wire protocol the node speaks (`Asterism::PROTOCOL`, 2). A node whose profile has none speaks protocol 0 (asterism before 0.7.0), which this version does not talk to | |
 | `kind` | what Ruby runs the node: `family_mruby`, `picoruby`, `cruby`, `console` (a lower-case word: `a-z`, `0-9`, `_`, up to 32 bytes; other words are allowed) | `cruby` on CRuby, `picoruby` on mruby / PicoRuby; Family mruby's firmware sets `family_mruby` |
 | `host` | where it runs, e.g. `atoms3r`, `tab5`, `p4nano`, `browser`, `sim` (up to 32 bytes) | none; Family mruby's firmware sets it from the board |
 | `name` | a display name (up to 64 bytes) | none |
 | `icon` | the bytes of a PNG (a binary String; sent as a MessagePack bin): at most 8 KB and 256x256 (32x32 is the size meant). PNG only: an SVG can carry scripts | the file at `Asterism.default_icon_path` when it is there: on CRuby the gem's `data/icon.png` (a ruby), on the boards `/usr/share/asterism/icon.png` |
 | `icon_hash` | set by Asterism, never given: the icon's summary (8 hex digits: the Adler-32 of the PNG's chunk CRCs, so a board computes it from a few bytes) | |
 
-- **Setting.** `Asterism.profile(**fields)` changes the fields given and keeps
+- **Setting.** `net.profile(**fields)` changes the fields given and keeps
   the others; `nil` leaves `name` / `host` out, goes back to the default
   `kind`, and means no icon for `icon:`. It raises `ArgumentError` for a
   field it does not accept (an unknown name, a `kind` that is not a word, an
-  icon that is not a PNG, larger than 8 KB or 256x256). It may be called
-  before connecting and at any time after; the profile belongs to the
-  process (the VM on a board) and survives `close`. A firmware can set its
-  defaults with the same call before the application runs (Family mruby
-  sets `kind`, `host` and, through `/usr/share/asterism/icon.png`, the icon).
-- **Reading.** `Asterism.profile_of(node)` asks `asterism/<node>/@profile`
+  icon that is not a PNG, larger than 8 KB or 256x256). The profile is the
+  node's, not the connection's: every connection of this program made as
+  that node has the same one (a change on one is the others' too), and it
+  outlives them (a connection made again as that node finds it).
+- **The program's defaults.** `Asterism.profile_defaults(**fields)` takes the
+  same fields, before connecting or at any time: what every node of this
+  program has where its own connections set nothing (a firmware sets them
+  before the application runs: Family mruby sets `kind`, `host` and,
+  through `/usr/share/asterism/icon.png`, the icon). A node's own field
+  wins, also a `nil` (`net.profile(host: nil)` leaves the host out over a
+  default).
+- **Reading.** `net.profile_of(node)` asks `asterism/<node>/@profile`
   and waits like a call (`timeout:` / `timeout_ms:`); this node's own comes
   without the network. The answer is cleaned (`Asterism::Profile.check`):
   only the fields above, each checked; an icon that is not an acceptable
@@ -877,10 +901,12 @@ Asterism.profile_of("an-older-node")                 # => nil
   subscribe to `asterism/*/@profile` to follow the changes (and fetch the
   icon again only when `icon_hash` changed). Older nodes neither answer nor
   put.
-- **Several applications of one node** (a board running two): each answers
-  for the node, and `profile_of` takes the first answer. Give them the same
-  profile (Family mruby's firmware defaults are the same in each), or set it
-  in one and read the notices, where the last change wins.
+- **Several applications of one node.** Each connection answers for the
+  node, and `profile_of` takes the first answer. In one program they answer
+  the same (above). Applications of one node in different programs (a board
+  running two, each in a VM of its own) each answer their own: give them
+  the same defaults (Family mruby's firmware sets the same in each), or set
+  it in one and read the notices, where the last change wins.
 - `Asterism::Profile.png_info(bytes)` gives `[width, height, icon_hash]` of
   an acceptable PNG (nil otherwise), for a tool that wants to check an icon
   first.
@@ -892,19 +918,19 @@ host has open and who sits at them, a battery level, a mode. The profile
 says once what a node is; the status is the application's and changes.
 
 ```ruby
-Asterism.status(tables: 3, humans: 2)           # sets those fields, keeps the others
-Asterism.status(humans: nil)                    # nil removes a field
-Asterism.status({ "mahjong1" => { "st" => "play", "humans" => 1 } })   # a Hash: the whole status
-Asterism.status                                 # => {"mahjong1" => {...}} (nil when none was set)
-Asterism.status_of("games", "games")            # another application's, or nil
+net.status(tables: 3, humans: 2)           # sets those fields, keeps the others
+net.status(humans: nil)                    # nil removes a field
+net.status({ "mahjong1" => { "st" => "play", "humans" => 1 } })   # a Hash: the whole status
+net.status                                 # => {"mahjong1" => {...}} (nil when none was set)
+net.status_of("games", "games")            # another application's, or nil
 ```
 
 - **On the network.** The application's own profile,
   `asterism/<node>/<app>/@profile` ([docs/protocol.md](docs/protocol.md)
   8), answers the status (`?status`; with no parameters the status and
   the topics), and the status is put on `asterism/<node>/<app>/@status`
-  when it changes (setting the same status again puts nothing), at connect
-  and after a lost connection comes back. An application that has neither
+  when it changes (setting the same status again puts nothing) and after
+  a lost connection comes back. An application that has neither
   a status nor a topic nor a type answers nothing.
 - **The value.** A Hash with String (or Symbol) keys; the values are
   anything a call can carry, nested at most 4 levels below the Hash, and
@@ -920,8 +946,9 @@ Asterism.status_of("games", "games")            # another application's, or nil
   need `asterism/*/*/@profile` (query) and `asterism/*/*/@status`,
   `asterism/*/*/@pubs` (subscription) for a reader, and the same under
   `asterism/<node>/*/` for the application (queryable and reply, put).
-- Kept across `connect` and `close`, like the profile (it belongs to the
-  process, or the VM on a board).
+- The status is the connection's (each connection is one application). It
+  stays readable after `close` but goes nowhere; a new connection starts
+  without one.
 
 ## Topics
 
@@ -930,17 +957,17 @@ description are said once, and each value goes with only a sequence number
 (and the sender's time, when asked for).
 
 ```ruby
-imu = Asterism.publish("imu", type: :vector3, unit: "m/s2", desc: "acceleration", ts: true)
+imu = net.publish("imu", type: :vector3, unit: "m/s2", desc: "acceleration", ts: true)
 imu.put([0.1, 0.0, 9.8])                       # MessagePack, no encoding
-cam = Asterism.publish("camera", type: :image, encoding: "image/jpeg")
+cam = net.publish("camera", type: :image, encoding: "image/jpeg")
 cam.put(File.binread("frame.jpg"))             # the bytes as they are
-Asterism.define_type("mygame/board.strokes", [["pts", "int[]"], ["color", "str"]], desc: "one stroke")
-Asterism.publish("board1/strokes", type: "mygame/board.strokes")
+net.define_type("mygame/board.strokes", [["pts", "int[]"], ["color", "str"]], desc: "one stroke")
+net.publish("board1/strokes", type: "mygame/board.strokes")
 
-Asterism.subscribe("*/demo/imu") do |v, info|   # from Asterism.poll
+net.subscribe("*/demo/imu") do |v, info|       # from net.poll
   puts "#{info.node} #{v.inspect} seq=#{info.seq} lost=#{info.lost} at #{info.time}"
 end
-Asterism.pubs_of("linux", "demo")              # => {"imu" => {"t" => 2, "u" => "m/s2", ...}}
+net.pubs_of("linux", "demo")                   # => {"imu" => {"t" => 2, "u" => "m/s2", ...}}
 ```
 
 - **Keys.** `asterism/<node>/<app>/<topic>` (a topic name may have several
@@ -962,61 +989,114 @@ Asterism.pubs_of("linux", "demo")              # => {"imu" => {"t" => 2, "u" => 
   stamped the value), `lost` (values of this key missed since the last
   one) and `restarted?` (the sender started the topic over). A block that
   takes only `|v|` gets the value.
-- Topics and subscriptions end with the connection (declare them again
-  after a new `connect`); the types are kept, like the status.
+- Topics and subscriptions end with the connection; the types and the
+  status are the connection's too. After a new `connect`, declare them on
+  the new connection.
+- A topic that belongs to another application (a game host's spectators'
+  view) is declared by a connection that is that application
+  ([Several connections](#several-connections)).
 
-## One connection: `Asterism.session`
+## The connection's session: `net.session`
 
-An application that also puts, subscribes or runs a ROS 2 node uses the
-object layer's own session for it (0.6.0) instead of opening a second one:
+An application that also puts, subscribes or runs a ROS 2 node uses its
+connection's own session for it (0.6.0) instead of opening another:
 
 ```ruby
-Asterism.connect("tcp/192.0.2.2:7447", node: "fmruby-aaaaaa", app: "game")
-Asterism.expose("othello", game, methods: [:move, :state])
-s = Asterism.session                                    # an Asterism::Zenoh::Session
-s.put("asterism/fmruby-aaaaaa/game/othello/state", MessagePack.pack(state))
-moves = s.subscribe("asterism/*/game/othello/state")    # moves.each_pending in the update loop
+net = Asterism.connect("tcp/192.0.2.2:7447", node: "fmruby-aaaaaa", app: "game")
+net.expose("othello", game, methods: [:move, :state])
+s = net.session                                         # an Asterism::Zenoh::Session
+s.put("asterism/fmruby-aaaaaa/game/othello/log", MessagePack.pack(line))
+moves = s.subscribe("asterism/*/game/othello/log")      # moves.each_pending in the update loop
 node = Asterism::ROS::Node.new(s, "brain")               # a ROS 2 node with the same Zenoh ID
 cmd = node.publisher("/cmd_vel", "geometry_msgs/msg/Twist")
-# update loop: Asterism.poll; node.poll
+# update loop: net.poll; node.poll
 ```
 
 CRuby API:
 
 ```ruby
 Asterism.connect(router, node: "mypc", app: "demo") do |net|
-  net.session.subscribe("asterism/*/game/**") { |sample| p sample.key }   # on the receiving thread
-  ros = Asterism::ROS::Connection.new(net.session)
+  net.zenoh.subscribe("asterism/*/game/**") { |sample| p sample.key }   # on the receiving thread
+  ros = Asterism::ROS::Connection.new(net.zenoh)
   ros.node("brain").subscribe("/odom", "nav_msgs/msg/Odometry") { |odom| puts odom.pose.pose.position.x }
   net.run
 end
 ```
 
-- **Why one.** A router that lets each pass in once (a one-time password
-  at a `wss://` door) lets only the first session in; and a ROS 2 node on
-  the object layer's session has the node's Zenoh ID, so a console draws it
-  inside the node.
-- **Who closes it.** The session is Asterism's. `Asterism.session.close`
-  (and `net.session.close`) does nothing but warn once, so a library handed
-  the session cannot break the connection. `Asterism.close`, the end of the
+- **Why the same.** A ROS 2 node on the application's session has the
+  application's Zenoh ID, so a console draws it inside the node; every
+  session costs a TLS link and a router seat on a board; and a router that
+  lets each pass in once (a one-time password at a `wss://` door) lets only
+  the first session in.
+- **Who closes it.** The session is the connection's. `net.session.close`
+  (and `net.zenoh.close`) does nothing but warn once, so a library handed
+  the session cannot break the connection. `net.close`, the end of the
   connect block and a lost connection close it, and with it everything
   declared on it: the application's subscribers, publishers, ROS 2 nodes.
   Close those yourself when you are done with them earlier (`sub.close`,
   `node.close`; on CRuby `ros.close` withdraws its nodes and leaves the
   rest).
-- **After a lost connection** (`Asterism.poll` returned false), connect
-  again, take `Asterism.session` again (a new object) and declare again
-  what you had on the old one.
-- **Polling.** `Asterism.poll` polls the session; `node.poll` polls it too
+- **After a lost connection** (`net.poll` returned false), connect
+  again, take the new connection's session and declare again what you had
+  on the old one.
+- **Polling.** `net.poll` polls the session; `node.poll` polls it too
   and only then serves the node. Each subscriber, queryable and node keeps
   what came for it, so the order does not matter and nothing is taken from
   another. Your own `put` does not come back to your own subscriber on the
   same session.
 - **Keys.** Keep your keys out of the object layer's: `asterism/<node>/<app>/**`
   is answered by its queryable (`get` there is a call), `asterism/<node>/<app>` and
-  `asterism/<node>/<app>/<object>` are its liveliness tokens. Putting under
-  `asterism/<node>/<app>/<object>/<anything>` (a state, a log) is fine:
-  puts and subscriptions do not meet queryables or liveliness.
+  `asterism/<node>/<app>/<object>` are its liveliness tokens. Values of your
+  own under `asterism/<node>/<app>/...` are best declared as topics
+  ([Topics](#topics)); a plain put there is fine too: puts and
+  subscriptions do not meet queryables or liveliness.
+
+## Several connections
+
+A connection is one application: its liveliness token, its objects, its
+status, topics and types, its own profile (`asterism/<node>/<app>/@profile`).
+A program that is several applications opens a connection for each,
+as the same node or another:
+
+```ruby
+game = Asterism.connect(router, node: "host", app: "game")
+game.expose("table1", table, methods: { move: 2, view: 1 })
+game.publish("table1/state", type: "mygame/table.state").put(state)
+spec = Asterism.connect(router, node: "host", app: "spectate")
+spec.publish("table1/state", type: "mygame/table.state")       # what the spectators see
+loop do
+  Asterism.poll_all                                             # or game.poll; spec.poll
+  ...
+end
+spec.close                                                      # game goes on
+```
+
+- **Each its own.** Objects, `status`, `publish`, `subscribe`,
+  `define_type`, `on_join` and the rest are the connection's. The others
+  see each connection as an application (`apps`, `on_app_join`), call its
+  objects through the network (with the router's access control, as any
+  other application) and get its values (a connection's own values do not
+  come back to it, another connection's do).
+- **The node's one profile.** Every connection answers
+  `asterism/<node>/@profile` for its node, all with the same profile
+  ([Profiles](#profiles)).
+- **Waiting.** A call waiting on one connection keeps answering the calls
+  of the program's other connections (one of them may be the one called),
+  and the waits of all of them nest at most `MAX_NESTING` deep in all.
+  Their `on_join` / `subscribe` blocks still run only from their own
+  `poll`. On CRuby, one lock (`Asterism::LOCK`) serializes them, and each
+  may have its own receiving thread.
+- **The same `<node>/<app>` twice** is refused: `Asterism.connect` raises
+  `Error` when it is open in this program or alive on the network
+  (docs/protocol.md 6.3).
+- **What each costs.** Every connection is a Zenoh session of its own: on
+  a board a TCP or TLS link (the TLS one with its buffers), a seat at the
+  router, the queryables of the object layer (calls, the node's profile,
+  and the application's profile once it has a status, topic or type) and
+  a liveliness watch. One connection is the usual on a board; open a
+  second only for a second application. zenoh-pico sessions of one
+  program reach each other through a router only (a session's opening
+  waits for the other's poll, so they cannot be peers of each other).
 
 ## Errors
 
@@ -1051,7 +1131,7 @@ is closed (1.0: `Disconnected`, as the object layer).
 
 | What | Default | Changed by |
 |---|---|---|
-| A proxy call | 2 s | `Asterism[path, timeout:]` / `timeout_ms:`; `DEFAULT_TIMEOUT` (s), `DEFAULT_TIMEOUT_MS` |
+| A proxy call | 2 s | `net[path, timeout:]` / `timeout_ms:`; `DEFAULT_TIMEOUT` (s), `DEFAULT_TIMEOUT_MS` |
 | A service call | 2 s | `client.call(..., timeout:)` / `timeout_ms:`; `Client::DEFAULT_TIMEOUT` |
 | `get`, `liveliness_get`, a querier | 2 s | `timeout:` / `timeout_ms:` |
 | Connecting | 3 s | `connect_timeout:` (CRuby); `Zenoh::CONNECT_TIMEOUT_MS` (fixed at build time on the boards) |
@@ -1062,7 +1142,7 @@ is closed (1.0: `Disconnected`, as the object layer).
 | A full queue | drops the oldest (counted in `dropped`); the CRuby API warns once | `depth:` |
 | Pause between polls of a waiting call | 2 ms | `WAIT_STEP_MS`, `Client::WAIT_STEP_MS` |
 | Receiving interval of the CRuby API | 2 ms | `interval:` |
-| Calls waiting inside each other | 4 | `MAX_NESTING` |
+| Calls waiting inside each other | 4 (all the connections of a program together) | `MAX_NESTING` |
 | Encoding depth of a value | 16 | `Codec::MAX_DEPTH` |
 | A profile icon | 8 KB, 256x256, PNG only | `Asterism::Profile::ICON_MAX`, `ICON_SIDE_MAX` |
 | `get` consolidation | `:none` (every reply; zenoh's own default is `:auto`, but services and the object layer want every reply) | `consolidation:` |
@@ -1083,7 +1163,7 @@ watch or a subscription of the CRuby API whose depth was left at the
 default warns once (`asterism: get demo/**: 3 replies dropped, ...`) when
 something was dropped; with `depth:` given it stays quiet, and `dropped`
 tells. The object layer warns once when its own watch dropped changes
-(then `Asterism.each` and `Asterism.nodes` may miss objects).
+(then `net.each` and `net.nodes` may miss objects).
 `Asterism.warn_once(obj, message)` is the helper.
 
 Every `each_*` of the portable API (`each_pending`, `each_reply`,
@@ -1102,8 +1182,8 @@ for CI; `:silent` turns them off.
 
 | Deprecated (0.4.0) | Use | In 1.0 |
 |---|---|---|
-| `Asterism[path, 2000]` (the time as a positional argument) | `Asterism[path, timeout: 2.0]` or `timeout_ms: 2000` | removed |
-| A Float there (`Asterism[path, 2.0]` waits 2 ms) | `timeout: 2.0` | removed (warns with its own message now) |
+| `net[path, 2000]` (the time as a positional argument) | `net[path, timeout: 2.0]` or `timeout_ms: 2000` | removed |
+| A Float there (`net[path, 2.0]` waits 2 ms) | `timeout: 2.0` | removed (warns with its own message now) |
 | `session.get(key, ms, params, payload)`, `session.liveliness_get(key, ms)` | `timeout:` / `timeout_ms:`, `params:`, `payload:` | removed (a positional depth stays) |
 | `session.peers`, `connection.peers` | `connection_count` | removed |
 | `Asterism::Timeout`, `Asterism::ROS::Timeout` | `TimeoutError` | kept as aliases through 1.x |
@@ -1112,8 +1192,8 @@ for CI; `:silent` turns them off.
 | `q.reply(payload)` where the query's key differs from the queryable's own plain key | `q.reply(key, payload)` | answers on the queryable's key (as the CRuby API does) |
 | `client.call(field: ...)` with a field named `timeout` / `timeout_ms` | `request: { ... }` (or a Hash) | the keyword is the time limit (`ArgumentError` when ambiguous) |
 
-Also changing in 1.0, without a warning now: `Asterism.each { }` and
-`net.each { }` return the proxies / `self` instead of a count; the ROS
+Also changing in 1.0, without a warning now: `net.each { }` returns the
+connection instead of a count; the ROS
 layer raises `Disconnected` when its session is closed; the internal
 methods (marked `@api private` in the source) are hidden.
 
@@ -1133,24 +1213,27 @@ A client of a router keeps its connection when the router goes away for a
 while (it restarts, the line drops): the Zenoh binding opens the connection
 again by itself (zenoh-c on CRuby; zenoh-pico built with reconnection on
 the boards) and declares again everything that was declared, so the
-application token, the exposed objects, the liveliness watch and what the
-application declared on `Asterism.session` are all back without the
-application doing anything. Meanwhile `Asterism.reconnecting?` is true,
+application token, the exposed objects, the liveliness watch, the topics
+and what the application declared on `net.session` are all back without
+the application doing anything. Meanwhile `net.reconnecting?` is true,
 `connected?` stays true, the other nodes leave (`on_leave`) and join again
 after it (`on_join`), calls raise `Asterism::Disconnected` or time out, and
-puts reach nobody. The profile is told again once it is back. Measured
+puts reach nobody. The profile, the status and the topics are told again
+once it is back. Measured
 with zenohd 1.10.1 restarted by `docker restart` (`rake test:reconnect`,
 CRuby and mruby): back about 1 s after the router.
 
 A peer connection (or a build without reconnection) is closed when the
 peer (or the router) goes away, and is not reopened by itself. From then on
-`Asterism.poll` returns `false`, `connected?` is false, `lost_reason` says
+`net.poll` returns `false`, `connected?` is false, `lost_reason` says
 why, and calls raise `Asterism::Disconnected`. **`Asterism::Zenoh::Error`
 never comes out of Asterism; it is always wrapped in `Disconnected`** (the
-message is kept). The exposed objects are gone with the connection: to go
-on, the application calls `connect` and `expose` again, and declares again
-what it had on `Asterism.session` (subscribers, ROS 2 nodes; the old
-session is closed, its entities raise `Zenoh::ClosedError`).
+message is kept). Everything of the connection is gone with it (objects,
+status, topics, types, subscriptions): to go on, the application calls
+`Asterism.connect` again (a new connection) and sets them again on it, with
+what it had on the old `net.session` (subscribers, ROS 2 nodes; the old
+session is closed, its entities raise `Zenoh::ClosedError`). The node's
+profile stays (it is the node's).
 
 ## Values
 
@@ -1179,8 +1262,10 @@ exposed method can read it:
 
 ```ruby
 class Rover
+  def initialize(net) = @net = net
+
   def stop
-    c = Asterism.current_call        # nil outside a call
+    c = @net.current_call            # nil outside a call
     log("stop from #{c.from}")       # c.verified: :claimed (:local from this app)
   end
 
@@ -1188,12 +1273,12 @@ class Rover
     log("drive from #{from}")
   end
 end
-Asterism.expose("rover", Rover.new, methods: { stop: 0 })
-Asterism.expose("wheels", Rover.new, methods: { drive: 2 }, caller: :from)
+net.expose("rover", Rover.new(net), methods: { stop: 0 })
+net.expose("wheels", Rover.new(net), methods: { drive: 2 }, caller: :from)
 ```
 
-- `Asterism.current_call` is set only while a method runs for a call (per
-  thread on CRuby). Calls answered while that method waits for its own
+- `net.current_call` is set only while a method of that connection runs
+  for a call (per thread on CRuby). Calls answered while that method waits for its own
   call come on top of it and go when they end.
 - With `caller: :from`, a call that passes `from:` itself is refused
   (`RemoteError`, `remote_kind` `arguments`): `from` is always the one
@@ -1218,12 +1303,14 @@ parts, and what was decided) is
 | `asterism/<node>/<app>/<object>/meta` | get / queryable | reply: `{"methods" => [{"name" => name, "arity" => n}, ...]}` (arity `-1` when not declared). The object may be `*` in the query: one reply per object |
 | `asterism/<node>/<app>` | liveliness | the application is connected (a node is there while any of its applications or objects is) |
 | `asterism/<node>/<app>/<object>` | liveliness | the object is exposed |
-| `asterism/<node>/@profile` | get / queryable, and put | query (parameter `icon=0` for no icon): reply the node's profile, a Hash (`kind`, `host`, `name`, `icon`, `icon_hash`; [Profiles](#profiles)). The node also puts the profile without the icon at connect and on each change. `@profile` is a verbatim chunk, so `asterism/**` does not match it: the object layer's wildcards never see it. An application's own profile would go at `asterism/<node>/<app>/@profile` (not yet) |
+| `asterism/<node>/@profile` | get / queryable, and put | query (parameter `icon=0` for no icon): reply the node's profile, a Hash (`kind`, `host`, `name`, `icon`, `icon_hash`; [Profiles](#profiles)). The node also puts the profile without the icon at connect and on each change. `@profile` is a verbatim chunk, so `asterism/**` does not match it: the object layer's wildcards never see it. Every connection of the node answers it |
+| `asterism/<node>/<app>/@profile`, `@status`, `@pubs`, `<topic>` | get / queryable, put | the application's own profile (its status, topics and types), the puts of its status and topics, the values of its topics ([Status](#status), [Topics](#topics)) |
 
-One queryable per application (`asterism/<node>/<app>/**`), and one for the
-profile (`asterism/<node>/@profile`). A call whose
+One queryable per application (`asterism/<node>/<app>/**`), one for the
+node's profile (`asterism/<node>/@profile`), and one for the application's
+own profile once it has a status, topic or type. A call whose
 node or app is a wildcard reaches every application that exposes that
-object, each answering with its own key; `Asterism` itself only sends calls
+object, each answering with its own key; Asterism itself only sends calls
 to one object.
 
 ## How waiting works
@@ -1235,7 +1322,9 @@ not lock up. An answered call may itself call and wait; such waits nest at
 most `Asterism::MAX_NESTING` (4) deep, beyond that the call raises `Error`
 (the caller of the outer call gets it as `RemoteError`). While a call
 waits, the rest of that application (drawing, input) waits too; other
-applications do not.
+applications do not. A program's other connections keep answering their
+calls meanwhile (their `poll` blocks wait), and the nesting counts the
+waits of all of them.
 
 Calls to an object of the same application (`<node>/<app>` is this one) do
 not go out (a Zenoh session does not see its own queryable): they are run
@@ -1253,8 +1342,8 @@ took zenoh replies through blocks and fetched the meta from inside
 `respond_to_missing?`, overflowed the stack there. Make waiting calls from
 the update loop, or use `async`.
 
-The blocks the layers call (`Asterism.on_join` / `on_leave`, the ROS
-`node.subscribe` and `node.every` blocks) run from `Asterism.poll` /
+The blocks the layers call (`net.on_join` / `on_leave`, `net.subscribe`,
+the ROS `node.subscribe` and `node.every` blocks) run from `net.poll` /
 `node.poll`, that is on the update loop's stack, one Ruby block call deeper.
 The layers walk their lists with `while` loops so that nothing else stands
 between the update loop and the block. **Do not wait inside these blocks**
@@ -1290,13 +1379,13 @@ class Inbox < Asterism::Transfer::Inbox
 end
 inbox = Inbox.new("tmp/")          # the piece files and their notes go here
 inbox.resume_held                  # a file held when it last ended goes on
-Asterism.expose("inbox", inbox, methods: Asterism::Transfer::Inbox::METHODS, caller: :from)
+net.expose("inbox", inbox, methods: Asterism::Transfer::Inbox::METHODS, caller: :from)
 # ... inbox.tick in the update loop
 
 # the sender: stepped from the update loop, never waiting in one go
-s = Asterism::Transfer::Sender.new("node-b/app/inbox", "file", "photo.png", name: "photo")
+s = Asterism::Transfer::Sender.new("node-b/app/inbox", "file", "photo.png", net: net, name: "photo")
 until s.done?
-  Asterism.poll
+  net.poll
   s.step
 end
 s.ok? ? s.answer : s.reason
@@ -1306,8 +1395,10 @@ On CRuby, `Asterism::Transfer::FileInbox` is the receiver of the kind
 `file` (the rules of a Family mruby machine: the senders allowed, names
 that stay in its directory, `foo(1).txt` beside a name already there unless
 the sender asks to overwrite, a limit for the directory), and
-`Asterism::Transfer::Endpoint` answers for it at `<node>/transfer/inbox`,
-where the machines send, beside the program's own application:
+a second connection (`Asterism.connect(router, node: "mypc", app: "transfer")`)
+can expose it at `<node>/transfer/inbox`, where the machines send, beside
+the program's own application. `Asterism::Transfer::Endpoint` does the
+same on a plain Zenoh connection:
 
 ```ruby
 conn = Asterism::Zenoh.open("tcp/127.0.0.1:7447")

@@ -2,7 +2,7 @@
 
 (Called "the Ruby profile" up to 0.4.x, as were its file and its probes'
 directory `profile/`. Renamed in 0.5.0 so that it is not taken for
-`Asterism.profile`, a node's profile. The directory and the code keep
+a node's profile (`Connection#profile`). The directory and the code keep
 their names.)
 
 Asterism's shared layer (`mrblib/`) is one set of Ruby files that runs on

@@ -116,7 +116,7 @@ and recordings (paths such as `pose.x`, `odom.yaw_deg`, `speed.wheels[0]`).
   orientation; otherwise `MuJoCo::Error`.
 - One thread per `Model` / `Data`. `rover.rb` runs everything (physics,
   Asterism polling, the state key) on its main thread with the portable
-  API (`Asterism.poll`), so the objects are called between physics steps.
+  API (`net.poll`), so the objects are called between physics steps.
 
 ### Updating MuJoCo
 

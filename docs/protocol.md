@@ -59,9 +59,12 @@ Contents:
   (`demo`). An application **exposes objects** under names (`apu`); each
   exposed object has a set of methods that may be called from elsewhere.
   An object is addressed as `<node>/<app>/<object>`.
-- Each application has **one Zenoh session** (the same session carries the
-  application's own puts, subscriptions and ROS 2 nodes). A node with two
-  applications has two sessions; they share the node ID.
+- An application is **one connection**: one Zenoh session, which carries
+  everything of the application (its token, its objects, its own profile,
+  status, topics and types, and its own puts, subscriptions and ROS 2
+  nodes). A node with two applications has two sessions; they share the
+  node ID. One program may hold several connections, each a whole
+  application of its own (1.1).
 - A **call** is a Zenoh query (get) to the object's call key, which ends
   with the calling node's ID; its answer is the query's reply. **Meta**
   (the list of exposed methods) is a query to the object's meta key.
@@ -86,6 +89,36 @@ Contents:
   and declarations use no encoding, no attachment, no Zenoh error reply, no
   timestamp and no source info (section 13).
 
+### 1.1 Several connections in one program
+
+A program that is several applications (a game host that is also the
+spectators' view, `host/game` and `host/spectate`) opens one connection
+for each. Nothing on the wire tells them apart from applications of
+different programs: each has its own application token, its own
+queryables and its own `<node>/<app>` keys, and they reach each other as
+any two applications do (through the router, with its access control).
+What one program shares between its connections:
+
+- the **node's profile** (7): every connection of a node answers
+  `asterism/<node>/@profile`, and in one program they all answer the same
+  profile (it belongs to the node, not to an application);
+- the **waits** (4.6): a call waiting on one connection keeps answering the
+  calls that come to the others (one of them may be the one called), and
+  the nesting limit counts the waits of all of them;
+- the duplicate check (6.3) also looks at the program's own connections.
+
+**What a connection costs on a board.** Each is a Zenoh session of its
+own: a TCP or TLS link to the router (TLS with its record buffers), a seat
+at the router (a router that admits each certificate once, or a limited
+number of clients, counts it), the object layer's queryables (calls with
+a queue of 32, the node's profile, and the application's profile once it
+has a status, topic or type, each with its queue), a liveliness
+subscriber, and the application token. One connection is the usual on a
+board; a second is for a second application, not for a second purpose of
+the same one. Two zenoh-pico sessions of one program reach each other
+through a router only: a peer link between them cannot open, as the
+opening session's handshake waits for the other's poll.
+
 ## 2. Names and keys
 
 ### 2.1 Names
@@ -98,8 +131,8 @@ chunk**:
 - MUST NOT start with `@` (chunks starting with `@` are Zenoh's verbatim
   chunks, and Asterism uses them for its own keys, see `@profile`).
 
-The Ruby implementation's `Asterism.connect`, `Asterism.expose` and
-`Asterism[path]` raise `ArgumentError` for anything else. There is no
+The Ruby implementation's `Asterism.connect`, `Connection#expose` and
+`Connection#[]` raise `ArgumentError` for anything else. There is no
 length limit and no character set beyond Zenoh's (UTF-8). Keep them short
 on the boards (every key and token carries them). Family mruby's boards use
 `fmruby-<6 hex digits>`, the browser build `wasm-<6 hex digits>`, the
@@ -270,7 +303,7 @@ A call of `method(*args, **kwargs)` on `<node>/<app>/<object>` by the node
 | encoding | not set (zenoh reports the default, `zenoh/bytes`) |
 | target | ALL (`Z_QUERY_TARGET_ALL`) |
 | consolidation | NONE |
-| timeout | the call's time limit: 2 s by default (`Asterism[path, timeout:]`) |
+| timeout | the call's time limit: 2 s by default (`net[path, timeout:]`) |
 
 The request map:
 
@@ -408,8 +441,9 @@ error) are `raised`, with the language's own class and text (CRuby says
 
 ### 4.6 Waiting inside a call
 
-A method may itself call and wait. The waits of one application nest at
-most 4 deep (`Asterism::MAX_NESTING`); a fifth raises `Asterism::Error`,
+A method may itself call and wait. The waits of one program (all its
+connections, 1.1) nest at most 4 deep (`Asterism::MAX_NESTING`); a fifth
+raises `Asterism::Error`,
 which the outer call answers as `nesting` (4.4). This is a property of the
 implementation, not of the wire, but it is visible in the error.
 
@@ -418,11 +452,11 @@ implementation, not of the wire, but it is visible in the error.
 The caller's node ID is the call key's last chunk. The callee's binding
 hands it to the method:
 
-- Ruby: `Asterism.current_call` while the method runs (nil outside a call;
-  per thread on CRuby): `from` (the caller's node ID), `verified`
+- Ruby: `Connection#current_call` while the method runs (nil outside a
+  call; per thread on CRuby): `from` (the caller's node ID), `verified`
   (`:claimed`; `:local` for a call from the same application, which does
   not go on the network), `object`, `method`.
-- Ruby: `Asterism.expose(name, obj, methods:, caller: :from)` passes the
+- Ruby: `Connection#expose(name, obj, methods:, caller: :from)` passes the
   caller's node ID to each method as the keyword `from:`. A call that
   brings that keyword itself is refused with the error `arguments`, so the
   value is always the one taken from the key.
@@ -525,8 +559,10 @@ a payload is ignored) is answered with:
 The implementation declares a liveliness subscriber on `asterism/**` with
 history (the tokens alive when it is declared come first) and reads each
 change by the number of chunks after `asterism/`: two is an application
-token, three an object token; anything else is ignored. `Asterism.nodes`,
-`Asterism.each` and `on_join` / `on_leave` come from this. ROS 2's tokens
+token, three an object token; anything else is ignored. `Connection#nodes`,
+`#each` and `on_join` / `on_leave` come from this. Each connection
+follows on its own; the program's other connections are applications
+like any other. ROS 2's tokens
 (`@ros2_lv/...`) and the profiles are outside `asterism/**`. Topics have
 no tokens of their own (10.3).
 
@@ -538,6 +574,10 @@ itself; 1 s, the check gives up after 1.5 s, `check_timeout:`). If any
 token answers, another copy of the same `<node>/<app>` is running and
 connect refuses (`Asterism::Error`). Implementations SHOULD make the same
 check: two queryables for the same `<node>/<app>` answer every call twice.
+The check is per `<node>/<app>`: the same node with another application
+passes. A program that holds several connections also refuses a
+`<node>/<app>` that one of its own connections has (without waiting for
+the network).
 
 ## 7. Profiles
 
@@ -549,7 +589,10 @@ check: two queryables for the same `<node>/<app>` answer every call twice.
 - At connect, and each time the profile changes while connected, it puts
   the profile **without the icon** on the same key.
 - Several applications of a node each answer; a reader takes the first
-  answer (`profile_of`), a follower the last put.
+  answer (`profile_of`), a follower the last put. The connections of one
+  program answer the same profile (1.1); applications of a node in
+  different programs (two VMs on a board) answer the same when they are
+  given the same.
 - Each application also has a profile of its own, one chunk further down
   (`asterism/<node>/<app>/@profile`, section 8).
 
@@ -684,7 +727,7 @@ values of the protocol (3.1), nested at most **4 levels below the map**
 (the map is level 0; `{"a" => [[[[1]]]]}` is the deepest allowed). The
 encoded map is at most **1024 bytes**. The sender refuses a status that
 breaks these rules before sending (Ruby: `ArgumentError` from
-`Asterism.status`). The same map is the `status` of the reply and the
+`Connection#status`). The same map is the `status` of the reply and the
 payload of the put on `@status`.
 
 Its content is the application's own. Readers show it (a console's
@@ -831,24 +874,25 @@ value is not handed to the application; it is counted (`malformed`).
 
 ### 9.5 Subscribing (the Ruby API)
 
-`Asterism.subscribe("<node>/<app>/<topic>") { |v, info| ... }` (wildcards
+`net.subscribe("<node>/<app>/<topic>") { |v, info| ... }` (wildcards
 allowed) gives each value decoded (MessagePack) or as its bytes (another
 encoding), and an `Asterism::SampleInfo`: `key`, `node`, `app`, `name`,
 `seq`, `time`, `encoding` (`"msgpack"` for no encoding, the MCAP word;
 else Zenoh's name), `timestamp` (the router's, 12), `lost` and
 `restarted?` (9.4). A value without an encoding that is not one
 MessagePack value is left out (counted in the subscription's `malformed`).
-The blocks run from `Asterism.poll`, never inside a waiting call. An
+The blocks run from `net.poll`, never inside a waiting call. An
 application's subscription does not get the values the application puts
 itself (neither binding delivered them in the tests); a reader MUST NOT
-rely on either.
+rely on either. Another connection of the same program is another
+application: it gets them.
 
 ## 10. Topic declarations
 
 ### 10.1 The declaration
 
 An application declares each topic once
-(`Asterism.publish("imu", type: :vector3, unit: "m/s2", ts: true)`). The
+(`net.publish("imu", type: :vector3, unit: "m/s2", ts: true)`). The
 declarations are a MessagePack map, topic name => declaration, each a map
 with short keys:
 
@@ -993,8 +1037,8 @@ simulation:
 | a binary String | ASCII-8BIT | the binary flag (`String#b`) | the binary flag |
 | a Zenoh payload handed to the application | ASCII-8BIT (relayed as bin) | a plain String (relayed as str unless `.b`) | a plain String |
 | error messages from the language | CRuby's | mruby's | mruby's |
-| `Asterism.current_call` | per thread | per VM | per process |
-| subscription blocks (`Asterism.subscribe`) | from `Asterism.poll`, or the receiving thread (`net.start`) | from `Asterism.poll` | from `Asterism.poll` |
+| `Connection#current_call` | per connection and thread | per connection | per connection |
+| subscription blocks (`Connection#subscribe`) | from `net.poll`, or the connection's receiving thread (`net.start`) | from `net.poll` | from `net.poll` |
 | answer latency (simulation) | 2-4 ms | 50 ms (the app's update loop) | 2-4 ms |
 
 The mruby test build's MessagePack (`host_test/msgpack.rb`) is a stand-in;
@@ -1177,7 +1221,7 @@ reply       asterism/linux/demo/info/meta
             {"methods" => [{"name" => "status", "arity" => 0}, {"name" => "relay", "arity" => 1}, ...]}
 ```
 
-The same application with a topic `imu` (`Asterism.publish("imu", type:
+The same application with a topic `imu` (`net.publish("imu", type:
 :vector3, unit: "m/s2", ts: true)`), read by `mypc`:
 
 ```

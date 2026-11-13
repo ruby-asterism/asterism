@@ -15,9 +15,9 @@ item by item. Asterism here is asterism 0.7.0 (wire protocol 1,
 | What travels | Marshal (Ruby objects almost as they are) | MessagePack values only (numbers, strings, binary, arrays, maps; [protocol.md](protocol.md)) |
 | References and blocks | passed (`DRbUndumped` objects stay remote; blocks are called back) | not passed: values only; no remote references, no blocks |
 | What can be called | any public method of the front object | only the methods listed in `expose(..., methods:)` |
-| Security | TLS (`drb/ssl`) and an IP-address ACL (`drb/acl`) come with it; there is no way to give different callers different methods, and Marshal is unsafe with untrusted peers | certificates and ACLs managed at the routers; the callee knows the caller (`Asterism.current_call`) |
+| Security | TLS (`drb/ssl`) and an IP-address ACL (`drb/acl`) come with it; there is no way to give different callers different methods, and Marshal is unsafe with untrusted peers | certificates and ACLs managed at the routers; the callee knows the caller (`Connection#current_call`) |
 | Where it runs | CRuby | CRuby, mruby / PicoRuby boards, the browser (wasm) |
-| Call style | synchronous (block until the answer; threads for concurrency) | asynchronous and polled on boards (`Asterism.poll`); blocks and a receiving thread on CRuby |
+| Call style | synchronous (block until the answer; threads for concurrency) | asynchronous and polled on boards (`net.poll`); blocks and a receiving thread on CRuby |
 | Calling many at once | loop over a proxy per peer yourself, one after another | collect them by a key expression (`net.each("*/rooms/*")`) and `each` / `map` over them |
 | When nobody answers | no time limit by default (wrap calls in `Timeout` yourself) | every call has a time limit (`timeout:`); today a call that runs out raises, so `map` over many stops at the first one. How to return partial results (who answered, who did not) is still to be decided |
 | Also | Rinda | put / subscribe, ROS 2 nodes on the same session, node profiles (name, icon) |
@@ -27,7 +27,7 @@ item by item. Asterism here is asterism 0.7.0 (wire protocol 1,
 | | Rinda (on dRuby) | Asterism (on Zenoh) |
 |---|---|---|
 | Where data lives | one `TupleSpace` in one process; everyone writes to it and reads from it | nowhere by default: a `put` reaches whoever subscribes at that moment (add a Zenoh storage to keep values) |
-| Writing | `write(tuple, expiry)` | `Asterism.session.put(key, value)` |
+| Writing | `write(tuple, expiry)` | `net.session.put(key, value)` (or a declared topic) |
 | Reading what is there now | `read(pattern)` (with a time limit of 0, it does not wait) | `get(key_expr)`: ask a queryable or a Zenoh storage for the current value |
 | Waiting for what comes | `read` / `take(pattern)` block until a match arrives | `subscribe(key_expr)`: delivered when it arrives (polled); nothing blocks |
 | Taking for one consumer | `take` hands a tuple to exactly one taker, atomically | none: every subscriber gets it; a single consumer is reached by calling one object |
