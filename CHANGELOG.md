@@ -6,6 +6,95 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
+## 0.14.0
+
+Wire protocol 2 (`Asterism::PROTOCOL = 2`, docs/protocol.md) and the
+connection as an object. **Not compatible with 0.13.0 and earlier**, on the
+wire or in the API: every program and board of a network moves to protocol
+2 at once (the asterism gem, asterism-games 0.23.0, asterism-console 0.4.0,
+the boards' firmware with picoruby-asterism-zenoh 0.4.2). A protocol 1 node
+still sees the others and their values flow, but calls between the two are
+refused (the error kind `protocol`) and statuses and topics are not seen.
+asterism-zenoh is unchanged (0.4.2; `~> 0.4, >= 0.4.1` as before).
+
+The connection
+
+- `Asterism.connect` returns an `Asterism::Connection`; everything an
+  application used as a module function (`expose`, `[]`, `poll`, `status`,
+  `publish`, `subscribe`, `define_type`, `profile_of`, `close`, ...) is a
+  method of it, and the module functions are removed without aliases. A
+  program may hold several connections, each one application (protocol.md
+  1.1). The module keeps `connect`, `connections`, `poll_all`,
+  `profile_defaults` and the stateless helpers.
+- CRuby: `Asterism::Net` is gone; its block API (`start`, `stop`, `run`,
+  `on_error`, `on_status`, `Enumerable`) is on the connection, one
+  receiving thread per connection. `net.session` is the portable Session;
+  the Zenoh::Connection of the receiving thread is `net.zenoh`.
+- The node's profile is the node's: every connection of a node answers
+  `asterism/<node>/@profile` with the same content. The duplicate check
+  is per `<node>/<app>`, looks at the program's own connections too, and
+  runs without `Asterism::LOCK`.
+- `Asterism::Transfer::Sender` takes `net:`; `Asterism::CLI` and the MCP
+  bridge run on the connection they open or are given.
+
+Topics, types and the application's own profile
+
+- `net.publish(name, type:, unit:, desc:, ts:, encoding:, shared:)` declares
+  a Zenoh publisher and returns an `Asterism::Topic`; `topic.put` sends a
+  MessagePack value with no encoding, or the bytes as they are for a topic
+  with one (`image/jpeg`). Every value carries an attachment: `[seq, run]`,
+  `[seq, run, ms]` with `ts:`, and on a shared place
+  `[seq, run, ms or nil, "<node>/<app>"]`. Sequence numbers are the
+  connection's (publishing a name again goes on from the last one); the
+  run id is a 16-bit random number per connection. Times are ms since 1970
+  (the built-in log type's `time` too).
+- The declarations are put on `asterism/<node>/<app>/@pubs`;
+  `net.define_type(name, fields, desc:)` registers an application type,
+  its fields' types by name only (`"vector3"`, `"vector3[]"`, `"int[][]"`,
+  `"any"`).
+- The application's own profile `asterism/<node>/<app>/@profile` replaces
+  the `@status` queryable: no parameters answer the status and the topics,
+  `?status`, `?pubs`, `?types` one part each. The status is still put on
+  `@status`. `status_of`, `pubs_of`, `types_of` ask it.
+- `net.subscribe(path) { |v, info| }`: values with an
+  `Asterism::SampleInfo` (key, node, app, name, seq, run_id, time,
+  encoding, the router's timestamp, `lost`, `restarted?`, and for a shared
+  key `path`, `from`, `shared`). A reader forgets an application's numbers,
+  declarations and types when its token leaves. `type_of` /
+  `declaration_of` read a value's type from its sender and keep the
+  answer until the sender puts its `@pubs` again or leaves.
+- Shared places (protocol.md 17): `asterism/<node>/@shared/<name>` and the
+  network's `asterism/@shared/<name>`, data with no single owner,
+  `publish(..., shared: :node | :global)`, numbers counted per sender,
+  `publishers_of(path)`. A sender of another node on a node's place counts
+  as none.
+- The present value of a topic is asked with a method call: a reader that
+  sees `info.lost > 0` or `info.restarted?` asks again (protocol.md 9.6).
+
+The protocol's number
+
+- An application's liveliness token is `asterism/<node>/<app>/protocol/2`
+  (a token without the number is read as protocol 1), and a call's request
+  carries `"protocol" => 2`. A callee answers a request of another number
+  or none with the error kind `protocol` before reading the rest, and the
+  method does not run. Each program says once per application of another
+  protocol. `net.protocol_of("node/app")` and `net.protocol_of(node)`.
+- A router role that names an application's key exactly
+  (`asterism/*/game`) needs `<that line>/protocol/*` beside it to see the
+  application come and go; lines with `**` reach the new token as they
+  are (asterism-console 0.4.0 adds the line on update).
+
+The command line and MCP
+
+- `topic list` / `topic info` (declarations and types, shared keys with
+  who declares them), `tree` / `app info` with an application's topics,
+  `object get` / `object echo` / `asterism_values` with each value's
+  encoding, seq, run id, sender's time, lost values and, on shared places,
+  the sender; the new MCP tool `asterism_topics`; `watch` and the survey
+  mark an application of another protocol.
+- Conformance samples version 8 (`rake test:protocol`,
+  `rake test:protocol_mruby`).
+
 ## 0.13.0
 
 - The command line runs inside another program, on that program's connection (README "Inside another program"): `Asterism::CLI.new(net:, stop:, permit:)`. `net:` an `Asterism::Net` already connected (neither started nor closed; what a command subscribes to or hooks onto it is released when it ends), `stop:` ends a streaming command as Ctrl-C does, `permit:` is asked with an `Asterism::CLI::Plan` (the command, `:read` / `:call` / `:local`, the object and method of a call) and may refuse with a reason (`CLI#refused`). Such a command line takes no connection options, runs neither `mcp` nor `completion`, takes long options only in full, prints `--help` to its `out`, and its `__complete` keeps no cache and never exits the process.
