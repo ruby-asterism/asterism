@@ -434,6 +434,7 @@ asterism object info games/games/othello1           # its description and its me
 asterism object find join                           # the objects that have join (* as a wildcard)
 asterism object get  games/games/othello1 state     # the next value the application puts there
 asterism object echo games/games/othello1 state     # the values as they come (what changed)
+asterism object echo '*/@shared/spectate' '*/state' # a shared place's values, each with its sender
 asterism topic list  'games/*'                      # node/app/name of each topic, with its type
 asterism topic info  games/games/board1/strokes     # its declaration, and its type's definition
 asterism status get  games/games                    # the status now
@@ -587,7 +588,12 @@ $ asterism watch
   (`format`: `msgpack` or the encoding) with `seq` and `sent` (the sender's
   time) from its attachment, and `lost` (values missed before it) or
   `restarted` (the sender's numbers started again); the text says those
-  on a line of their own (`(2 lost)`). When nothing comes
+  on a line of their own (`(2 lost)`). **The shared places** (17):
+  `PATH` is `node/@shared/name...` (`*` for the node) or `@shared/name...`
+  (`asterism object get games/@shared/spectate/mahjong1/state`); `*` and
+  `**` never match `@shared` itself (as in Zenoh), so a pattern names it.
+  Each value shows its sender (`... from games/room01`; `from` in
+  `-o json`), and its numbers are counted per sender. When nothing comes
   they say so: the router does not let this node read the key (a role
   needs `read` on it), or nothing changed.
 - **status hz** counts the changes of the status (a put of the same status
@@ -676,7 +682,7 @@ claude mcp add asterism -- asterism mcp --credentials admin.tar --allow 'games/o
 | `asterism_objects` | the objects and their methods (meta); `callable_as` names the tool for an allowed method |
 | `asterism_status` | the applications' statuses (`node` / `app` narrow it) |
 | `asterism_topics` | the topics the applications declare, with their types, encodings, units and texts, and the definitions of their own types (`node` / `app` narrow it) |
-| `asterism_values` | the latest value of each topic the applications put on (`asterism/<node>/<app>/<name>`, e.g. a game table's state), as this server received them since it started, with its encoding and sequence numbers; `pattern` (`node/app/name`, `*` and `**`; default `**`), `wait` (seconds, at most 30) and `images` (true: pictures as MCP images, at most 4) |
+| `asterism_values` | the latest value of each topic the applications put on (`asterism/<node>/<app>/<name>`, e.g. a game table's state) and in the shared places (`<node>/@shared/<name>`, `@shared/<name>`: each sender's, with `from`), as this server received them since it started, with its encoding and sequence numbers; `pattern` (`node/app/name` or a shared place's key, `*` and `**`; default `**`, the applications' keys), `wait` (seconds, at most 30) and `images` (true: pictures as MCP images, at most 4) |
 | `<node>.<app>.<object>.<method>` | one per method an `--allow` pattern names, made from the meta: the arguments' names it tells are the inputs and its doc the description (with the object's doc after it); without names, arity n gives the inputs `arg1` .. `argN` (any JSON value), arity -1 an array `args`; `kwargs` is an object of keyword arguments. The answer is `{"value": ...}`, or an error with its kind |
 
 - `--allow PATTERN` (repeatable): `[node/][app/]object.method`, `*` within
@@ -693,8 +699,11 @@ claude mcp add asterism -- asterism mcp --credentials admin.tar --allow 'games/o
   MCP client started with `--app game` come and go).
 - **asterism_values**: from its start the server subscribes to
   `asterism/**` (the applications' own keys; `@profile` and `@status` are
-  not under it) and keeps the last value of each key with the time it
-  came. A put comes only when a value changes and is kept nowhere else, so
+  not under it) and to the shared places (`asterism/*/@shared/**`,
+  `asterism/@shared/**`, 17), and keeps the last value of each key (of
+  each sender on a shared key, with `from`: its sender) with the time it
+  came. `**` is the applications' keys; a shared place is named in the
+  pattern (`*/@shared/spectate/**`, `@shared/**`). A put comes only when a value changes and is kept nowhere else, so
   a key that has not been put since the server started is not there:
   `wait` waits (at most 30 s) for the first put that matches when none has
   come yet. Each value has `key`, `value`, `t`, `age_s` (seconds since it

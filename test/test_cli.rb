@@ -341,6 +341,76 @@ class TestCLI < Minitest::Test
     assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0, :<, 0.15, "a wait below 0 is 0"
   end
 
+  # The shared places (docs/protocol.md 17): the patterns, the sender of
+  # each value, the numbers per sender, one value kept per sender.
+  def test_values_shared
+    %w[g/@shared/spectate/** */@shared/** @shared/lobby @shared/** g/@shared].each do |ok|
+      assert_equal ok, V.check_pattern!(ok)
+    end
+    %w[g/g/@shared/x @shared/@shared g/@status a/b/@shared].each do |bad|
+      assert_raises(ArgumentError, bad) { V.check_pattern!(bad) }
+    end
+    assert V.match?("*/@shared/spectate/**", "h/@shared/spectate/t1/state")
+    assert V.match?("@shared/**", "@shared/lobby")
+    refute V.match?("**", "h/@shared/spectate/t1/state"), "** does not match @shared"
+    refute V.match?("*/*/**", "h/@shared/x"), "nor *"
+    assert V.match?("**", "h/g/t1/state")
+    refute V.match?("h/**", "h/@shared/x")
+    assert V.shared?("h/@shared/x")
+    assert V.shared?("@shared/x")
+    refute V.shared?("h/g/x")
+
+    att = ->(n, from) { MessagePack.pack([n, nil, from]) }
+    assert_equal "h/room01", V.sender("h/@shared/s/t", att.(0, "h/room01"))
+    assert_nil V.sender("h/g/t", att.(0, "h/room01")), "an application's own key: not read"
+    assert_nil V.sender("h/@shared/s/t", att.(0, "bad")), "not node/app"
+    assert_nil V.sender("h/@shared/s/t", MessagePack.pack([0]))
+    assert_equal [4, nil], V.attachment(att.(4, "h/g"))
+    e = V.entry("asterism/h/@shared/s/t", MessagePack.pack(1), Time.at(0), attachment: att.(2, "h/g"))
+    assert_equal({ "key" => "h/@shared/s/t", "t" => "1970-01-01T00:00:00.000Z", "bytes" => 1, "format" => "msgpack",
+                   "value" => 1, "from" => "h/g", "seq" => 2 }, e)
+    sq = V::Seq.new
+    V.entry("h/@shared/s/t", MessagePack.pack(1), Time.at(0), attachment: att.(0, "h/g"), seq: sq)
+    V.entry("h/@shared/s/t", MessagePack.pack(1), Time.at(0), attachment: att.(7, "h/room01"), seq: sq)
+    e = V.entry("h/@shared/s/t", MessagePack.pack(1), Time.at(0), attachment: att.(3, "h/g"), seq: sq)
+    assert_equal [2, nil], e.values_at("lost", "restarted"), "counted per sender"
+    e = V.entry("h/@shared/s/t", MessagePack.pack(1), Time.at(0), attachment: att.(8, "h/room01"), seq: sq)
+    refute e.key?("lost")
+
+    alive = { "h/g" => true, "h/room01" => true }
+    st = V::Store.new(alive: ->(a) { alive[a] }, now: -> { Time.at(0) })
+    st.put("asterism/h/@shared/s/t", MessagePack.pack({ "a" => 1 }), attachment: att.(0, "h/g"))
+    st.put("h/@shared/s/t", MessagePack.pack({ "a" => 2 }), attachment: att.(5, "h/room01"))
+    st.put("h/@shared/s/t", MessagePack.pack({ "a" => 3 }), attachment: att.(2, "h/g"))
+    st.put("h/@shared/s/u", MessagePack.pack(0), attachment: MessagePack.pack([0]))
+    st.put("h/g/t1/state", MessagePack.pack(0), attachment: MessagePack.pack([0]))
+    a = st.answer("*/@shared/**")
+    assert_equal [["h/@shared/s/t", "h/g", { "a" => 3 }, 2, 1, "alive"],
+                  ["h/@shared/s/t", "h/room01", { "a" => 2 }, 5, nil, "alive"],
+                  ["h/@shared/s/u", nil, 0, 0, nil, nil]],
+                 a["values"].map { _1.values_at("key", "from", "value", "seq", "lost", "app") }, "one entry a sender"
+    refute a["values"][2].key?("app"), "no sender: no application to tell of"
+    assert_equal ["h/g/t1/state"], st.answer["values"].map { _1["key"] }, "** is the applications' keys"
+    st.left("h/room01")
+    alive.delete("h/room01")
+    assert_equal({ "h/g" => "alive", "h/room01" => "gone" },
+                 st.answer("h/@shared/s/t")["values"].to_h { [_1["from"], _1["app"]] })
+    st.left("h/g")
+    assert_equal "restarted", st.answer("h/@shared/s/t")["values"][0]["app"]
+    assert_equal "restarted", st.answer("h/g/**")["values"][0]["app"], "its own keys too"
+
+    # The command line: PATH in a shared place, the sender after the key.
+    cli = Asterism::CLI.new(out: StringIO.new, env: {})
+    assert_equal "g/@shared/spectate/**", cli.send(:put_pattern!, ["g/@shared/spectate"], "object get")
+    assert_equal "*/@shared/spectate/*/state", cli.send(:put_pattern!, ["*/@shared/spectate", "*/state"], "object get")
+    assert_equal "@shared/lobby/**", cli.send(:put_pattern!, ["@shared/lobby"], "object get")
+    assert_raises(ArgumentError) { cli.send(:put_pattern!, ["g/@shared/sp*"], "object get") }
+    t = Time.at(0)
+    ts = t.strftime("%H:%M:%S.%L")
+    e = V.entry("h/@shared/s/t", MessagePack.pack(5), t, attachment: att.(0, "h/room01"))
+    assert_equal ["#{ts} h/@shared/s/t from h/room01 5"], cli.put_lines(t, e, nil)
+  end
+
   def test_put_lines
     cli = Asterism::CLI.new(out: StringIO.new, env: {})
     t = Time.at(0)
@@ -671,6 +741,11 @@ class TestCLI < Minitest::Test
         # network's.
         topics["n"] = net.publish("score/t1", shared: :node, type: "calc/result")
         topics["g"] = net.publish("lobby", shared: :global, type: :text)
+      elsif line.start_with?("sput ")
+        # sput n|g JSON: a value on the shared topic of the node (n) or of
+        # the network (g).
+        _, which, json = line.chomp.split(" ", 3)
+        topics[which].put(JSON.parse(json))
       else
         net.status(tables: line.to_i)
       end
@@ -1203,6 +1278,33 @@ class TestCLI < Minitest::Test
           assert_match(/#{ts}calcnode\/calc\/calc\/state 2\z/, lines[3])
         end
       end
+
+      # The shared places' values, with their sender.
+      cmd = [PLAIN, RbConfig.ruby, *LIB, EXE, "object", "echo", "*/@shared/score", "-o", "json", "--duration", "4",
+             *@where, "--settle", "1.0"]
+      text = [PLAIN, RbConfig.ruby, *LIB, EXE, "object", "echo", "@shared/lobby", "--duration", "4",
+              *@where, "--settle", "1.0"]
+      get = [PLAIN, RbConfig.ruby, *LIB, EXE, "object", "get", "calcnode/@shared/score/t1", "-o", "json",
+             "--timeout", "4", *@where, "--settle", "1.0"]
+      Open3.popen3(*cmd) do |_i, o, _e, th|
+        Open3.popen3(*text) do |_i2, o2, _e2, th2|
+          Open3.popen3(*get) do |_i3, o3, _e3, th3|
+            sleep 2.5
+            say.('sput n {"sum": 3}')
+            say.('sput g "hi"', 0.3)
+            got = Timeout.timeout(10) { o.read }.lines.map { JSON.parse(_1) }
+            th.value
+            assert_equal [["calcnode/@shared/score/t1", "calcnode/calc", { "sum" => 3 }, 0]],
+                         got.map { _1.values_at("key", "from", "value", "seq") }
+            one = JSON.parse(Timeout.timeout(10) { o3.read })
+            assert_equal 0, th3.value.exitstatus
+            assert_equal ["calcnode/@shared/score/t1", "calcnode/calc"], one.values_at("key", "from")
+            lines = Timeout.timeout(10) { o2.read }.lines.map(&:chomp)
+            th2.value
+            assert_match(/\A\d\d:\d\d:\d\d\.\d{3} @shared\/lobby from calcnode\/calc hi\z/, lines[0])
+          end
+        end
+      end
     end
   end
 
@@ -1338,6 +1440,22 @@ class TestCLI < Minitest::Test
       assert_equal 0, JSON.parse(content[0]["text"])["values"][0]["image"]
       assert_equal ["image", "image/jpeg"], content[1].values_at("type", "mimeType")
       assert_equal "\xFF\xD8\xFF\xE0".b + ("\x00".b * 16), content[1]["data"].unpack1("m0")
+
+      # The shared places: each value with its sender, not under **.
+      assert_match(/from: a shared value's sender/, vt.description)
+      node.puts "shared"
+      node.flush
+      sleep 0.5
+      node.puts 'sput n {"sum": 5}'
+      node.puts 'sput g "hi"'
+      node.flush
+      v = text.(c.call_tool(tool: vt, arguments: { pattern: "*/@shared/score/*", wait: 5 }))
+      assert_equal [["calcnode/@shared/score/t1", "calcnode/calc", { "sum" => 5 }, "alive"]],
+                   v["values"].map { _1.values_at("key", "from", "value", "app") }
+      v = text.(c.call_tool(tool: vt, arguments: { pattern: "@shared/**", wait: 5 }))
+      assert_equal [["@shared/lobby", "calcnode/calc", "hi"]], v["values"].map { _1.values_at("key", "from", "value") }
+      v = text.(c.call_tool(tool: vt, arguments: {}))
+      assert v["values"].none? { _1["key"].include?("@shared") }, "** is the applications' keys"
     ensure
       t&.close
     end

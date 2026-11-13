@@ -168,9 +168,11 @@ module Asterism
           if structured?
             emit_line(e)
           else
-            whole = @opts[:raw] || !last.key?(e["key"])
-            old = last[e["key"]]
-            last[e["key"]] = e["value"]
+            # A shared key's senders each their own (Values.lane).
+            lane = Values.lane(e["key"], e["from"])
+            whole = @opts[:raw] || !last.key?(lane)
+            old = last[lane]
+            last[lane] = e["value"]
             lines = whole ? put_lines(got[1], e, nil) : put_lines(got[1], e, old, again: true)
             lines&.each { @out.puts _1 }
           end
@@ -494,14 +496,19 @@ module Asterism
     end
 
     # PATH (node/app/object, * for a part) and KEY (the rest, ** by
-    # default) as one pattern.
+    # default) as one pattern. A shared place's keys (docs/protocol.md
+    # 17): PATH node/@shared/name... (a node's, * for the node) or
+    # @shared/name... (the network's), then KEY the same way.
     def put_pattern!(rest, what)
       path = rest.shift
       key = rest.shift || "**"
       parts = path.to_s.split("/", -1)
-      unless parts.size == 3 && parts.none? { _1.empty? || (_1.include?("*") && _1 != "*") }
+      shared = parts[0] == Values::SHARED || parts[1] == Values::SHARED
+      ok = shared ? parts.size >= 1 : parts.size == 3
+      unless ok && parts.none? { _1.empty? || (_1.include?("*") && _1 != "*") }
         raise ArgumentError, "#{what}: PATH is node/app/object (* for a part), then KEY (asterism #{what} " \
-                             "games/games/othello1 state)"
+                             "games/games/othello1 state); a shared place's: node/@shared/name or @shared/name " \
+                             "(asterism #{what} games/@shared/spectate '*/state')"
       end
       Values.check_pattern!("#{path}/#{key}")
     end
@@ -522,7 +529,8 @@ module Asterism
     # that changed in a Hash, the value whole otherwise (nil: no change). A
     # value that is bytes in an encoding (a picture) shows as its encoding
     # and size. A line comes first when values were lost before this one,
-    # or the sender started its numbers again (Values.entry).
+    # or the sender started its numbers again (Values.entry). A shared
+    # value's key is followed by its sender (from games/room01).
     def put_lines(t, e, old, again: false)
       head = "#{paint(t.strftime('%H:%M:%S.%L'), :time)} "
       v = e["value"]
@@ -530,10 +538,10 @@ module Asterism
       if again && old.is_a?(Hash) && v.is_a?(Hash)
         changes = Text.status_diff(old, v)
         return gap if changes.empty?
-        return gap.to_a + changes.map { |c| "#{head}#{paint(e['key'], :object)} #{change_text(c)}" }
+        return gap.to_a + changes.map { |c| "#{head}#{put_key(e)} #{change_text(c)}" }
       end
       return gap if again && old == v && !e["format"].include?("/")
-      first = "#{head}#{paint(e['key'], :object)}"
+      first = "#{head}#{put_key(e)}"
       return [*gap, "#{first} #{paint("(#{e['format']}, #{e['bytes']} bytes)", :note)}"] if bytes_value?(e)
       return [*gap, "#{first} #{Text.inline(v)}"] unless v.is_a?(Hash)
       [*gap, first, *Text.status_lines(v, style.width, Text.width(head))]
@@ -547,10 +555,16 @@ module Asterism
     # [the line] saying what was lost before a value, or nil.
     def put_gap(head, e)
       if e["restarted"]
-        ["#{head}#{paint(e['key'], :object)} #{paint("(started again at #{e['seq']})", :note)}"]
+        ["#{head}#{put_key(e)} #{paint("(started again at #{e['seq']})", :note)}"]
       elsif e["lost"]
-        ["#{head}#{paint(e['key'], :object)} #{paint("(#{e['lost']} lost)", :note)}"]
+        ["#{head}#{put_key(e)} #{paint("(#{e['lost']} lost)", :note)}"]
       end
+    end
+
+    # A value's key as a line shows it, with a shared value's sender.
+    def put_key(e)
+      k = paint(e["key"], :object)
+      e["from"] ? "#{k} #{paint('from', :note)} #{paint(e['from'], :app)}" : k
     end
 
     def no_status(path)

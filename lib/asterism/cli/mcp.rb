@@ -40,7 +40,8 @@ module Asterism
         Zenoh. Paths are <node>/<app>/<object>. asterism_nodes lists the nodes and their applications (with the
         status each application tells about itself, a JSON object of its own), asterism_objects the objects and
         their methods, asterism_status the statuses, asterism_topics the topics the applications put values on
-        (with their types), asterism_values the latest values put on them (a game table's state). The other
+        (with their types), asterism_values the latest values put on them (a game table's state) and in the
+        shared places (<node>/@shared/..., @shared/...; each value with its sender, from). The other
         tools call one method each, on the object their
         name says (<node>.<app>.<object>.<method>); only the methods this server was started to allow are there.
         A call's answer is {"value": ...}; an error says its kind (raised, not_exposed, arguments, ...).
@@ -74,12 +75,21 @@ module Asterism
         @refresher&.kill
       end
 
-      # From now on, the puts on the applications' own keys (asterism/**
-      # does not match @profile and @status), and the applications that
-      # leave (their values are marked).
+      # The key expressions remember_values subscribes to: the
+      # applications' own keys (asterism/** does not match @profile,
+      # @status nor @shared), the nodes' shared places and the network's
+      # (docs/protocol.md 17).
+      VALUE_KEYS = ["#{Values::PREFIX}**", "#{Values::PREFIX}*/#{Values::SHARED}/**",
+                    "#{Values::PREFIX}#{Values::SHARED}/**"].freeze
+
+      # From now on, the puts on the applications' own keys and in the
+      # shared places, and the applications that leave (their values are
+      # marked).
       def remember_values
-        @net.zenoh.subscribe("#{Values::PREFIX}**", depth: 1024) do |s|
-          @values.put(s.key, s.payload, encoding: s.encoding, attachment: s.attachment)
+        VALUE_KEYS.each do |k|
+          @net.zenoh.subscribe(k, depth: 1024) do |s|
+            @values.put(s.key, s.payload, encoding: s.encoding, attachment: s.attachment)
+          end
         end
         @net.zenoh.liveliness_watch("#{Values::PREFIX}*/*", depth: 1024) do |key, alive|
           @values.left(key.delete_prefix(Values::PREFIX)) unless alive
@@ -210,9 +220,11 @@ module Asterism
               properties: {
                 pattern: { type: "string",
                            description: "keys as node/app/<topic name> (a name may have several parts), with * " \
-                                        "(one part) and ** (any parts); default ** (every key). The whole name: " \
-                                        "games/games/othello1/** or games/*/*/state, not games/games/othello1 " \
-                                        "for the topic othello1/state" },
+                                        "(one part) and ** (any parts); default ** (every application's key). " \
+                                        "The whole name: games/games/othello1/** or games/*/*/state, not " \
+                                        "games/games/othello1 for the topic othello1/state. The shared places: " \
+                                        "node/@shared/<name> (*/@shared/spectate/** every node's) and " \
+                                        "@shared/<name> (the network's); * and ** never match @shared itself" },
                 wait: { type: "number",
                         description: "seconds (at most #{Values::Store::MAX_WAIT}) to wait for the first put " \
                                      "that matches when none has come yet; default 0 (answer now)" },
@@ -232,9 +244,13 @@ module Asterism
       end
 
       VALUES_DOC = "The latest value each application put on its topics (asterism/<node>/<app>/<name>: " \
-                   "a game table's state, a log, a camera's pictures), as this server received them: {\"since\", " \
+                   "a game table's state, a log, a camera's pictures) and in the shared places (asterism/<node>/" \
+                   "@shared/<name>, asterism/@shared/<name>: data no single application owns, such as a game " \
+                   "host's spectate views), as this server received them: {\"since\", " \
                    "\"values\": [{\"key\", \"value\", \"t\", \"age_s\", \"app\", \"bytes\", \"format\", " \
-                   "\"seq\", \"sent\", \"lost\"}]}. " \
+                   "\"from\", \"seq\", \"sent\", \"lost\"}]}. " \
+                   "from: a shared value's sender (<node>/<app>); a shared key has one entry for each sender, " \
+                   "with that sender's numbers and app. " \
                    "A put comes only when the value changes, and this server remembers only what it received " \
                    "since it started (since): a key that has not been put since then is not listed. Give wait " \
                    "(seconds) to wait for the first put that matches when none has come yet (a quiet table, " \
