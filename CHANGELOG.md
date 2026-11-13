@@ -79,6 +79,9 @@ The protocol's number
   or none with the error kind `protocol` before reading the rest, and the
   method does not run. Each program says once per application of another
   protocol. `net.protocol_of("node/app")` and `net.protocol_of(node)`.
+  `Asterism::Transfer::Endpoint` (an inbox on a plain Zenoh connection)
+  puts the same token and refuses a request of another protocol the same
+  way.
 - A router role that names an application's key exactly
   (`asterism/*/game`) needs `<that line>/protocol/*` beside it to see the
   application come and go; lines with `**` reach the new token as they

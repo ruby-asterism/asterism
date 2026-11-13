@@ -53,7 +53,9 @@ module Asterism
       end
 
       def start
-        @tokens << @conn.liveliness("#{::Asterism::ROOT}/#{@node}/#{@app}")
+        # The application's token says the protocol (docs/protocol.md 6.1),
+        # as Asterism.connect's does.
+        @tokens << @conn.liveliness(::Asterism.app_token_key(@node, @app))
         @tokens << @conn.liveliness("#{::Asterism::ROOT}/#{@path}")
         @queryable = @conn.queryable("#{::Asterism::ROOT}/#{@path}/**", depth: 32) { |q| answer(q) }
         self
@@ -103,7 +105,16 @@ module Asterism
 
       # The packed reply to a call from the node from.
       def dispatch(payload, from)
-        req = ::Asterism.parse_request(::Asterism::Codec.unpack(payload))
+        raw = ::Asterism::Codec.unpack(payload)
+        # The protocol first, as the object layer's callee does (docs/protocol.md 4.3 step 3).
+        if raw.is_a?(Hash) && !(raw["protocol"].is_a?(Integer) && raw["protocol"] == ::Asterism::PROTOCOL)
+          pr = raw["protocol"]
+          said = pr.is_a?(Integer) ? "protocol #{pr}" : "no protocol (protocol 1 or older)"
+          return ::Asterism.error_reply("protocol", "Asterism::Error",
+                                        "#{@node}/#{@app} speaks Asterism protocol #{::Asterism::PROTOCOL}, " \
+                                        "the call says #{said}")
+        end
+        req = ::Asterism.parse_request(raw)
         return ::Asterism.error_reply("malformed", "ArgumentError", ::Asterism::MALFORMED) unless req
         name, args, kw = req
         arity = Inbox::METHODS[name]

@@ -605,7 +605,7 @@ class TestTransfer < Minitest::Test
     inbox = file_inbox
     conn = Conn.new
     ep = T::Endpoint.new(conn, inbox, node: "pc").start
-    assert_equal ["asterism/pc/transfer", "asterism/pc/transfer/inbox"], conn.tokens.map(&:key)
+    assert_equal ["asterism/pc/transfer/protocol/2", "asterism/pc/transfer/inbox"], conn.tokens.map(&:key)
     assert_equal "asterism/pc/transfer/inbox/**", conn.queryables[0].key
     q = Query.new("asterism/pc/transfer/inbox/meta")
     conn.queryables[0].block.call(q)
@@ -628,6 +628,12 @@ class TestTransfer < Minitest::Test
     # not a method of the inbox; not three parts of the protocol
     r = conn.call("pc/transfer/inbox", "node-a", "instance_eval", ["1"])
     assert_raises(Asterism::RemoteError) { r.value }
+    # a caller of protocol 1 (no "protocol" in its request) is refused before the method runs
+    q = Query.new("asterism/pc/transfer/inbox/call/node-a", Asterism::Codec.pack({ "method" => "cancel", "args" => ["x"] }))
+    conn.queryables[0].block.call(q)
+    e = Asterism::Codec.unpack(q.replies[0][1])["error"]
+    assert_equal "protocol", e["kind"]
+    assert_match(/says no protocol/, e["message"])
     ep.close
     assert conn.tokens.all?(&:closed)
     assert conn.queryables[0].closed
