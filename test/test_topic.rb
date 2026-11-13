@@ -38,6 +38,12 @@ class TestTopic < Minitest::Test
     assert_equal({ "f" => [] }, Asterism::Types.definition!([], nil))
     assert_raises(ArgumentError) { Asterism::Types.definition!([["a"]], nil) }
     assert_raises(ArgumentError) { Asterism::Types.definition!([["a", "[]"]], nil) }
+    assert_raises(ArgumentError) { Asterism::Types.definition!([["a", "[][]"]], nil) }
+    assert_equal({ "f" => [["grid", "int[][]"], ["x", "any"], ["mb", "any[]"], ["paths", "vector3[][]"]] },
+                 Asterism::Types.definition!([["grid", "int[][]"], ["x", "any"], ["mb", "any[]"],
+                                              ["paths", "vector3[][]"]], nil),
+                 "[] repeated: arrays of arrays; any: a value of any shape")
+    assert_includes Asterism::Types::BASIC, "any"
     assert_raises(ArgumentError) { Asterism::Types.definition!([["a", 9]], nil) }
     assert_raises(ArgumentError) { Asterism::Types.definition!({ "a" => "int" }, nil) }
     assert_raises(ArgumentError) { Asterism::Types.definition!([], 5) }
@@ -139,7 +145,8 @@ class TestTopic < Minitest::Test
   CHILD = <<~'RUBY'
     require "asterism"
     loc = ARGV[0]
-    Asterism.define_type("t/stroke", [["pts", "int[]"], ["color", "str"]], desc: "one stroke")
+    Asterism.define_type("t/stroke", [["pts", "int[]"], ["color", "str"], ["grid", "int[][]"], ["mb", "any[]"]],
+                         desc: "one stroke")
     if ARGV[1] == "router"
       Asterism.connect(loc, node: "child", app: "t")
     else
@@ -195,7 +202,8 @@ class TestTopic < Minitest::Test
     pubs = { "imu" => { "t" => 2, "u" => "m/s2", "d" => "accel", "ts" => true },
              "board1/strokes" => { "t" => "t/stroke" }, "camera" => { "t" => 4, "e" => 17 } }
     assert_equal pubs, Asterism.pubs_of("child", "t")
-    types = { "t/stroke" => { "f" => [["pts", "int[]"], ["color", "str"]], "d" => "one stroke" } }
+    types = { "t/stroke" => { "f" => [["pts", "int[]"], ["color", "str"], ["grid", "int[][]"], ["mb", "any[]"]],
+                              "d" => "one stroke" } }
     assert_equal types, Asterism.types_of("child", "t")
     assert_nil Asterism.status_of("child", "t"), "no status set"
     s = Asterism.session

@@ -58,6 +58,14 @@
           [
             "pose",
             "pose"
+          ],
+          [
+            "grid",
+            "int[][]"
+          ],
+          [
+            "extra",
+            "any"
           ]
         ],
         "desc": "one stroke"
@@ -3003,6 +3011,14 @@
                               [
                                 "pose",
                                 "pose"
+                              ],
+                              [
+                                "grid",
+                                "int[][]"
+                              ],
+                              [
+                                "extra",
+                                "any"
                               ]
                             ]
                           ],
@@ -3082,6 +3098,14 @@
                               [
                                 "pose",
                                 "pose"
+                              ],
+                              [
+                                "grid",
+                                "int[][]"
+                              ],
+                              [
+                                "extra",
+                                "any"
                               ]
                             ]
                           ],

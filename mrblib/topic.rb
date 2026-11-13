@@ -35,7 +35,7 @@ module Asterism
     # The built-in types by name; the number is the index + 1.
     NAMES = ["number", "vector3", "pose", "image", "state", "log", "text"]
     # The basic types of a field of an application's own type.
-    BASIC = ["int", "float", "str", "bin", "bool"]
+    BASIC = ["int", "float", "str", "bin", "bool", "any"]
     NAME_MAX = 128   # bytes of a type's name and a field's name
     FIELDS_MAX = 64  # fields of one type
 
@@ -89,7 +89,8 @@ module Asterism
         raise ArgumentError, "field type #{t} is not a built-in type (1 to #{NAMES.size})"
       end
       s = name!("field type:", t)
-      base = s.end_with?("[]") ? s[0, s.size - 2] : s
+      base = s
+      base = base[0, base.size - 2] while base.end_with?("[]")
       raise ArgumentError, "field type #{s.inspect}: no type before []" if base.empty?
       s
     end
@@ -647,7 +648,8 @@ module Asterism
   # built-in one (its number, or its name: "vector3", :vector3), a basic
   # one ("int", "float", "str", "bin", "bool") or another application
   # type's name, with "[]" at the end for an array ("vector3[]", "int[]",
-  # "mygame/point[]"); names are sent as written. desc: a text. Defining
+  # "mygame/point[]"), repeated for arrays of arrays ("int[][]"); "any"
+  # for a value of any shape; names are sent as written. desc: a text. Defining
   # a name again replaces it. Kept across connect and close. Returns the
   # definition as sent ({"f" => [...], "d" => ...}).
   def self.define_type(name, fields, desc: nil)

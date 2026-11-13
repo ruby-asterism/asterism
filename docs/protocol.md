@@ -925,8 +925,12 @@ is a map, type name => definition:
 
 | Key | Value |
 |---|---|
-| `f` | the fields, in order: an array of `[name, type]`, name a str; type an int (a built-in type's number), or a str: a built-in type's name (`number`, `vector3`, `pose`, `image`, `state`, `log`, `text`), a basic type (`int`, `float`, `str`, `bin`, `bool`) or another application type's name, any of them with `[]` at the end for an array of them (`vector3[]`, `int[]`, `asterism-games/point[]`) |
+| `f` | the fields, in order: an array of `[name, type]`, name a str; type an int (a built-in type's number), or a str: a built-in type's name (`number`, `vector3`, `pose`, `image`, `state`, `log`, `text`), a basic type (`int`, `float`, `str`, `bin`, `bool`, `any`) or another application type's name, any of them with `[]` at the end for an array of them (`vector3[]`, `int[]`, `asterism-games/point[]`), repeated for arrays of arrays (`int[][]`: an array of arrays of ints) |
 | `d` | optional, a str: what the type is |
+
+`any` is a value of any shape (what the type does not say: a list of
+mixed parts such as `[name, seat, flags]` is an `any`, a list of them
+`any[]`). `[]` alone, with no type before it, is not a type.
 
 The value of such a type is a MessagePack map with the fields as str keys.
 A built-in type is written in a field by its number or by its name (an

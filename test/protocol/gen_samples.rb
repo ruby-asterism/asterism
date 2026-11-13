@@ -239,7 +239,7 @@ pubs_tv = m(["imu", m(["t", i(2)], ["u", "m/s2"], ["d", "acceleration"], ["ts", 
             ["board1/strokes", m(["t", "conf/stroke"])],
             ["camera", m(["t", i(4)], ["e", i(17)])])
 types_tv = m(["conf/stroke", m(["f", [["pts", "int[]"], ["color", "str"], ["at", i(2)], ["path", "vector3[]"],
-                                     ["pose", "pose"]]], ["d", "one stroke"])])
+                                     ["pose", "pose"], ["grid", "int[][]"], ["extra", "any"]]], ["d", "one stroke"])])
 ap = ->(*pairs) { [{ "key" => app_prof, "payload" => m(*pairs) }] }
 q.("app profile", app_prof, nil, ap.(["status", st_tv], ["pubs", pubs_tv]),
   note: "without parameters: the status and the topics (the types only when asked for)")
@@ -437,7 +437,7 @@ samples = {
     "profile" => m(["name", "iut"]),
     "status" => m(["st", "wait"], ["n", i(1)]),
     "types" => [{ "name" => "conf/stroke", "fields" => [["pts", "int[]"], ["color", "str"], ["at", 2], ["path", "vector3[]"],
-                                                                ["pose", "pose"]],
+                                                                ["pose", "pose"], ["grid", "int[][]"], ["extra", "any"]],
                   "desc" => "one stroke" }],
     "topics" => [{ "name" => "imu", "type" => "vector3", "unit" => "m/s2", "desc" => "acceleration", "ts" => true },
                  { "name" => "board1/strokes", "type" => "conf/stroke" },

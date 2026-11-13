@@ -948,8 +948,9 @@ Asterism.pubs_of("linux", "demo")              # => {"imu" => {"t" => 2, "u" => 
   `asterism/<node>/<app>/@pubs` when they change; types at `@profile?types`
   ([docs/protocol.md](docs/protocol.md) 9-12).
 - **define_type** fields: a built-in type by number or name (`2`,
-  `"vector3"`, an array `"vector3[]"`), a basic one (`"int"`, `"str[]"`)
-  or another application type's name.
+  `"vector3"`, an array `"vector3[]"`), a basic one (`"int"`, `"str[]"`,
+  `"any"` for a value of any shape) or another application type's name;
+  `[]` repeats for arrays of arrays (`"int[][]"`).
 - **type:** a built-in type (`:number`, `:vector3`, `:pose`, `:image`,
   `:state`, `:log`, `:text`, or its number `Asterism::Types::VECTOR3`) or an
   application type's name (a String). **encoding:** one of Zenoh's
