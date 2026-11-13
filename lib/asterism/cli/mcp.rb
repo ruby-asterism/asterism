@@ -248,7 +248,7 @@ module Asterism
                    "@shared/<name>, asterism/@shared/<name>: data no single application owns, such as a game " \
                    "host's spectate views), as this server received them: {\"since\", " \
                    "\"values\": [{\"key\", \"value\", \"t\", \"age_s\", \"app\", \"bytes\", \"format\", " \
-                   "\"from\", \"seq\", \"sent\", \"lost\"}]}. " \
+                   "\"from\", \"seq\", \"run_id\", \"sent\", \"lost\"}]}. " \
                    "from: a shared value's sender (<node>/<app>); a shared key has one entry for each sender, " \
                    "with that sender's numbers and app. " \
                    "A put comes only when the value changes, and this server remembers only what it received " \
@@ -258,7 +258,8 @@ module Asterism
                    "not on the network now: this is its last value, not the present); restarted (it left and " \
                    "came back after this value). format: msgpack (the value as it is), or the encoding the " \
                    "value came with (image/jpeg: the value is its size; JSON and text encodings as they are). " \
-                   "seq: the value's sequence number, sent: the sender's time (when it sends it), lost: how " \
+                   "seq: the value's sequence number, run_id: the sender's connection (another one: it " \
+                   "connected again and numbers from 0), sent: the sender's time (when it sends it), lost: how " \
                    "many values of the key this server missed since it started. value: a " \
                    "value whose JSON is longer than #{Values::Store::VALUE_CUT} bytes is cut (truncated: " \
                    "true, value: the start of its JSON text). It keeps at most #{Values::Store::MAX_KEYS} keys " \

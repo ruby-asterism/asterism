@@ -1,6 +1,6 @@
 {
   "format": "asterism-protocol-samples",
-  "version": 6,
+  "version": 7,
   "protocol": 2,
   "describes": "the Asterism wire protocol 2 (docs/protocol.md)",
   "names": {
@@ -49,7 +49,7 @@
           ],
           [
             "at",
-            2
+            "vector3"
           ],
           [
             "path",
@@ -1022,7 +1022,7 @@
       "encodings": [
         "d6ff00000000"
       ],
-      "note": "times are int nanoseconds since the epoch by convention, not the timestamp ext",
+      "note": "times are int milliseconds since the epoch by convention, not the timestamp ext",
       "portable": true,
       "expect": [
         {
@@ -3075,9 +3075,7 @@
                               ],
                               [
                                 "at",
-                                {
-                                  "int": "2"
-                                }
+                                "vector3"
                               ],
                               [
                                 "path",
@@ -3111,7 +3109,7 @@
           }
         }
       ],
-      "note": "f: [name, type] pairs (a built-in type's number or name, a basic type, another type's name; [] for an array)",
+      "note": "f: [name, type] pairs, the type a name (a built-in type's, a basic type, another type's; [] for an array)",
       "portable": true
     },
     {
@@ -3162,9 +3160,7 @@
                               ],
                               [
                                 "at",
-                                {
-                                  "int": "2"
-                                }
+                                "vector3"
                               ],
                               [
                                 "path",
@@ -4737,7 +4733,7 @@
         "payload": null
       },
       "reply_hex": [
-        "81a5747970657383a3782f7083a1669292a178a5666c6f617492a17901a164a76120706f696e74a17a01a5782f62616481a1669191a178a5782f6e6f6680"
+        "81a5747970657385a3782f7083a1669292a178a5666c6f617492a179a66e756d626572a164a76120706f696e74a17a01a5782f62616481a1669191a178a5782f6e6f6680a5782f6e756d81a1669192a17901a7782f656d70747981a1669192a179a0"
       ],
       "outcome": [
         "ok",
@@ -4756,9 +4752,7 @@
                       ],
                       [
                         "y",
-                        {
-                          "int": "1"
-                        }
+                        "number"
                       ]
                     ]
                   ],
@@ -4772,7 +4766,7 @@
           ]
         }
       ],
-      "note": "the reader keeps the definitions whose f is a list of [str, int or str]"
+      "note": "the reader keeps the definitions whose f is a list of [str, non-empty str]: a field's type is a name, a number leaves the definition out"
     },
     {
       "id": "change the status",
@@ -4886,6 +4880,9 @@
               ]
             }
           ],
+          {
+            "publish_again": "imu"
+          },
           [
             "imu",
             [
@@ -4918,7 +4915,7 @@
         "ok",
         null
       ],
-      "note": "each value goes on its topic's key (see data_puts)"
+      "note": "each value goes on its topic's key (see data_puts); imu is published again with the same declaration before its second value: its numbers go on (1, not 0)"
     },
     {
       "id": "withdraw a topic",
@@ -4940,43 +4937,49 @@
           {
             "key": "asterism/drv/conf/feed/a",
             "payload_hex": "01",
-            "attachment_hex": "9100",
+            "attachment_hex": "920007",
             "encoding": null
           },
           {
             "key": "asterism/drv/conf/feed/a",
             "payload_hex": "a374776f",
-            "attachment_hex": "9201cf0000018bcfe5687b",
+            "attachment_hex": "930107cf0000018bcfe5687b",
             "encoding": null
           },
           {
             "key": "asterism/drv/conf/feed/a",
             "payload_hex": "c0",
-            "attachment_hex": "9104",
+            "attachment_hex": "920407",
             "encoding": null
           },
           {
             "key": "asterism/drv/conf/feed/cam",
             "payload_hex": "ffd8ffe04a464946ffd9",
-            "attachment_hex": "9100",
+            "attachment_hex": "920007",
             "encoding": "image/jpeg"
           },
           {
             "key": "asterism/drv/conf/feed/a",
             "payload_hex": "9101",
-            "attachment_hex": "9102",
+            "attachment_hex": "920207",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/conf/feed/a",
+            "payload_hex": "05",
+            "attachment_hex": "930509a178",
             "encoding": null
           },
           {
             "key": "asterism/drv/conf/feed/w",
             "payload_hex": "00",
-            "attachment_hex": "91ce7fffffff",
+            "attachment_hex": "92ce7fffffff07",
             "encoding": null
           },
           {
             "key": "asterism/drv/conf/feed/w",
             "payload_hex": "01",
-            "attachment_hex": "9100",
+            "attachment_hex": "920007",
             "encoding": null
           },
           {
@@ -4988,43 +4991,49 @@
           {
             "key": "asterism/drv/conf/feed/bad",
             "payload_hex": "c1",
-            "attachment_hex": "9100",
+            "attachment_hex": "920007",
             "encoding": null
           },
           {
             "key": "asterism/drv/conf/feed/t",
             "payload_hex": "68656c6c6f",
-            "attachment_hex": "9100",
+            "attachment_hex": "920007",
             "encoding": "text/plain;charset=utf-8"
           },
           {
-            "key": "asterism/drv/conf/feed/a",
-            "payload_hex": "05",
-            "attachment_hex": "9203a178",
+            "key": "asterism/drv/conf/feed/s",
+            "payload_hex": "01",
+            "attachment_hex": "9103",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/conf/feed/s",
+            "payload_hex": "02",
+            "attachment_hex": "9105",
             "encoding": null
           },
           {
             "key": "asterism/drv/@shared/feed/s",
             "payload_hex": "01",
-            "attachment_hex": "9300c0a56472762f61",
+            "attachment_hex": "940001c0a56472762f61",
             "encoding": null
           },
           {
             "key": "asterism/drv/@shared/feed/s",
             "payload_hex": "02",
-            "attachment_hex": "9300c0a56472762f62",
+            "attachment_hex": "940002c0a56472762f62",
             "encoding": null
           },
           {
             "key": "asterism/drv/@shared/feed/s",
             "payload_hex": "03",
-            "attachment_hex": "9302c0a56472762f61",
+            "attachment_hex": "940201c0a56472762f61",
             "encoding": null
           },
           {
             "key": "asterism/drv/@shared/feed/s",
             "payload_hex": "04",
-            "attachment_hex": "9301c0a56472762f62",
+            "attachment_hex": "940102c0a56472762f62",
             "encoding": null
           },
           {
@@ -5036,17 +5045,23 @@
           {
             "key": "asterism/drv/@shared/feed/s",
             "payload_hex": "06",
-            "attachment_hex": "9308c003",
+            "attachment_hex": "9408c0c003",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/@shared/feed/s",
+            "payload_hex": "07",
+            "attachment_hex": "9409c0c0a76f746865722f61",
             "encoding": null
           },
           {
             "key": "asterism/@shared/feed/g",
             "payload_hex": "a26869",
-            "attachment_hex": "9305cf0000018bcfe5687ba3782f79",
+            "attachment_hex": "940503cf0000018bcfe5687ba3782f79",
             "encoding": null
           }
         ],
-        "expect": 17
+        "expect": 20
       },
       "request": {
         "key": "asterism/drv/conf/rec/call/iut",
@@ -5079,7 +5094,10 @@
               "int": "0"
             },
             false,
-            "drv/conf"
+            "drv/conf",
+            {
+              "int": "7"
+            }
           ],
           [
             "drv/conf/feed/a",
@@ -5095,7 +5113,10 @@
               "int": "0"
             },
             false,
-            "drv/conf"
+            "drv/conf",
+            {
+              "int": "7"
+            }
           ],
           [
             "drv/conf/feed/a",
@@ -5109,7 +5130,10 @@
               "int": "2"
             },
             false,
-            "drv/conf"
+            "drv/conf",
+            {
+              "int": "7"
+            }
           ],
           [
             "drv/conf/feed/cam",
@@ -5125,7 +5149,10 @@
               "int": "0"
             },
             false,
-            "drv/conf"
+            "drv/conf",
+            {
+              "int": "7"
+            }
           ],
           [
             "drv/conf/feed/a",
@@ -5143,7 +5170,29 @@
               "int": "2"
             },
             true,
-            "drv/conf"
+            "drv/conf",
+            {
+              "int": "7"
+            }
+          ],
+          [
+            "drv/conf/feed/a",
+            {
+              "int": "5"
+            },
+            {
+              "int": "5"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "0"
+            },
+            true,
+            "drv/conf",
+            {
+              "int": "9"
+            }
           ],
           [
             "drv/conf/feed/w",
@@ -5159,7 +5208,10 @@
               "int": "0"
             },
             false,
-            "drv/conf"
+            "drv/conf",
+            {
+              "int": "7"
+            }
           ],
           [
             "drv/conf/feed/w",
@@ -5175,7 +5227,10 @@
               "int": "0"
             },
             false,
-            "drv/conf"
+            "drv/conf",
+            {
+              "int": "7"
+            }
           ],
           [
             "drv/conf/feed/n",
@@ -5196,7 +5251,8 @@
               "int": "0"
             },
             false,
-            "drv/conf"
+            "drv/conf",
+            null
           ],
           [
             "drv/conf/feed/t",
@@ -5212,23 +5268,44 @@
               "int": "0"
             },
             false,
-            "drv/conf"
+            "drv/conf",
+            {
+              "int": "7"
+            }
           ],
           [
-            "drv/conf/feed/a",
+            "drv/conf/feed/s",
+            {
+              "int": "1"
+            },
+            {
+              "int": "3"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false,
+            "drv/conf",
+            null
+          ],
+          [
+            "drv/conf/feed/s",
+            {
+              "int": "2"
+            },
             {
               "int": "5"
             },
-            {
-              "int": "3"
-            },
             null,
             "msgpack",
             {
-              "int": "0"
+              "int": "1"
             },
             false,
-            "drv/conf"
+            "drv/conf",
+            null
           ],
           [
             "drv/@shared/feed/s",
@@ -5244,7 +5321,10 @@
               "int": "0"
             },
             false,
-            "drv/a"
+            "drv/a",
+            {
+              "int": "1"
+            }
           ],
           [
             "drv/@shared/feed/s",
@@ -5260,7 +5340,10 @@
               "int": "0"
             },
             false,
-            "drv/b"
+            "drv/b",
+            {
+              "int": "2"
+            }
           ],
           [
             "drv/@shared/feed/s",
@@ -5276,7 +5359,10 @@
               "int": "1"
             },
             false,
-            "drv/a"
+            "drv/a",
+            {
+              "int": "1"
+            }
           ],
           [
             "drv/@shared/feed/s",
@@ -5292,7 +5378,10 @@
               "int": "0"
             },
             false,
-            "drv/b"
+            "drv/b",
+            {
+              "int": "2"
+            }
           ],
           [
             "drv/@shared/feed/s",
@@ -5308,6 +5397,7 @@
               "int": "0"
             },
             false,
+            null,
             null
           ],
           [
@@ -5324,6 +5414,24 @@
               "int": "0"
             },
             false,
+            null,
+            null
+          ],
+          [
+            "drv/@shared/feed/s",
+            {
+              "int": "7"
+            },
+            {
+              "int": "9"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false,
+            null,
             null
           ],
           [
@@ -5340,11 +5448,14 @@
               "int": "0"
             },
             false,
-            "x/y"
+            "x/y",
+            {
+              "int": "3"
+            }
           ]
         ]
       ],
-      "note": "no encoding: MessagePack (\"msgpack\"); 4 after 1: 2 lost; 2 after 4: the sender started again (2 lost of its new run); 0 after 2^31-1: the numbers wrapped; no attachment: no number; not MessagePack without an encoding: left out; a time that is not an int: none; the reports end with the sender (an application's own key: its node/app; the subscriptions' blocks run one subscription after the other, the network's place last). Shared places: the sender from the attachment's third element, the numbers per sender (drv/a: 1 lost; drv/b counted on its own); no sender, or one that is not node/app: none, and the numbers of the key without a sender"
+      "note": "no encoding: MessagePack (\"msgpack\"); 4 after 1: 2 lost; 2 after 4 with the same run id: the sender started again (2 lost of its new run); 5 with another run id: a new run, nothing counted (not 2 lost); 0 after 2^31-1: the numbers wrapped; no attachment: no number; not MessagePack without an encoding: left out; a time that is not an int: none; no run id ([seq]): read by the distance alone; the reports end with the sender (an application's own key: its node/app) and the run id; the subscriptions' blocks run one subscription after the other, the network's place last. Shared places: the sender from the attachment's fourth element, the numbers per sender (drv/a: 1 lost; drv/b counted on its own); no sender, one that is not node/app, or one of another node on a node's place: none, and the numbers of the key without a sender"
     }
   ],
   "liveliness": {
@@ -5637,6 +5748,9 @@
           "int": "0"
         },
         {
+          "any": "u16"
+        },
+        {
           "any": "int"
         }
       ]
@@ -5648,6 +5762,9 @@
       "attachment": [
         {
           "int": "0"
+        },
+        {
+          "any": "u16"
         }
       ]
     },
@@ -5690,6 +5807,9 @@
       "attachment": [
         {
           "int": "0"
+        },
+        {
+          "any": "u16"
         }
       ]
     },
@@ -5712,6 +5832,9 @@
           "int": "1"
         },
         {
+          "any": "u16"
+        },
+        {
           "any": "int"
         }
       ]
@@ -5726,6 +5849,9 @@
         {
           "int": "0"
         },
+        {
+          "any": "u16"
+        },
         null,
         "iut/conf"
       ]
@@ -5737,6 +5863,9 @@
       "attachment": [
         {
           "int": "0"
+        },
+        {
+          "any": "u16"
         },
         {
           "any": "int"

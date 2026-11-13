@@ -24,6 +24,7 @@ MRuby::Build.new("host") do |conf|
   conf.gem core: "mruby-enum-ext"
   conf.gem core: "mruby-metaprog" # public_send and the rest, as on the boards
   conf.gem core: "mruby-eval"     # Asterism::ROS.require_type evaluates the type files
+  conf.gem core: "mruby-random"   # Kernel#rand, as picoruby-rng gives the boards (the run ids)
   conf.gem ENV.fetch("PICORUBY_ASTERISM_ZENOH_DIR")
   conf.gem File.expand_path("..", __dir__)
 end

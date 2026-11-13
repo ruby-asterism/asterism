@@ -9,7 +9,7 @@
 # with |v|, and exposes probe: put_imu(n) puts n values on imu, put_cam
 # puts the bytes of a small JPEG-like image, unpublish_cam withdraws cam,
 # got returns what the subscriptions got ([path, value, seq, time,
-# encoding, lost, restarted]; the bytes of a value with an encoding as a
+# encoding, lost, restarted, run id]; the bytes of a value with an encoding as a
 # bin) and plain the values of the |v| block; stop ends the node. Shared
 # places: it publishes cross/m on its node's place (put_shared(n) puts n
 # values) and subscribes to @shared/cross/** and */@shared/cross/**
@@ -81,14 +81,14 @@ class Probe
 end
 
 $net = Asterism.connect(nil, node: "mdata", app: "t", mode: :peer, listen: "tcp/127.0.0.1:#{port}")
-$net.define_type("mdata/sample", [["id", "int"], ["tags", "str[]"], ["at", :pose], ["trail", "vector3[]"], ["kind", 5]], desc: "a sample")
+$net.define_type("mdata/sample", [["id", "int"], ["tags", "str[]"], ["at", :pose], ["trail", "vector3[]"], ["kind", "state"]], desc: "a sample")
 imu = $net.publish("imu", type: :vector3, unit: "m/s2", desc: "acceleration", ts: true)
 cam = $net.publish("cam/front", type: :image, encoding: "image/jpeg")
 got = []
 plain = []
 $net.subscribe("cruby/t/**") do |v, info|
   v = Asterism::Profile.binary(v) unless info.encoding == "msgpack"
-  got << [info.path, v, info.seq, info.time, info.encoding, info.lost, info.restarted?]
+  got << [info.path, v, info.seq, info.time, info.encoding, info.lost, info.restarted?, info.run_id]
 end
 $net.subscribe("cruby/t/n") { |v| plain << v }
 mine = $net.publish("cross/m", shared: :node, type: "mdata/sample")

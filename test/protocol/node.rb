@@ -81,7 +81,7 @@ else
   $net = Asterism.connect(locator, node: "iut", app: "conf")
 end
 $net.status({ "st" => "wait", "n" => 1 })
-$net.define_type("conf/stroke", [["pts", "int[]"], ["color", "str"], ["at", 2], ["path", "vector3[]"],
+$net.define_type("conf/stroke", [["pts", "int[]"], ["color", "str"], ["at", "vector3"], ["path", "vector3[]"],
                                  ["pose", "pose"], ["grid", "int[][]"], ["extra", "any"]], desc: "one stroke")
 imu = $net.publish("imu", type: :vector3, unit: "m/s2", desc: "acceleration", ts: true)
 strokes = $net.publish("board1/strokes", type: "conf/stroke")
@@ -89,12 +89,12 @@ cam = $net.publish("camera", type: :image, encoding: "image/jpeg")
 score = $net.publish("score", shared: :node, type: :number)
 hello = $net.publish("lobby/hello", shared: :global, type: :text, ts: true)
 # What the subscriptions got: [path, value, seq, time, encoding, lost,
-# restarted, from] (the bytes of a value with an encoding as a bin).
+# restarted, from, run id] (the bytes of a value with an encoding as a bin).
 got = []
 ["drv/conf/**", "drv/@shared/**", "@shared/feed/**"].each do |path|
   $net.subscribe(path) do |v, info|
     v = Asterism::Profile.binary(v) unless info.encoding == "msgpack"
-    got << [info.path, v, info.seq, info.time, info.encoding, info.lost, info.restarted?, info.from]
+    got << [info.path, v, info.seq, info.time, info.encoding, info.lost, info.restarted?, info.from, info.run_id]
   end
 end
 $net.expose("subject", Subject.new,
@@ -155,6 +155,8 @@ steps = [
     imu.put([1.5, -2, 9.8])
     cam.put("\xff\xd8\xff\xe0JFIF\xff\xd9".b)
     strokes.put({ "pts" => [1, 2], "color" => "red", "at" => [0, 0, 0] })
+    # The same declaration again: the numbers go on.
+    imu = $net.publish("imu", type: :vector3, unit: "m/s2", desc: "acceleration", ts: true)
     imu.put([1.5, -2, 9.8])
     score.put(3)
     hello.put("hi")
@@ -164,7 +166,7 @@ steps = [
   ["receive values", lambda do
     rec.feed
     t0 = Asterism.now_ms
-    while got.size < 17 && Asterism.now_ms - t0 < 3000
+    while got.size < 20 && Asterism.now_ms - t0 < 3000
       $net.poll
       Asterism.pause(2)
     end

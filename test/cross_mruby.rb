@@ -26,7 +26,7 @@ class TestCrossMruby < Minitest::Test
              "cam/front" => { "t" => 4, "e" => 17 }, "mdata/@shared/cross/m" => { "t" => "mdata/sample" } }
     assert_equal pubs, @net.pubs_of("mdata", "t")
     assert_equal({ "mdata/sample" => { "f" => [["id", "int"], ["tags", "str[]"], ["at", "pose"], ["trail", "vector3[]"],
-                                                     ["kind", 5]], "d" => "a sample" } },
+                                                     ["kind", "state"]], "d" => "a sample" } },
                  @net.types_of("mdata", "t"))
     assert_nil @net.status_of("mdata", "t")
 
@@ -45,6 +45,9 @@ class TestCrossMruby < Minitest::Test
     assert got[0, 3].all? { (_2.time - Time.now.to_f * 1000).abs < 5000 }, "the sender's time"
     v, info = got[3]
     assert_equal [JPEG, "image/jpeg", "cam/front", 0, nil], [v, info.encoding, info.name, info.seq, info.time]
+    runs = got[0, 4].map { _2.run_id }.uniq
+    assert_equal 1, runs.size, "one run id for the mruby connection"
+    assert_includes 0..65535, runs[0]
     assert_equal ["imu", "mdata/@shared/cross/m"], probe.unpublish_cam
     assert wait_for { @net.poll; pubs_puts.any? }
     v, info = pubs_puts.last
@@ -67,8 +70,8 @@ class TestCrossMruby < Minitest::Test
     rows = probe.got
     assert_equal ["cruby/t/a", 1.25, 0, "msgpack", 0, false], rows[0].values_at(0, 1, 2, 4, 5, 6)
     assert_kind_of Integer, rows[0][3]
-    assert_equal ["cruby/t/img", "\x89PNG\r\n".b, 0, nil, "image/png", 0, false], rows[1]
-    assert_equal ["cruby/t/n", { "k" => [1, "two"] }, 0, nil, "msgpack", 0, false], rows[2]
+    assert_equal ["cruby/t/img", "\x89PNG\r\n".b, 0, nil, "image/png", 0, false, @net.run_id], rows[1]
+    assert_equal ["cruby/t/n", { "k" => [1, "two"] }, 0, nil, "msgpack", 0, false, @net.run_id], rows[2]
     assert_equal ["cruby/t/a", 2, 4, "msgpack", 3, false], rows[3].values_at(0, 1, 2, 4, 5, 6)
     assert_equal [{ "k" => [1, "two"] }], probe.plain, "a block with |v| on mruby"
 

@@ -15,8 +15,10 @@
 # Keys: a value goes on asterism/<node>/<app>/<name> (a declared Zenoh
 # publisher: the key travels as a number), with no encoding when it is
 # MessagePack and the encoding given at publish otherwise; the attachment
-# is the MessagePack array [seq] or [seq, sender's time in ms since 1970]
-# (ts: true). The declarations are put on asterism/<node>/<app>/@pubs each
+# is the MessagePack array [seq, run id] or [seq, run id, sender's time in
+# ms since 1970] (ts: true). The run id is the connection's: 16 random bits
+# picked when it opens, so that a reader tells a sender that started again
+# from one whose numbers went on (docs/protocol.md 9.3, 9.4). The declarations are put on asterism/<node>/<app>/@pubs each
 # time they change, and answered by the application's own profile,
 # asterism/<node>/<app>/@profile (status.rb): ?status, ?pubs, ?types.
 #
@@ -24,8 +26,8 @@
 # a node's asterism/<node>/@shared/<name> or the network's
 # asterism/@shared/<name>. The sender declares it in its own @pubs
 # ("<node>/@shared/<name>", "@shared/<name>"), and each value's attachment
-# is [seq, ms or nil, "<node>/<app>"], so that the readers count the
-# numbers per sender and read the type from the sender's declarations.
+# is [seq, run id, ms or nil, "<node>/<app>"], so that the readers count
+# the numbers per sender and read the type from the sender's declarations.
 #
 #   t = net.publish("spectate/t1/state", shared: :node, type: "mygame/table")
 #   net.subscribe("*/@shared/spectate/**") { |v, info| p [info.from, info.lost] }
@@ -43,7 +45,7 @@ module Asterism
     POSE = 3     # [x, y, z, qx, qy, qz, qw] (ROS 2's Pose order)
     IMAGE = 4    # the bytes, in the topic's encoding (image/jpeg, image/png)
     STATE = 5    # a String or an Integer (a scene, on / off)
-    LOG = 6      # a log record (docs/v3.md)
+    LOG = 6      # a log record: level, msg, time (ms since 1970, an int)
     TEXT = 7     # a String
     # The built-in types by name; the number is the index + 1.
     NAMES = ["number", "vector3", "pose", "image", "state", "log", "text"]
@@ -91,15 +93,16 @@ module Asterism
       s
     end
 
-    # A field's type as it is sent: a built-in number as given, or a
-    # String as given (a Symbol as its name): a built-in type's name
-    # ("vector3"), a basic type ("int"), another application type; "[]" at
-    # the end for an array of it ("vector3[]", "int[]").
+    # A field's type as it is sent: a name, a String (a Symbol as its
+    # name): a built-in type's name ("vector3"), a basic type ("int"),
+    # another application type; "[]" at the end for an array of it
+    # ("vector3[]", "int[]"). A number is not a field's type (a topic's
+    # type: is; docs/protocol.md 11.2).
     # @api private
     def self.field_type!(t)
       if t.is_a?(Integer)
-        return t if t >= 1 && t <= NAMES.size
-        raise ArgumentError, "field type #{t} is not a built-in type (1 to #{NAMES.size})"
+        n = t >= 1 && t <= NAMES.size ? " (#{NAMES[t - 1].inspect})" : ""
+        raise ArgumentError, "field type #{t}: a field's type is a name#{n}, not a number"
       end
       s = name!("field type:", t)
       base = s
@@ -130,8 +133,8 @@ module Asterism
     end
 
     # A received map of definitions, cleaned: the definitions with a str
-    # name and an "f" that is an array of [str, int or str] pairs, and "d"
-    # when it is a str. nil when it is not a map.
+    # name and an "f" that is an array of [str, non-empty str] pairs, and
+    # "d" when it is a str. nil when it is not a map.
     def self.check(h)
       return nil unless h.is_a?(Hash)
       out = {}
@@ -140,7 +143,7 @@ module Asterism
         ok = true
         d["f"].each do |f|
           ok = false unless f.is_a?(Array) && f.size == 2 && f[0].is_a?(String) &&
-                            (f[1].is_a?(Integer) || (f[1].is_a?(String) && !f[1].empty?))
+                            f[1].is_a?(String) && !f[1].empty?
         end
         next unless ok
         c = { "f" => d["f"] }
@@ -289,7 +292,11 @@ module Asterism
     attr_reader :name, :key, :encoding, :connection, :shared, :entry
 
     # @api private
-    def initialize(connection, name, key, publisher, decl, encoding, ts, shared = nil, entry = nil, from = nil)
+    # seq: the number of the first put (a topic declared again on the same
+    # connection goes on from the one it replaces); run: the connection's
+    # run id.
+    def initialize(connection, name, key, publisher, decl, encoding, ts, shared = nil, entry = nil, from = nil,
+                   seq = 0, run = 0)
       @connection = connection
       @name = name
       @key = key
@@ -297,7 +304,8 @@ module Asterism
       @decl = decl
       @encoding = encoding
       @ts = ts
-      @seq = 0
+      @seq = seq
+      @run = run
       @shared = shared
       @entry = entry || name
       @from = from
@@ -347,14 +355,15 @@ module Asterism
       @decl
     end
 
-    # The attachment of the next value, and the number after it.
+    # The attachment of the next value.
     # @api private
-    # [seq] or [seq, ms] for the application's own topic; [seq, ms or nil,
-    # "<node>/<app>"] for a shared one (docs/protocol.md 9.3).
+    # [seq, run] or [seq, run, ms] for the application's own topic; [seq,
+    # run, ms or nil, "<node>/<app>"] for a shared one (docs/protocol.md
+    # 9.3).
     def attachment
       ms = @ts ? ::Asterism.wall_ms : nil
-      return ::MessagePack.pack([@seq, ms, @from]) if @shared
-      ::MessagePack.pack(ms.nil? ? [@seq] : [@seq, ms])
+      return ::MessagePack.pack([@seq, @run, ms, @from]) if @shared
+      ::MessagePack.pack(ms.nil? ? [@seq, @run] : [@seq, @run, ms])
     end
 
     # @api private
@@ -379,21 +388,24 @@ module Asterism
     # "<node>/<app>" (for a shared place as its attachment tells it, nil
     # when it does not); node, app: its parts (a node's shared place without
     # a sender: the key's node, app nil). seq: the sender's sequence number
-    # (nil when the value came without one). time: the sender's time in ms
+    # (nil when the value came without one). run_id: the run id of the
+    # sender's connection (16 bits, a new one each time it connects; nil
+    # when the value came without one). time: the sender's time in ms
     # since 1970 (nil unless the topic sends it, ts: true). encoding:
     # "msgpack" for a MessagePack value, else the Zenoh encoding
     # ("image/jpeg"). timestamp: the router's time (an
     # Asterism::Zenoh::Timestamp), nil when no router stamped it. lost: how
     # many values of this key (and, on a shared place, of this sender) did
     # not come between the last one and this (0 for the first). restarted:
-    # true when the number went back (the sender connected again or
-    # started over); lost then counts the values of the new run before this
-    # one.
-    attr_reader :key, :path, :node, :app, :name, :seq, :time, :encoding, :timestamp, :lost, :shared, :from
+    # true when the sender started a new run: its run id changed (it
+    # connected again; lost is 0, the new run's earlier values are not
+    # counted), or, with the same run id, its number went back (lost then
+    # counts the values of the run before this one; docs/protocol.md 9.4).
+    attr_reader :key, :path, :node, :app, :name, :seq, :run_id, :time, :encoding, :timestamp, :lost, :shared, :from
 
     # @api private
     def initialize(key, node, app, name, seq, time, encoding, timestamp, lost, restarted,
-                   path = nil, shared = nil, from = nil)
+                   path = nil, shared = nil, from = nil, run_id = nil)
       @key = key
       @node = node
       @app = app
@@ -407,6 +419,7 @@ module Asterism
       @path = path || "#{node}/#{app}/#{name}"
       @shared = shared
       @from = from || (shared.nil? && node && app ? "#{node}/#{app}" : nil)
+      @run_id = run_id
     end
 
     def restarted?
@@ -415,7 +428,7 @@ module Asterism
 
     def to_h
       { key: @key, path: @path, shared: @shared, from: @from, node: @node, app: @app, name: @name, seq: @seq,
-        time: @time, encoding: @encoding, timestamp: @timestamp, lost: @lost, restarted: @restarted }
+        run_id: @run_id, time: @time, encoding: @encoding, timestamp: @timestamp, lost: @lost, restarted: @restarted }
     end
 
     def inspect
@@ -425,12 +438,108 @@ module Asterism
     end
   end
 
-  # A subscription (Connection#subscribe). close ends it.
-  class Subscription
+  # A reader's memory of the sequence numbers (docs/protocol.md 9.4): for
+  # each lane (a key, or a shared key and its sender) the last run id and
+  # number, and the application its values come from ("<node>/<app>"), so
+  # that the lanes of an application that leaves are forgotten (forget).
+  # At most max lanes: past it, the lane seen longest ago is forgotten (its
+  # next value counts as a first one). Not thread safe.
+  class Sequences
     # Sequence numbers are compared within half of their range: a step
     # forward smaller than this is a step, anything else a restart (the
-    # numbers wrap at Topic::SEQ_MAX).
+    # numbers wrap at ::Asterism::Topic::SEQ_MAX).
     HALF = 1073741824
+
+    def initialize(max = nil)
+      @max = max || ::Asterism.lanes_max
+      @last = {} # lane => [run id, seq, app]; the lane seen longest ago first
+    end
+
+    # [lost, restarted] of the value numbered seq, of run id run (nil: it
+    # came without one), on lane; app: the application it comes from
+    # ("<node>/<app>", or nil when it is not known).
+    def see(lane, run, seq, app = nil)
+      prev = @last.delete(lane)
+      if prev.nil?
+        while @last.size >= @max
+          @last.delete(@last.keys[0])
+        end
+        @last[lane] = [run, seq, app]
+        return [0, false]
+      end
+      @last[lane] = [run, seq, app]
+      # Another run id: the sender connected again. Its earlier values are
+      # not counted.
+      return [0, true] unless prev[0] == run
+      d = seq - prev[1]
+      d += ::Asterism::Topic::SEQ_MAX + 1 if d < 0
+      return [d - 1, false] if d > 0 && d < HALF
+      [seq, true]
+    end
+
+    # Forgets the lanes whose values come from app ("<node>/<app>"): it left
+    # the network. Returns how many.
+    def forget(app)
+      gone = []
+      @last.each { |lane, v| gone << lane if v[2] == app }
+      i = 0
+      while i < gone.size
+        @last.delete(gone[i])
+        i += 1
+      end
+      gone.size
+    end
+
+    # The lanes remembered now.
+    def size
+      @last.size
+    end
+
+    def clear
+      @last = {}
+      self
+    end
+  end
+
+  # The lanes a reader remembers (Sequences): fewer on a board.
+  # @api private
+  def self.lanes_max
+    machine? ? 64 : 4096
+  end
+
+  # The senders whose declarations and types a connection keeps
+  # (Connection#type_of): fewer on a board.
+  # @api private
+  def self.senders_max
+    machine? ? 8 : 256
+  end
+
+  # The parts of a value's attachment (docs/protocol.md 9.3): [seq, run id,
+  # time, from], or nil when it has no sequence number (no attachment, or
+  # not an array that starts with an int from 0 to 2^31 - 1). The run id
+  # and the time are nil when they are not ints. place: nil for an
+  # application's own key (the sender is the key's, the fourth element is
+  # not read), :node or :global for a shared place: from is the fourth
+  # element when it is "<node>/<app>" (on a node's place, of node, the
+  # key's), else nil.
+  def self.read_attachment(att, place = nil, node = nil)
+    return nil if att.nil? || att.empty?
+    a = ::Asterism::Codec.unpack(att)
+    return nil unless a.is_a?(Array) && a[0].is_a?(Integer) && a[0] >= 0 && a[0] <= ::Asterism::Topic::SEQ_MAX
+    run = a[1].is_a?(Integer) ? a[1] : nil
+    time = a[2].is_a?(Integer) ? a[2] : nil
+    from = nil
+    unless place.nil?
+      from = ::Asterism::Subscription.sender(a[3])
+      # A node's place is that node's: a sender of another node is none.
+      from = nil if from && place == :node && !from.start_with?("#{node}/")
+    end
+    [a[0], run, time, from]
+  end
+
+  # A subscription (Connection#subscribe). close ends it.
+  class Subscription
+    HALF = ::Asterism::Sequences::HALF
 
     attr_reader :path, :connection
 
@@ -440,7 +549,7 @@ module Asterism
       @path = path
       @zsub = zsub
       @blk = blk
-      @last = {}
+      @seqs = ::Asterism::Sequences.new
       @received = 0
       @malformed = 0
     end
@@ -472,6 +581,19 @@ module Asterism
 
     def inspect
       "#<Asterism::Subscription #{@path}#{closed? ? ' closed' : ''}>"
+    end
+
+    # The memory of the sequence numbers (an Asterism::Sequences).
+    # @api private
+    def sequences
+      @seqs
+    end
+
+    # Forgets the numbers of the values from app ("<node>/<app>"), which
+    # left the network (Connection: on its token's leave).
+    # @api private
+    def forget(app)
+      @seqs.forget(app)
     end
 
     # @api private
@@ -543,16 +665,15 @@ module Asterism
         name = parts.size > 2 ? parts[2, parts.size - 2].join("/") : nil
       end
       seq = nil
+      run = nil
       time = nil
       from = nil
-      att = sm.attachment
-      if att && !att.empty?
-        a = ::Asterism::Codec.unpack(att)
-        if a.is_a?(Array) && a[0].is_a?(Integer) && a[0] >= 0 && a[0] <= Topic::SEQ_MAX
-          seq = a[0]
-          time = a[1] if a[1].is_a?(Integer)
-          from = ::Asterism::Subscription.sender(a[2]) if shared
-        end
+      got = ::Asterism.read_attachment(sm.attachment, shared, node)
+      if got
+        seq = got[0]
+        run = got[1]
+        time = got[2]
+        from = got[3]
       end
       if from
         cut = from.index("/")
@@ -564,22 +685,14 @@ module Asterism
       lost = 0
       restarted = false
       unless seq.nil?
-        prev = @last[lane]
-        unless prev.nil?
-          d = seq - prev
-          d += Topic::SEQ_MAX + 1 if d < 0
-          if d > 0 && d < HALF
-            lost = d - 1
-          else
-            restarted = true
-            lost = seq
-          end
-        end
-        @last[lane] = seq
+        sender = from || (shared.nil? && node && app ? "#{node}/#{app}" : nil)
+        r = @seqs.see(lane, run, seq, sender)
+        lost = r[0]
+        restarted = r[1]
       end
       @received += 1
       [value, ::Asterism::SampleInfo.new(key, node, app, name, seq, time, enc, sm.timestamp, lost, restarted,
-                                         rest, shared, from)]
+                                         rest, shared, from, run)]
     end
 
     # The sender of a shared value from its attachment: "<node>/<app>" when
@@ -637,7 +750,9 @@ module Asterism
     # readers; ts: true sends the sender's time with each value; encoding: a
     # Zenoh encoding with a fixed number ("image/jpeg"): the values are then
     # Strings sent as they are, not MessagePack. Publishing a name again
-    # replaces the topic (its numbers start again at 0). The declaration is
+    # replaces the topic; the numbers are the connection's, so they go on
+    # from where the replaced topic was (also after unpublish), and start
+    # at 0 on a new connection (docs/protocol.md 9.3). The declaration is
     # put on asterism/<node>/<app>/@pubs. Raises ArgumentError for what it
     # does not accept and Disconnected when not connected. The topics end
     # with the connection.
@@ -685,18 +800,27 @@ module Asterism
       raise ArgumentError, "ts: expects true or false" unless ts == true || ts == false
       decl["ts"] = true if ts
       old = @topics[entry] # replaced in place: the order of @pubs stays
-      close_topic(old) if old
+      seq = old ? old.seq : (@seq_of.delete(entry) || 0)
       key = place ? "#{::Asterism::ROOT}/#{entry}" : "#{::Asterism::ROOT}/#{@node_id}/#{@app}/#{name}"
-      begin
-        zp = enc ? s.publisher(key, encoding: enc) : s.publisher(key)
-      rescue ::Asterism::Zenoh::Error
-        if old
-          @topics.delete(entry)
-          tell_pubs(false)
+      if old && old.encoding == enc && old.decl_raw == decl
+        # The same declaration again: the same publisher goes on.
+        zp = old.publisher
+        old.closed!
+      else
+        close_topic(old) if old
+        begin
+          zp = enc ? s.publisher(key, encoding: enc) : s.publisher(key)
+        rescue ::Asterism::Zenoh::Error
+          if old
+            @topics.delete(entry)
+            @seq_of[entry] = seq
+            tell_pubs(false)
+          end
+          raise
         end
-        raise
       end
-      topic = ::Asterism::Topic.new(self, name, key, zp, decl, enc, ts, place, entry, place ? path : nil)
+      topic = ::Asterism::Topic.new(self, name, key, zp, decl, enc, ts, place, entry, place ? path : nil,
+                                    seq, @run_id)
       @topics[entry] = topic
       app_queryable(s)
       tell_pubs(false)
@@ -723,6 +847,7 @@ module Asterism
         return false
       end
       tbl.delete(name)
+      @seq_of[name] = cur.seq # a topic declared again goes on from here
       close_topic(cur)
       tell_pubs(false)
       true
@@ -793,11 +918,13 @@ module Asterism
     # Defines an application type (docs/protocol.md 10), told to the readers
     # by asterism/<node>/<app>/@profile?types. name: a String
     # ("mygame/board.strokes"); fields: [[name, type], ...], each type a
-    # built-in one (its number, or its name: "vector3", :vector3), a basic
-    # one ("int", "float", "str", "bin", "bool") or another application
-    # type's name, with "[]" at the end for an array ("vector3[]", "int[]",
-    # "mygame/point[]"), repeated for arrays of arrays ("int[][]"); "any"
-    # for a value of any shape; names are sent as written. desc: a text.
+    # name (a String or a Symbol, never a number): a built-in type's
+    # ("vector3", :vector3), a basic one ("int", "float", "str", "bin",
+    # "bool") or another application type's, with "[]" at the end for an
+    # array ("vector3[]", "int[]", "mygame/point[]"), repeated for arrays
+    # of arrays ("int[][]"); "any" for a value of any shape. The values are
+    # maps with the field names as keys: short names (one or two letters)
+    # keep each value small (docs/protocol.md 11.2). desc: a text.
     # Defining a name again replaces it. The types are the connection's
     # (kept after close, to read). Returns the definition as sent
     # ({"f" => [...], "d" => ...}).
@@ -887,7 +1014,9 @@ module Asterism
     # for that key in its @pubs ({"t", "e", "u", "d", "ts"}). On a shared
     # key every sender declares the key with its own declaration, so this
     # asks the sender (info.from). nil when the sender is not known, does not
-    # answer, or does not declare the key. Waits like pubs_of.
+    # answer, or does not declare the key. Waits like pubs_of the first
+    # time; the answer is kept for that sender until it puts its @pubs again
+    # or leaves (type_of shares it), so asking for each value is cheap.
     def declaration_of(info, timeout: nil, timeout_ms: nil)
       got = sender_parts(info, "pubs", timeout, timeout_ms)
       got ? got[0] : nil
@@ -899,7 +1028,9 @@ module Asterism
     # ({"f" => [...], "d" => ...}; nil when it does not tell it). Two senders
     # on a shared key may give the same type name different definitions;
     # each value is read with its own sender's. nil when there is no type
-    # or the sender does not answer. Waits like types_of (one query).
+    # or the sender does not answer. Waits like types_of (one query of
+    # @profile?pubs;types), and keeps the answer as declaration_of does (a
+    # type defined again without a change of @pubs is not seen until then).
     def type_of(info, timeout: nil, timeout_ms: nil)
       got = sender_parts(info, "pubs;types", timeout, timeout_ms)
       return nil if got.nil?
@@ -911,19 +1042,114 @@ module Asterism
 
     # [the sender's declaration of info's key, the sender's types], or nil.
     # @api private
-    def sender_parts(info, parts, timeout, timeout_ms)
+    def sender_parts(info, _parts, timeout, timeout_ms)
       from = info.from
       return nil if from.nil?
+      got = sender_profile(from, timeout, timeout_ms)
+      return nil if got.nil?
+      entry = info.shared ? info.path : info.name
+      d = got[0][entry]
+      return nil if d.nil?
+      [d, got[1]]
+    end
+
+    # [declarations, types] of the application from ("<node>/<app>"), both
+    # cleaned, from what is kept or one query of its @profile?pubs;types;
+    # nil when it does not answer.
+    # @api private
+    def sender_profile(from, timeout, timeout_ms)
+      own = from == path
+      unless own
+        got = sender_cached(from)
+        return got if got
+      end
+      mark = watch_pubs
       cut = from.index("/")
       n = from[0, cut]
       a = from[cut + 1, from.size - cut - 1]
-      raw = app_profile_part(n, a, parts, timeout, timeout_ms)
+      raw = app_profile_part(n, a, "pubs;types", timeout, timeout_ms)
       return nil if raw.nil?
-      pubs = ::Asterism::Pubs.check(raw["pubs"], n) || {}
-      entry = info.shared ? info.path : info.name
-      d = pubs[entry]
-      return nil if d.nil?
-      [d, ::Asterism::Types.check(raw["types"])]
+      got = [::Asterism::Pubs.check(raw["pubs"], n) || {}, ::Asterism::Types.check(raw["types"]) || {}]
+      sender_store(from, got, mark) unless own
+      got
+    end
+
+    # What is kept for from, or nil.
+    # @api private
+    def sender_cached(from)
+      @senders ? @senders[from] : nil
+    end
+
+    # Keeps from's answer, unless an application's @pubs came (or one left)
+    # since mark (it may be from's: the answer may be older than it).
+    # @api private
+    def sender_store(from, got, mark)
+      return unless @session && @pubs_watch && @sender_changes == mark
+      tbl = (@senders ||= {})
+      while tbl.size >= ::Asterism.senders_max
+        tbl.delete(tbl.keys[0])
+      end
+      tbl[from] = got
+    end
+
+    # Follows the puts on asterism/*/*/@pubs from the first declaration_of /
+    # type_of on (each drops what is kept for its application). Returns
+    # the count of changes so far (sender_store's mark).
+    # @api private
+    def watch_pubs
+      if @pubs_watch.nil? && @session
+        begin
+          @pubs_watch = @session.subscribe("#{::Asterism::ROOT}/*/*/#{::Asterism::Pubs::KEY}", depth: 16)
+          @pubs_watch_dropped = 0
+        rescue ::Asterism::Zenoh::Error
+          @pubs_watch = nil
+        end
+      end
+      @sender_changes ||= 0
+    end
+
+    # Drops what is kept for the applications that put their @pubs (all of
+    # it when some of those puts were dropped from the queue).
+    # @api private
+    def follow_pubs
+      w = @pubs_watch
+      return unless w && w.pending > 0
+      samples = w.each_sample
+      d = w.dropped
+      if d != @pubs_watch_dropped
+        @pubs_watch_dropped = d
+        @senders = {}
+        @sender_changes += 1
+      end
+      i = 0
+      while i < samples.size
+        parts = samples[i].key.to_s.split("/")
+        i += 1
+        forget_sender("#{parts[1]}/#{parts[2]}") if parts.size == 4
+      end
+    end
+
+    # @api private
+    def forget_sender(app)
+      @sender_changes = (@sender_changes || 0) + 1
+      @senders.delete(app) if @senders
+    end
+
+    # The application app ("<node>/<app>") left (its token went away): every
+    # subscription of this connection forgets the numbers of its values, and
+    # what is kept of its declarations and types goes (docs/protocol.md 8.5,
+    # 9.4).
+    # @api private
+    def forget_app(app)
+      list = @subscriptions
+      if list
+        i = 0
+        while i < list.size
+          list[i].forget(app)
+          i += 1
+        end
+      end
+      forget_sender(app)
     end
 
     # @api private
@@ -1021,6 +1247,8 @@ module Asterism
       (@subscriptions || []).each { |sub| sub.closed! }
       @subscriptions = []
       @pubs_put = nil
+      @pubs_watch = nil
+      @senders = nil
     end
   end
 end

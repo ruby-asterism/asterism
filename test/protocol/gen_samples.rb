@@ -116,7 +116,7 @@ v.("uint64 above 2^63-1", raw.("cfffffffffffffffff", i(2**64 - 1)), "cf800000000
    expect: malformed_reply, note: "outside the signed 64-bit range: not a value of the protocol")
 v.("ext", raw.("d40100", nil), "c70101ff", expect: malformed_reply, note: "ext types are not values of the protocol")
 v.("timestamp ext", raw.("d6ff00000000", nil), expect: malformed_reply,
-   note: "times are int nanoseconds since the epoch by convention, not the timestamp ext")
+   note: "times are int milliseconds since the epoch by convention, not the timestamp ext")
 
 # ------------------------------------------------------------ incoming
 # Gets the driver sends to the implementation under test (node iut, app
@@ -243,7 +243,7 @@ shared_tv = [["#{IUT}/@shared/score", m(["t", i(1)])],
 pubs_tv = m(["imu", m(["t", i(2)], ["u", "m/s2"], ["d", "acceleration"], ["ts", true])],
             ["board1/strokes", m(["t", "conf/stroke"])],
             ["camera", m(["t", i(4)], ["e", i(17)])], *shared_tv)
-types_tv = m(["conf/stroke", m(["f", [["pts", "int[]"], ["color", "str"], ["at", i(2)], ["path", "vector3[]"],
+types_tv = m(["conf/stroke", m(["f", [["pts", "int[]"], ["color", "str"], ["at", "vector3"], ["path", "vector3[]"],
                                      ["pose", "pose"], ["grid", "int[][]"], ["extra", "any"]]], ["d", "one stroke"])])
 ap = ->(*pairs) { [{ "key" => app_prof, "payload" => m(*pairs) }] }
 q.("app profile", app_prof, nil, ap.(["status", st_tv], ["pubs", pubs_tv]),
@@ -252,7 +252,7 @@ q.("app profile ?status", app_prof, nil, ap.(["status", st_tv]), params: "status
 q.("app profile ?pubs", app_prof, nil, ap.(["pubs", pubs_tv]), params: "pubs",
   note: "t: a built-in type's number or an application type's name; e: the encoding's number (image/jpeg is 17)")
 q.("app profile ?types", app_prof, nil, ap.(["types", types_tv]), params: "types",
-  note: "f: [name, type] pairs (a built-in type's number or name, a basic type, another type's name; [] for an array)")
+  note: "f: [name, type] pairs, the type a name (a built-in type's, a basic type, another type's; [] for an array)")
 q.("app profile two parts", app_prof, nil, ap.(["status", st_tv], ["types", types_tv]), params: "status;types")
 q.("app profile unknown parameters", app_prof, nil, ap.(["status", st_tv], ["pubs", pubs_tv]), params: "x=1",
   note: "parameters naming no part: the default reply")
@@ -381,10 +381,12 @@ o.("no topics", { "pubs_of" => [DRV, APP] }, askp.("pubs"), [pk({ "status" => {}
 o.("topics of nobody", { "pubs_of" => [DRV, APP] }, askp.("pubs"), [], ["ok", nil],
   note: "nobody answers: nil")
 o.("types of another app", { "types_of" => [DRV, APP] }, askp.("types"),
-  [pk({ "types" => { "x/p" => { "f" => [["x", "float"], ["y", 1]], "d" => "a point", "z" => 1 },
-                     "x/bad" => { "f" => [["x"]] }, "x/nof" => {} } })],
-  ["ok", m(["x/p", m(["f", [["x", "float"], ["y", i(1)]]], ["d", "a point"])])],
-  note: "the reader keeps the definitions whose f is a list of [str, int or str]")
+  [pk({ "types" => { "x/p" => { "f" => [["x", "float"], ["y", "number"]], "d" => "a point", "z" => 1 },
+                     "x/bad" => { "f" => [["x"]] }, "x/nof" => {}, "x/num" => { "f" => [["y", 1]] },
+                     "x/empty" => { "f" => [["y", ""]] } } })],
+  ["ok", m(["x/p", m(["f", [["x", "float"], ["y", "number"]]], ["d", "a point"])])],
+  note: "the reader keeps the definitions whose f is a list of [str, non-empty str]: a field's type is a name, " \
+        "a number leaves the definition out")
 o.("change the status", { "set_status" => m(["st", "play"], ["n", i(1)]) }, nil, [], ["ok", nil],
   note: "the change is put on asterism/iut/conf/@status (see status_puts)")
 o.("the same status again", { "set_status" => m(["st", "play"], ["n", i(1)]) }, nil, [], ["ok", nil],
@@ -392,79 +394,89 @@ o.("the same status again", { "set_status" => m(["st", "play"], ["n", i(1)]) }, 
 JPEG = "\xff\xd8\xff\xe0JFIF\xff\xd9".b
 stroke = m(["pts", [i(1), i(2)]], ["color", "red"], ["at", [i(0), i(0), i(0)]])
 o.("put values", { "put" => [["imu", [f(1.5), i(-2), f(9.8)]], ["camera", { "bin_hex" => JPEG.unpack1("H*") }],
-                             ["board1/strokes", stroke], ["imu", [f(1.5), i(-2), f(9.8)]],
+                             ["board1/strokes", stroke], { "publish_again" => "imu" }, ["imu", [f(1.5), i(-2), f(9.8)]],
                              ["#{IUT}/@shared/score", i(3)], ["@shared/lobby/hello", "hi"]] },
-  nil, [], ["ok", nil], note: "each value goes on its topic's key (see data_puts)")
+  nil, [], ["ok", nil], note: "each value goes on its topic's key (see data_puts); imu is published again with " \
+                              "the same declaration before its second value: its numbers go on (1, not 0)")
 o.("withdraw a topic", { "unpublish" => "camera" }, nil, [], ["ok", nil],
   note: "the declarations are put again without it (see pubs_puts)")
 # Values the driver puts on asterism/drv/conf/feed/... while it answers
 # rec.feed; the implementation's subscription to drv/conf/** hands them to
 # its block, and the implementation reports what each came with:
-# [path, value, seq, time, encoding, lost, restarted] (the bytes of a value
-# with an encoding as a bin).
+# [path, value, seq, time, encoding, lost, restarted, from, run id] (the
+# bytes of a value with an encoding as a bin).
 feed = "asterism/#{DRV}/#{APP}/feed"
 fp = ->(name, payload_hex, att, enc = nil) do
   { "key" => "#{feed}/#{name}", "payload_hex" => payload_hex, "attachment_hex" => att && pk(att), "encoding" => enc }
 end
-got = ->(name, v, seq, time, enc, lost, restarted) do
-  ["#{DRV}/#{APP}/feed/#{name}", v, seq, time, enc, lost, restarted, "#{DRV}/#{APP}"]
+got = ->(name, v, seq, time, enc, lost, restarted, run = i(7)) do
+  ["#{DRV}/#{APP}/feed/#{name}", v, seq, time, enc, lost, restarted, "#{DRV}/#{APP}", run]
 end
 # Values on the shared places: the driver's node's (drv/@shared/feed/s) and
-# the network's (@shared/feed/g); the sender is the attachment's third
+# the network's (@shared/feed/g); the sender is the attachment's fourth
 # element, and the numbers are counted per sender.
 sfp = ->(key, payload_hex, att) { { "key" => key, "payload_hex" => payload_hex, "attachment_hex" => pk(att), "encoding" => nil } }
 sk = "asterism/#{DRV}/@shared/feed/s"
 gk = "asterism/@shared/feed/g"
-sgot = ->(path, v, seq, time, lost, restarted, from) { [path, v, seq, time, "msgpack", lost, restarted, from] }
+sgot = ->(path, v, seq, time, lost, restarted, from, run) { [path, v, seq, time, "msgpack", lost, restarted, from, run] }
 mx = 2**31 - 1
+T = 1_700_000_000_123
 o.("receive values", { "feed" => [
-  fp.("a", pk(1), [0]),
-  fp.("a", pk("two"), [1, 1_700_000_000_123]),
-  fp.("a", pk(nil), [4]),
-  fp.("cam", JPEG.unpack1("H*"), [0], "image/jpeg"),
-  fp.("a", pk([1]), [2]),
-  fp.("w", pk(0), [mx]),
-  fp.("w", pk(1), [0]),
+  fp.("a", pk(1), [0, 7]),
+  fp.("a", pk("two"), [1, 7, T]),
+  fp.("a", pk(nil), [4, 7]),
+  fp.("cam", JPEG.unpack1("H*"), [0, 7], "image/jpeg"),
+  fp.("a", pk([1]), [2, 7]),
+  fp.("a", pk(5), [5, 9, "x"]),
+  fp.("w", pk(0), [mx, 7]),
+  fp.("w", pk(1), [0, 7]),
   fp.("n", pk({ "k" => 1 }), nil),
-  fp.("bad", "c1", [0]),
-  fp.("t", "hello".unpack1("H*"), [0], "text/plain;charset=utf-8"),
-  fp.("a", pk(5), [3, "x"]),
-  sfp.(sk, pk(1), [0, nil, "#{DRV}/a"]),
-  sfp.(sk, pk(2), [0, nil, "#{DRV}/b"]),
-  sfp.(sk, pk(3), [2, nil, "#{DRV}/a"]),
-  sfp.(sk, pk(4), [1, nil, "#{DRV}/b"]),
+  fp.("bad", "c1", [0, 7]),
+  fp.("t", "hello".unpack1("H*"), [0, 7], "text/plain;charset=utf-8"),
+  fp.("s", pk(1), [3]),
+  fp.("s", pk(2), [5]),
+  sfp.(sk, pk(1), [0, 1, nil, "#{DRV}/a"]),
+  sfp.(sk, pk(2), [0, 2, nil, "#{DRV}/b"]),
+  sfp.(sk, pk(3), [2, 1, nil, "#{DRV}/a"]),
+  sfp.(sk, pk(4), [1, 2, nil, "#{DRV}/b"]),
   sfp.(sk, pk(5), [7]),
-  sfp.(sk, pk(6), [8, nil, 3]),
-  sfp.(gk, pk("hi"), [5, 1_700_000_000_123, "x/y"])
-], "expect" => 17 },
+  sfp.(sk, pk(6), [8, nil, nil, 3]),
+  sfp.(sk, pk(7), [9, nil, nil, "other/a"]),
+  sfp.(gk, pk("hi"), [5, 3, T, "x/y"])
+], "expect" => 20 },
   { "key" => rec_call, "params" => "", "call" => { "method" => "feed", "args" => [], "kwargs" => m } }, okv.(nil),
   ["ok", [got.("a", i(1), i(0), nil, "msgpack", i(0), false),
-          got.("a", "two", i(1), i(1_700_000_000_123), "msgpack", i(0), false),
+          got.("a", "two", i(1), i(T), "msgpack", i(0), false),
           got.("a", nil, i(4), nil, "msgpack", i(2), false),
           got.("cam", { "bin_hex" => JPEG.unpack1("H*") }, i(0), nil, "image/jpeg", i(0), false),
           got.("a", [i(1)], i(2), nil, "msgpack", i(2), true),
+          got.("a", i(5), i(5), nil, "msgpack", i(0), true, i(9)),
           got.("w", i(0), i(mx), nil, "msgpack", i(0), false),
           got.("w", i(1), i(0), nil, "msgpack", i(0), false),
-          got.("n", m(["k", i(1)]), nil, nil, "msgpack", i(0), false),
+          got.("n", m(["k", i(1)]), nil, nil, "msgpack", i(0), false, nil),
           got.("t", { "bin_hex" => "hello".unpack1("H*") }, i(0), nil, "text/plain;charset=utf-8", i(0), false),
-          got.("a", i(5), i(3), nil, "msgpack", i(0), false),
-          sgot.("#{DRV}/@shared/feed/s", i(1), i(0), nil, i(0), false, "#{DRV}/a"),
-          sgot.("#{DRV}/@shared/feed/s", i(2), i(0), nil, i(0), false, "#{DRV}/b"),
-          sgot.("#{DRV}/@shared/feed/s", i(3), i(2), nil, i(1), false, "#{DRV}/a"),
-          sgot.("#{DRV}/@shared/feed/s", i(4), i(1), nil, i(0), false, "#{DRV}/b"),
-          sgot.("#{DRV}/@shared/feed/s", i(5), i(7), nil, i(0), false, nil),
-          sgot.("#{DRV}/@shared/feed/s", i(6), i(8), nil, i(0), false, nil),
-          sgot.("@shared/feed/g", "hi", i(5), i(1_700_000_000_123), i(0), false, "x/y")]],
-  note: "no encoding: MessagePack (\"msgpack\"); 4 after 1: 2 lost; 2 after 4: the sender started again (2 lost of " \
-        "its new run); 0 after 2^31-1: the numbers wrapped; no attachment: no number; not MessagePack without " \
-        "an encoding: left out; a time that is not an int: none; the reports end with the sender (an application's " \
-        "own key: its node/app; the subscriptions' blocks run one subscription after the other, the network's place last). Shared places: the sender from the attachment's third element, the numbers per " \
-        "sender (drv/a: 1 lost; drv/b counted on its own); no sender, or one that is not node/app: none, and the " \
-        "numbers of the key without a sender")
+          got.("s", i(1), i(3), nil, "msgpack", i(0), false, nil),
+          got.("s", i(2), i(5), nil, "msgpack", i(1), false, nil),
+          sgot.("#{DRV}/@shared/feed/s", i(1), i(0), nil, i(0), false, "#{DRV}/a", i(1)),
+          sgot.("#{DRV}/@shared/feed/s", i(2), i(0), nil, i(0), false, "#{DRV}/b", i(2)),
+          sgot.("#{DRV}/@shared/feed/s", i(3), i(2), nil, i(1), false, "#{DRV}/a", i(1)),
+          sgot.("#{DRV}/@shared/feed/s", i(4), i(1), nil, i(0), false, "#{DRV}/b", i(2)),
+          sgot.("#{DRV}/@shared/feed/s", i(5), i(7), nil, i(0), false, nil, nil),
+          sgot.("#{DRV}/@shared/feed/s", i(6), i(8), nil, i(0), false, nil, nil),
+          sgot.("#{DRV}/@shared/feed/s", i(7), i(9), nil, i(0), false, nil, nil),
+          sgot.("@shared/feed/g", "hi", i(5), i(T), i(0), false, "x/y", i(3))]],
+  note: "no encoding: MessagePack (\"msgpack\"); 4 after 1: 2 lost; 2 after 4 with the same run id: the sender " \
+        "started again (2 lost of its new run); 5 with another run id: a new run, nothing counted (not 2 lost); " \
+        "0 after 2^31-1: the numbers wrapped; no attachment: no number; not MessagePack without an encoding: left " \
+        "out; a time that is not an int: none; no run id ([seq]): read by the distance alone; the reports end with " \
+        "the sender (an application's own key: its node/app) and the run id; the subscriptions' blocks run one " \
+        "subscription after the other, the network's place last. Shared places: the sender from the attachment's " \
+        "fourth element, the numbers per sender (drv/a: 1 lost; drv/b counted on its own); no sender, one that is " \
+        "not node/app, or one of another node on a node's place: none, and the numbers of the key without a sender")
 
 samples = {
   "format" => "asterism-protocol-samples",
-  "version" => 6,
+  "version" => 7,
   "protocol" => 2,
   "describes" => "the Asterism wire protocol 2 (docs/protocol.md)",
   "names" => { "iut" => IUT, "app" => APP, "driver" => DRV },
@@ -472,7 +484,7 @@ samples = {
   "iut" => {
     "profile" => m(["name", "iut"]),
     "status" => m(["st", "wait"], ["n", i(1)]),
-    "types" => [{ "name" => "conf/stroke", "fields" => [["pts", "int[]"], ["color", "str"], ["at", 2], ["path", "vector3[]"],
+    "types" => [{ "name" => "conf/stroke", "fields" => [["pts", "int[]"], ["color", "str"], ["at", "vector3"], ["path", "vector3[]"],
                                                                 ["pose", "pose"], ["grid", "int[][]"], ["extra", "any"]],
                   "desc" => "one stroke" }],
     "topics" => [{ "name" => "imu", "type" => "vector3", "unit" => "m/s2", "desc" => "acceleration", "ts" => true },
@@ -517,21 +529,23 @@ samples = {
   },
   # The puts on the topics' keys (asterism/iut/conf/<name>), in order, and
   # no others: the payload (a value: MessagePack; payload_hex: the bytes as
-  # they are), the encoding zenoh reports, the attachment (MessagePack).
+  # they are), the encoding zenoh reports, the attachment (MessagePack:
+  # [seq, run id] or [seq, run id, ms]; the run id is one 16-bit int for
+  # all of them, the connection's, which the driver checks too).
   "data_puts" => [
     { "key" => "asterism/#{IUT}/#{APP}/imu", "encoding" => "zenoh/bytes", "payload" => [f(1.5), i(-2), f(9.8)],
-      "attachment" => [i(0), { "any" => "int" }] },
+      "attachment" => [i(0), { "any" => "u16" }, { "any" => "int" }] },
     { "key" => "asterism/#{IUT}/#{APP}/camera", "encoding" => "image/jpeg", "payload_hex" => JPEG.unpack1("H*"),
-      "attachment" => [i(0)] },
+      "attachment" => [i(0), { "any" => "u16" }] },
     { "key" => "asterism/#{IUT}/#{APP}/board1/strokes", "encoding" => "zenoh/bytes", "payload" => stroke,
-      "attachment" => [i(0)] },
+      "attachment" => [i(0), { "any" => "u16" }] },
     { "key" => "asterism/#{IUT}/#{APP}/imu", "encoding" => "zenoh/bytes", "payload" => [f(1.5), i(-2), f(9.8)],
-      "attachment" => [i(1), { "any" => "int" }] },
-    # The shared places: [seq, time or nil, "<node>/<app>"].
+      "attachment" => [i(1), { "any" => "u16" }, { "any" => "int" }] },
+    # The shared places: [seq, run id, time or nil, "<node>/<app>"].
     { "key" => "asterism/#{IUT}/@shared/score", "encoding" => "zenoh/bytes", "payload" => i(3),
-      "attachment" => [i(0), nil, "#{IUT}/#{APP}"] },
+      "attachment" => [i(0), { "any" => "u16" }, nil, "#{IUT}/#{APP}"] },
     { "key" => "asterism/@shared/lobby/hello", "encoding" => "zenoh/bytes", "payload" => "hi",
-      "attachment" => [i(0), { "any" => "int" }, "#{IUT}/#{APP}"] }
+      "attachment" => [i(0), { "any" => "u16" }, { "any" => "int" }, "#{IUT}/#{APP}"] }
   ]
 }
 

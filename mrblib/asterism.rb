@@ -346,6 +346,66 @@ module Asterism
     nil
   end
 
+  # Reserves node/app for a connection being opened: Error when a
+  # connection of this program has it, or is being opened with it.
+  # @api private
+  def self.claim(node, app)
+    path = "#{node}/#{app}"
+    claims = (@claims ||= {})
+    if connection_of(node, app) || claims[path]
+      raise Error, "#{path} is already connected in this program"
+    end
+    claims[path] = true
+  end
+
+  # @api private
+  def self.unclaim(node, app)
+    @claims.delete("#{node}/#{app}") if @claims
+  end
+
+  # A new run id (docs/protocol.md 9.3): 16 random bits. Kernel#rand where
+  # there is one (CRuby; mruby-random; PicoRuby's picoruby-rng, on the
+  # boards their hardware generator); otherwise the clock mixed with salt
+  # (a connection's object_id).
+  # @api private
+  def self.new_run_id(salt = 0)
+    begin
+      return rand(65536)
+    rescue NoMethodError
+      nil
+    end
+    (now_ms % 65536 + (salt % 65536) * 251) % 65536
+  end
+
+  # Whether a connection follows the nodes' profile puts to learn the
+  # protocol each speaks and warn about a node that speaks another
+  # (Connection#protocol_of). On by default except on a board (a
+  # subscriber more); Asterism.watch_protocols = true / false decides for
+  # the connections opened after it.
+  # @api private
+  def self.watch_protocols?
+    @watch_protocols.nil? ? !machine? : @watch_protocols
+  end
+
+  def self.watch_protocols=(on)
+    @watch_protocols = on.nil? ? nil : (on ? true : false)
+  end
+
+  # Says msg once per key (a String) on the program's warning output.
+  # @api private
+  def self.warn_text_once(key, msg)
+    told = (@told ||= {})
+    return false if told[key]
+    @told = told = {} if told.size >= 256
+    told[key] = true
+    if respond_to?(:warn, true)
+      warn(msg)
+    else
+      puts(msg)
+    end
+    true
+  end
+
   # While a call waits on one connection, the others answer their calls
   # (another connection of this program may be the one called).
   # @api private
@@ -531,7 +591,11 @@ module Asterism
   # subscriptions, the on_join / on_leave blocks. Its methods are the
   # Asterism API; close ends it (and with it everything declared on it).
   class Connection
-    attr_reader :node_id, :app
+    # node_id, app: this application's names. run_id: the run id of this
+    # connection, 16 random bits picked when it opened, sent with each value
+    # of its topics (docs/protocol.md 9.3): a reader that sees another run
+    # id knows the sender connected again.
+    attr_reader :node_id, :app, :run_id
 
     # Asterism.connect. @api private
     def initialize(locator, node:, app:, mode:, listen:, config:, connect_timeout:, check_timeout:, credentials:)
@@ -541,29 +605,57 @@ module Asterism
       end
       node = ::Asterism.check_name("node", node)
       app = ::Asterism.check_name("app", app)
-      if ::Asterism.connection_of(node, app)
-        raise ::Asterism::Error, "#{node}/#{app} is already connected in this program"
-      end
       check_ms = ::Asterism.time_ms("Asterism.connect check_timeout:", check_timeout, nil, nil,
                                     (::Asterism::CHECK_TIMEOUT * 1000).round)
       opts = { mode: mode, listen: listen }
       opts[:config] = config unless config.nil?
       opts[:connect_timeout] = connect_timeout unless connect_timeout.nil?
+      # The program's own connections first (at once), then the network's
+      # (open_checked: on CRuby without the lock, so that the program's
+      # other connections go on meanwhile).
+      ::Asterism.claim(node, app)
+      begin
+        s = open_checked(locator, opts, node, app, check_ms)
+        attach(s, node, app)
+      ensure
+        ::Asterism.unclaim(node, app)
+      end
+    end
+
+    # A session opened to locator, with no other copy of node/app on the
+    # network (protocol.md 6.3). Touches nothing of the program's.
+    # @api private
+    def open_checked(locator, opts, node, app, check_ms)
       begin
         s = ::Asterism::Zenoh::Session.open(locator, **opts)
       rescue ::Asterism::Zenoh::Error => e
         raise ::Asterism::Disconnected, e.message
       end
+      begin
+        found = already_there?(s, node, app, check_ms)
+      rescue ::Asterism::Zenoh::Error => e
+        s.close
+        raise ::Asterism::Disconnected, e.message
+      end
+      if found
+        s.close
+        raise ::Asterism::Error, "#{node}/#{app} is already on the network"
+      end
+      s
+    end
+
+    # Declares this application on s and joins the program's connections.
+    # @api private
+    def attach(s, node, app)
       root = ::Asterism::ROOT
       begin
-        if already_there?(s, node, app, check_ms)
-          s.close
-          raise ::Asterism::Error, "#{node}/#{app} is already on the network"
-        end
         @app_token = s.liveliness("#{root}/#{node}/#{app}")
         @queryable = s.queryable("#{root}/#{node}/#{app}/**", depth: 32)
         @watch = s.liveliness_watch("#{root}/**", depth: ::Asterism.watch_depth)
         @profile_queryable = s.queryable("#{root}/#{node}/#{::Asterism::Profile::KEY}", depth: 4)
+        # The nodes' profile puts, for the protocol each speaks (CRuby; not
+        # on a board unless asked for: Asterism.watch_protocols).
+        @profile_watch = ::Asterism.watch_protocols? ? s.subscribe("#{root}/*/#{::Asterism::Profile::KEY}", depth: 8) : nil
       rescue ::Asterism::Zenoh::Error => e
         s.close
         raise ::Asterism::Disconnected, e.message
@@ -588,9 +680,12 @@ module Asterism
       @status_put = nil
       @types = {}
       @topics = {}
+      @seq_of = {} # a withdrawn topic's entry => its next number (publish goes on from it)
       @subscriptions = []
       @pubs_put = nil
       @app_queryable = nil
+      @protocols = {} # node => the protocol its profile says (0: none said)
+      @run_id = ::Asterism.new_run_id(object_id)
       ::Asterism.register(self)
       tell_profile # for those who follow the profiles (the reply is the queryable's)
     end
@@ -677,6 +772,7 @@ module Asterism
       @queryable = nil
       @watch = nil
       @profile_queryable = nil
+      @profile_watch = nil
       @app_queryable = nil
       @status_put = nil
       release_data
@@ -972,6 +1068,11 @@ module Asterism
         @known = nil
         @known_set = nil
       end
+      i = 0
+      while i < left.size
+        @protocols.delete(left[i]) if @protocols
+        i += 1
+      end
       tell_each("on_join", @on_join, joined)
       tell_each("on_leave", @on_leave, left)
     end
@@ -1017,6 +1118,8 @@ module Asterism
       answer_profile
       answer_app_profile
       follow_liveliness
+      follow_profiles
+      follow_pubs
       !@session.nil?
     rescue ::Asterism::Zenoh::Error => e
       lost_if_closed(e.message)
@@ -1087,6 +1190,8 @@ module Asterism
             @apps[rest] = parts[0]
           else
             @apps.delete(rest)
+            # What the readers keep of it goes with it (protocol.md 8.5, 9.4).
+            forget_app(rest)
           end
         elsif parts.size == 3 # an object: asterism/<node>/<app>/<object>
           if alive

@@ -55,30 +55,44 @@ class TestShared < Minitest::Test
       info
     end
     k = "asterism/host/@shared/spectate/t1"
-    i = s.(k, att.(0, nil, "host/a"))
-    assert_equal [:node, "host/@shared/spectate/t1", "spectate/t1", "host/a", "host", "a", 0, nil, 0],
-                 [i.shared, i.path, i.name, i.from, i.node, i.app, i.seq, i.time, i.lost]
-    i = s.(k, att.(5, nil, "host/b"))
+    i = s.(k, att.(0, 11, nil, "host/a"))
+    assert_equal [:node, "host/@shared/spectate/t1", "spectate/t1", "host/a", "host", "a", 0, 11, nil, 0],
+                 [i.shared, i.path, i.name, i.from, i.node, i.app, i.seq, i.run_id, i.time, i.lost]
+    i = s.(k, att.(5, 12, nil, "host/b"))
     assert_equal ["host/b", 5, 0, false], [i.from, i.seq, i.lost, i.restarted?], "another sender: its first value"
-    i = s.(k, att.(3, 1_700_000_000_000, "host/a"))
+    i = s.(k, att.(3, 11, 1_700_000_000_000, "host/a"))
     assert_equal ["host/a", 3, 2, 1_700_000_000_000], [i.from, i.seq, i.lost, i.time], "per sender: 1 and 2 missed"
-    i = s.(k, att.(6, nil, "host/b"))
+    i = s.(k, att.(6, 12, nil, "host/b"))
     assert_equal ["host/b", 0, false], [i.from, i.lost, i.restarted?]
-    i = s.(k, att.(1, nil, "host/a"))
+    i = s.(k, att.(1, 11, nil, "host/a"))
     assert_equal [true, 1], [i.restarted?, i.lost], "a's numbers went back"
+    i = s.(k, att.(9, 13, nil, "host/a"))
+    assert_equal [true, 0], [i.restarted?, i.lost], "a's run id changed: a new run, nothing counted"
 
-    g = s.("asterism/@shared/lobby", att.(7, nil, "pc/chat"))
+    g = s.("asterism/@shared/lobby", att.(7, 1, nil, "pc/chat"))
     assert_equal [:global, "@shared/lobby", "lobby", "pc/chat", "pc", "chat", 7],
                  [g.shared, g.path, g.name, g.from, g.node, g.app, g.seq]
     n = s.(k, att.(9))
     assert_equal [nil, "host", nil, 9, 0], [n.from, n.node, n.app, n.seq, n.lost], "no sender: the key's node"
-    n = s.(k, att.(4, nil, "not a sender"))
+    n = s.(k, att.(4, nil, nil, "not a sender"))
     assert_equal [nil, true], [n.from, n.restarted?], "a sender that is not node/app: none (the key's own lane)"
-    n = s.("asterism/@shared/lobby", att.(8, nil, 3))
+    n = s.(k, att.(5, nil, nil, "other/a"))
+    assert_equal [nil, "host", nil, 0, false], [n.from, n.node, n.app, n.lost, n.restarted?],
+                 "a sender of another node on a node's place: none (the key's own lane, 4 then 5)"
+    n = s.("asterism/@shared/lobby", att.(8, 1, nil, 3))
     assert_equal [nil, nil, nil], [n.from, n.node, n.app]
-    own = s.("asterism/n/a/x", att.(0, nil, "o/p"))
+    n = s.(k, att.(0, 5, "host/z"))
+    assert_nil n.from, "the old three elements: the sender is not the fourth, none"
+    own = s.("asterism/n/a/x", att.(0, 1, nil, "o/p"))
     assert_equal [nil, "n/a", "n", "a"], [own.shared, own.from, own.node, own.app],
-                 "an application's own key: the sender is the key's, the third element is not read"
+                 "an application's own key: the sender is the key's, the fourth element is not read"
+
+    # The leave of host/a: its lane goes, host/b's stays.
+    assert_equal 1, sub.forget("host/a")
+    i = s.(k, att.(20, 13, nil, "host/a"))
+    assert_equal [0, false], [i.lost, i.restarted?], "after the leave: a first value"
+    i = s.(k, att.(8, 12, nil, "host/b"))
+    assert_equal [1, false], [i.lost, i.restarted?], "host/b still counted"
   end
 
   # ------------------------------------------------------------ network
@@ -179,5 +193,90 @@ class TestShared < Minitest::Test
     assert games.unpublish(a)
     assert_raises(Asterism::Disconnected) { a.put(1) }
     assert_raises(ArgumentError) { games.publish("x", shared: :app) }
+  end
+
+  # What a reader keeps of a sender goes with it: its numbers when it
+  # leaves, its declarations and types when it puts @pubs again or leaves.
+  # A sender that connects again sends another run id.
+  def test_shared_places_leave_and_kept_types
+    room = connect("host", "room01")
+    viewer = connect("viewer", "v")
+    assert poll_until { viewer.apps.include?("host/room01") }
+    room.define_type("g/table", [["s", "int"]])
+    t = room.publish("spectate/t1/state", shared: :node, type: "g/table")
+    got = []
+    sub = viewer.subscribe("*/@shared/spectate/**") { |v, info| got << info }
+    sleep 0.3
+    t.put({ "s" => 1 })
+    t.advance # one missing
+    t.put({ "s" => 2 })
+    assert poll_until { got.size >= 2 }
+    assert_equal [[0, 0], [2, 1]], got.map { [_1.seq, _1.lost] }
+    run1 = got[0].run_id
+    assert_equal room.run_id, run1
+
+    # The type is asked once, then kept for host/room01.
+    assert_equal ["g/table", { "f" => [["s", "int"]] }], viewer.type_of(got[0])
+    assert viewer.sender_cached("host/room01"), "kept"
+    assert_equal ["g/table", { "f" => [["s", "int"]] }], viewer.type_of(got[1])
+    # A new declaration (@pubs put) drops what is kept.
+    room.define_type("g/table2", [["s", "str"]])
+    t = room.publish("spectate/t1/state", shared: :node, type: "g/table2")
+    assert poll_until { viewer.sender_cached("host/room01").nil? }, "dropped on the @pubs put"
+    assert_equal ["g/table2", { "f" => [["s", "str"]] }], viewer.type_of(got[1])
+    assert viewer.sender_cached("host/room01")
+
+    # Declared again on the same connection: the numbers go on.
+    t.put({ "s" => "x" })
+    assert poll_until { got.size >= 3 }
+    assert_equal [3, 0, false], [got[2].seq, got[2].lost, got[2].restarted?]
+
+    # host/room01 leaves: its numbers and what was kept of it go.
+    room.close
+    assert poll_until { !viewer.apps.include?("host/room01") }
+    assert_equal 0, sub.sequences.size, "its lanes forgotten"
+    assert_nil viewer.sender_cached("host/room01")
+    room = connect("host", "room01")
+    t = room.publish("spectate/t1/state", shared: :node, type: "g/table")
+    sleep 0.3
+    t.advance
+    t.advance
+    t.put({ "s" => 3 })
+    assert poll_until { got.size >= 4 }
+    assert_equal [2, 0, false, room.run_id], [got[3].seq, got[3].lost, got[3].restarted?, got[3].run_id],
+                 "after the leave: a first value"
+  end
+
+  # A node whose profile says another protocol: kept, warned about once,
+  # not refused.
+  def test_shared_places_protocol_of_other_nodes
+    viewer = connect("viewer", "v")
+    other = connect("pc", "chat")
+    assert poll_until { viewer.apps.include?("pc/chat") }
+    assert_equal 2, viewer.protocol_of("pc", timeout: 1.0)
+    assert_equal Asterism::PROTOCOL, viewer.protocol_of("viewer")
+    old = Z::Session.open(@loc, mode: :client)
+    tok = old.liveliness("asterism/old/app")
+    begin
+      _out, err = capture_io do
+        old.put("asterism/old/@profile", MessagePack.pack({ "protocol" => 1, "kind" => "cruby" }))
+        assert poll_until { viewer.protocol_known("old") == 1 }
+        old.put("asterism/old/@profile", MessagePack.pack({ "protocol" => 1, "kind" => "cruby", "name" => "x" }))
+        Asterism.poll_all
+        sleep 0.2
+        Asterism.poll_all
+      end
+      assert_equal 1, err.scan("node old speaks Asterism protocol 1").size, err
+      assert_equal 1, viewer.protocol_of("old")
+      capture_io do
+        old.put("asterism/older/@profile", MessagePack.pack({ "kind" => "cruby" }))
+        assert poll_until { viewer.protocol_known("older") == 0 }, "no protocol field: 0"
+      end
+      assert viewer.apps.include?("old/app"), "not refused"
+    ensure
+      tok.close rescue nil
+      old.close
+      other.close
+    end
   end
 end

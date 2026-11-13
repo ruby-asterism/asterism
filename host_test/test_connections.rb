@@ -139,6 +139,8 @@ check(lobby.size > 0 && lobby[0] == ["hi", "viewer/v", :global], "the network's 
 ig = shared.find { |_, i| i.from == "host/game" }
 is = shared.find { |_, i| i.from == "host/spectate" }
 check(ig && viewer.type_of(ig[1]) == ["g/table", { "f" => [["seats", "int"]] }], "game's type from game")
+check(ig && viewer.type_of(ig[1]) == ["g/table", { "f" => [["seats", "int"]] }] && viewer.sender_cached("host/game"),
+      "kept for game")
 check(is && viewer.type_of(is[1]) == ["g/table", { "f" => [["seats", "str[]"], ["turn", "int"]] }],
       "spectate's type from spectate")
 pubs = viewer.publishers_of("host/@shared/spectate/t1", timeout: 1.0)
@@ -158,6 +160,10 @@ game.close
 check(!game.connected? && spec.connected?, "one goes, the other stays")
 check(Asterism.connections.size == 2, "two left")
 check(until_true { viewer.apps.size == 2 }, "the viewer sees it go")
+sub = viewer.instance_variable_get(:@subscriptions).find { |x| x.path == "*/@shared/**" }
+lanes = sub.sequences.size
+check(lanes == 1 && viewer.sender_cached("host/game").nil?,
+      "the leave forgets game's numbers and what was kept of it (#{lanes} lanes left)")
 check(viewer["host/spectate/e"].echo(7) == 7, "spectate still answers")
 check((viewer.profile_of("host", icon: false) || {})["name"] == "Host", "the node still answers its profile")
 raises(Asterism::Disconnected, "a call on the closed one") { game["host/spectate/e"].echo(1) }

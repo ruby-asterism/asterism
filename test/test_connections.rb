@@ -146,6 +146,31 @@ class TestConnections < Minitest::Test
 
   # The CRuby block API: each connection its own receiving thread, under the
   # one lock; calls between them while both run.
+  # The look for another copy on the network (up to check_timeout:) runs
+  # without Asterism::LOCK: the program's other connections go on meanwhile.
+  module SeeLock
+    def already_there?(*args)
+      TestConnections.lock_seen << ::Asterism::LOCK.mon_owned?
+      t = Thread.new { ::Asterism::LOCK.synchronize { :taken } }
+      TestConnections.lock_seen << t.join(1)&.value
+      super
+    end
+  end
+
+  def self.lock_seen = (@lock_seen ||= [])
+
+  def test_connect_looks_for_copies_without_the_lock
+    Asterism::Connection.prepend(SeeLock) unless Asterism::Connection.ancestors.include?(SeeLock)
+    TestConnections.lock_seen.clear
+    game = connect("host", "game")
+    assert_equal [false, :taken], TestConnections.lock_seen, "not held; another thread takes it meanwhile"
+    assert game.connected?
+    e = assert_raises(Asterism::Error) { connect("host", "game") }
+    assert_match(/already connected in this program/, e.message)
+  ensure
+    TestConnections.lock_seen.clear
+  end
+
   def test_receiving_threads_of_two_connections
     Asterism.connect(@loc, node: "host", app: "game", check_timeout: 0.5) do |game|
       Asterism.connect(@loc, node: "host", app: "spectate", check_timeout: 0.5) do |spec|

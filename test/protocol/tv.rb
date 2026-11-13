@@ -106,6 +106,7 @@ module TV
         ok = case expected["any"]
              when "str" then v.is_a?(String) && v.encoding != Encoding::BINARY
              when "int" then v.is_a?(Integer)
+             when "u16" then v.is_a?(Integer) && v >= 0 && v <= 65_535
              when "float" then v.is_a?(Float)
              else true
              end

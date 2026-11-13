@@ -31,7 +31,8 @@ module Asterism
 
   # Module functions that read or change the connections, under LOCK.
   module LockedModule
-    %i[connections poll_all profile_defaults register unregister connection_of pump_others].each do |m|
+    %i[connections poll_all profile_defaults register unregister connection_of pump_others claim unclaim
+       warn_text_once].each do |m|
       define_method(m) do |*args, **kw, &blk|
         ::Asterism::LOCK.synchronize { super(*args, **kw, &blk) }
       end
@@ -59,10 +60,15 @@ module Asterism
     # The portable API, entered under LOCK. Prepended, so the shared methods
     # themselves are not changed.
     module Locked
-      %i[initialize expose unexpose poll pump nodes [] call_async meta connected? reconnecting? exposed
+      # initialize is not among them: Asterism.connect looks for another
+      # copy of the application on the network (up to check_timeout:)
+      # without the lock, so that the program's other connections go on
+      # meanwhile; attach (the declarations, joining the program) holds it.
+      %i[attach expose unexpose poll pump nodes [] call_async meta connected? reconnecting? exposed
          on_join on_leave off_join off_leave on_app_join on_app_leave off_app_join off_app_leave
          profile profile_async status app_profile_async apps session publish unpublish published
-         topic_put define_type subscribe unsubscribe pubs_get].each do |m|
+         topic_put define_type subscribe unsubscribe pubs_get protocol_known protocol_seen
+         sender_cached sender_store watch_pubs].each do |m|
         define_method(m) do |*args, **kw, &blk|
           ::Asterism::LOCK.synchronize { super(*args, **kw, &blk) }
         end

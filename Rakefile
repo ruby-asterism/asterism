@@ -366,12 +366,89 @@ def reconnect_check(name, node_cmd)
   end
 end
 
+# A sender that starts again at once, its first values not seen
+# (rake test:reconnect): the readers must read a new run (another run id),
+# not values lost. One reader is the command line's object echo, which
+# does not follow the applications' tokens (it never sees the leave); the
+# other an Asterism subscription in a node of the same kind as the sender,
+# which may see the leave first (then a first value). Neither counts the
+# skipped numbers as lost.
+def restart_check(name, node_cmd)
+  require "socket"
+  require "timeout"
+  require "json"
+  lib = asterism_zenoh_lib
+  incs = ["-I", File.join(ROOT, "lib")]
+  incs += ["-I", lib] if lib
+  port = TCPServer.new("127.0.0.1", 0).then { |sv| sv.addr[1].tap { sv.close } }
+  image = ENV["ZENOHD_IMAGE"] || "eclipse/zenoh:1.10.1"
+  ctr = "asterism-restart-#{Process.pid}-#{name}"
+  sh "docker run -d --rm --name #{ctr} -p 127.0.0.1:#{port}:7447 #{image} " \
+     "--no-multicast-scouting -l tcp/0.0.0.0:7447 > /dev/null"
+  locator = "tcp/127.0.0.1:#{port}"
+  procs = []
+  begin
+    sleep 1.5
+    env = { "ASTERISM_CREDENTIALS" => nil, "ASTERISM_ROUTER" => nil }
+    echo = IO.popen(env, [RbConfig.ruby, *incs, File.join(ROOT, "exe", "asterism"), "object", "echo", "pub/rc/n",
+                          "--router", locator, "-o", "json", "--duration", "12"], err: [:child, :out])
+    procs << echo
+    reader = IO.popen([*node_cmd.call(incs), File.join(ROOT, "host_test", "reconnect_reader.rb"), locator, "12000"],
+                      err: [:child, :out])
+    procs << reader
+    abort "#{name}: reconnect_reader.rb did not start" unless Timeout.timeout(10) { reader.gets }&.start_with?("ready")
+    sleep 1.0
+    sender = ->(skip) do
+      s = IO.popen([*node_cmd.call(incs), File.join(ROOT, "host_test", "reconnect_sender.rb"), locator, skip.to_s, "3"],
+                   err: [:child, :out])
+      procs << s
+      line = Timeout.timeout(15) { s.gets }
+      abort "#{name}: reconnect_sender.rb: #{line.inspect}" unless line&.start_with?("sent")
+      Process.kill("KILL", s.pid) # a crash: no close
+      s.close
+      line.split[1].to_i
+    end
+    r1 = sender.call(0)
+    r2 = sender.call(20) # at once, its first 20 numbers not seen
+    echo_out = Timeout.timeout(30) { echo.read }
+    echo_lines = echo_out.lines.select { _1.start_with?("{") }.map { JSON.parse(_1) }
+    reader_lines = Timeout.timeout(30) { reader.read }.lines.map(&:chomp)
+    puts "#{name}: run ids #{r1} then #{r2}"
+    echo_lines.each { puts "#{name}: echo #{_1.slice('seq', 'run_id', 'lost', 'restarted').to_json}" }
+    reader_lines.each { puts "#{name}: reader #{_1}" }
+    abort "#{name}: the same run id twice (1 in 65536), run again" if r1 == r2
+    first = echo_lines.find { _1["run_id"] == r2 }
+    ok = echo_lines.count { _1["run_id"] == r1 } == 3 && first && first["seq"] == 20 && first["restarted"] == true &&
+         !first.key?("lost")
+    abort "#{name}: object echo did not read a new run: #{echo_out[0, 600]}" unless ok
+    got = reader_lines.grep(/\Agot /).map(&:split)
+    second = got.find { _1[2].to_i == r2 }
+    ok = got.count { _1[2].to_i == r1 } == 3 && second && second[1] == "20" && second[3] == "0"
+    abort "#{name}: the subscription counted lost values" unless ok
+    puts "#{name}: restart ok (object echo: restarted, nothing lost; subscription: #{second[4] == 'true' ? 'restarted' : 'a first value after the leave'})"
+  ensure
+    procs.each do |io|
+      next if io.closed?
+      begin
+        Process.kill("TERM", io.pid)
+      rescue Errno::ESRCH
+        nil
+      end
+      io.close
+    end
+    system("docker rm -f #{ctr} > /dev/null 2>&1")
+  end
+end
+
 namespace :test do
-  desc "Reconnection: a node (CRuby and mruby) keeps its objects while its router restarts (needs docker)"
+  desc "Reconnection: a node (CRuby and mruby) keeps its objects while its router restarts, and a sender " \
+       "that starts again is read as a new run (needs docker)"
   task reconnect: "mruby:build" do
     reconnect_check("cruby", ->(i) { [RbConfig.ruby, *i, "-r", "asterism"] })
     bin = File.join(MRUBY_BUILD_DIR, "host", "bin", "mruby")
     reconnect_check("mruby", ->(_) { [bin, "-r", File.join(ROOT, "host_test", "msgpack.rb")] })
+    restart_check("cruby", ->(i) { [RbConfig.ruby, *i, "-r", "asterism"] })
+    restart_check("mruby", ->(_) { [bin, "-r", File.join(ROOT, "host_test", "msgpack.rb")] })
   end
 end
 

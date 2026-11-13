@@ -8,8 +8,9 @@
 #
 # Each value is read with what came along (9.2, 9.3): its encoding (none:
 # MessagePack; else the bytes as they are, image/jpeg) and the attachment
-# [seq] or [seq, sender's ms], from which Values::Seq counts the values
-# lost between two of a key. This reads the Zenoh samples itself rather
+# [seq, run id] or [seq, run id, sender's ms], from which Values::Seq counts
+# the values lost between two of a key (Asterism::Sequences: a new run id
+# is a sender that connected again). This reads the Zenoh samples itself rather
 # than through Connection#subscribe: it shows what is on the wire, the
 # payload's size and a value that is not MessagePack too (as text or its
 # size), where Connection#subscribe leaves those out.
@@ -17,7 +18,7 @@
 # The shared places (docs/protocol.md 17: asterism/<node>/@shared/<name>
 # and asterism/@shared/<name>) are read too: a key there has no owner
 # application, several applications may put on it, and each value names
-# its sender ("<node>/<app>", the attachment's third element). A shared
+# its sender ("<node>/<app>", the attachment's fourth element). A shared
 # value is shown with its sender ("from"), its numbers are counted per
 # key and sender, and Store keeps the latest value of each sender. As in
 # Zenoh, * and ** never match a part that starts with @: a pattern names
@@ -91,17 +92,23 @@ module Asterism
       end
 
       # The sender "<node>/<app>" of a value on key, from its attachment
-      # (the third element, docs/protocol.md 17.3); nil when key is not a
+      # (the fourth element, docs/protocol.md 17.3); nil when key is not a
       # shared one (an application's own keys do not read it), or there is
-      # no such sender.
+      # no such sender (on a node's place, one of another node is none).
       def sender(key, att)
-        return nil if att.nil? || att.empty? || !shared?(key)
-        a = begin
-          ::MessagePack.unpack(att.to_s.b)
-        rescue StandardError
-          nil
-        end
-        a.is_a?(Array) ? ::Asterism::Subscription.sender(a[2]) : nil
+        got = read(key, att)
+        got ? got[3] : nil
+      end
+
+      # [seq, run id, ms, sender] of an attachment on key
+      # (Asterism.read_attachment), or nil when it has no sequence number.
+      def read(key, att)
+        return nil if att.nil? || att.empty?
+        parts = key.delete_prefix(PREFIX).split("/", 3)
+        place = if parts[0] == SHARED then :global
+                elsif parts[1] == SHARED then :node
+                end
+        ::Asterism.read_attachment(att.to_s.b, place, place == :node ? parts[0] : nil)
       end
 
       # Where a value's numbers are counted and its latest value kept: the
@@ -166,19 +173,6 @@ module Asterism
         [text, name]
       end
 
-      # [seq, sender's ms] of an attachment (9.3), nil for each part that
-      # is not there (no attachment, or not of that shape).
-      def attachment(att)
-        return [nil, nil] if att.nil? || att.empty?
-        a = begin
-          ::MessagePack.unpack(att.to_s.b)
-        rescue StandardError
-          nil
-        end
-        return [nil, nil] unless a.is_a?(Array) && a[0].is_a?(Integer) && a[0] >= 0 && a[0] <= ::Asterism::Topic::SEQ_MAX
-        [a[0], a[1].is_a?(Integer) ? a[1] : nil]
-      end
-
       def json_safe(v)
         case v
         when Hash then v.to_h { |k, x| [k.is_a?(String) ? k : k.to_s, json_safe(x)] }
@@ -197,8 +191,8 @@ module Asterism
 
       # One put as the command line and the MCP tool show it: {"key"
       # (without asterism/), "t", "bytes", "format", "value"} and, from the
-      # attachment, "from" (a shared value's sender), "seq", "sent" (the
-      # sender's time) and, when seq (a Values::Seq) is given, "lost" (when
+      # attachment, "from" (a shared value's sender), "seq", "run_id",
+      # "sent" (the sender's time) and, when seq (a Values::Seq) is given, "lost" (when
       # some were) and "restarted" (the sender started its numbers again),
       # counted per sender on a shared key.
       def entry(key, payload, t = Time.now, encoding: nil, attachment: nil, seq: nil)
@@ -208,18 +202,20 @@ module Asterism
         e.merge!(numbers(e["key"], attachment, seq))
       end
 
-      # {"from", "seq", "sent", "lost", "restarted"} of an attachment, each
-      # when there is one.
+      # {"from", "seq", "run_id", "sent", "lost", "restarted"} of an
+      # attachment, each when there is one.
       def numbers(key, attachment, seq = nil)
-        n, ms = Values.attachment(attachment)
+        got = Values.read(key, attachment)
         out = {}
-        return out if n.nil?
-        from = Values.sender(key, attachment)
+        return out if got.nil?
+        n, run, ms, from = got
         out["from"] = from if from
         out["seq"] = n
+        out["run_id"] = run if run
         out["sent"] = time(Time.at(ms / 1000, ms % 1000, :millisecond)) if ms
         if seq
-          lost, restarted = seq.see(Values.lane(key, from), n)
+          app = from || (shared?(key) ? nil : key.split("/", 3)[0, 2].join("/"))
+          lost, restarted = seq.see(Values.lane(key, from), run, n, app)
           out["lost"] = lost if lost.positive?
           out["restarted"] = true if restarted
         end
@@ -228,27 +224,24 @@ module Asterism
 
       # The sequence numbers seen, key by key (a shared key's sender by
       # sender, Values.lane): how many values were lost before each
-      # (docs/protocol.md 9.4, as Asterism::Subscription reads them).
-      # Thread safe.
+      # (docs/protocol.md 9.4: Asterism::Sequences, as a subscription reads
+      # them). Thread safe.
       class Seq
-        def initialize
-          @last = {}
+        def initialize(max = nil)
+          @seqs = ::Asterism::Sequences.new(max)
           @lock = Mutex.new
         end
 
-        # [lost, restarted] of number n on key: lost 0 for the first one;
-        # a step back (or one of half the range or more) is a sender that
-        # started again (lost: n, the values before it in its new run).
-        def see(key, n)
-          @lock.synchronize do
-            prev = @last[key]
-            @last[key] = n
-            return [0, false] if prev.nil?
-            d = n - prev
-            d += ::Asterism::Topic::SEQ_MAX + 1 if d.negative?
-            return [d - 1, false] if d.positive? && d < ::Asterism::Subscription::HALF
-            [n, true]
-          end
+        # [lost, restarted] of number n of run id run (nil: none) on lane,
+        # from app ("<node>/<app>" or nil).
+        def see(lane, run, n, app = nil)
+          @lock.synchronize { @seqs.see(lane, run, n, app) }
+        end
+
+        # The application app left: its numbers are forgotten (its next
+        # value is a first one).
+        def forget(app)
+          @lock.synchronize { @seqs.forget(app) }
         end
       end
 
@@ -309,7 +302,7 @@ module Asterism
                 end
           rec.merge!("key" => key, "bytes" => size, "t" => @now.call, "mono" => @clock.call, "left" => false)
           num = Values.numbers(key, attachment, @seq)
-          %w[from seq sent].each { |k| rec[k] = num[k] if num[k] }
+          %w[from seq run_id sent].each { |k| rec[k] = num[k] if num[k] }
           lane = Values.lane(key, num["from"])
           @lock.synchronize do
             lost = (@lost[lane] || 0) + num["lost"].to_i
@@ -334,6 +327,7 @@ module Asterism
         # sent to a shared place.
         def left(app)
           prefix = "#{app}/"
+          @seq.forget(app)
           @lock.synchronize do
             @keys.each_value { |r| r["left"] = true if Store.app_of(r) == app || (r["from"].nil? && r["key"].start_with?(prefix)) }
           end
@@ -372,9 +366,10 @@ module Asterism
         end
 
         # What asterism_values answers: {"since", "values" => [{"key", "t",
-        # "age_s", "app", "bytes", "format", "value"(, "from", "seq", "sent",
-        # "lost", "truncated")}]} (from the sender of a shared key's value,
-        # one entry for each sender; seq and sent from the attachment of
+        # "age_s", "app", "bytes", "format", "value"(, "from", "seq",
+        # "run_id", "sent", "lost", "truncated")}]} (from the sender of a
+        # shared key's value, one entry for each sender; seq, run_id and
+        # sent from the attachment of
         # the latest value, lost the values missed on the key, or of that
         # sender, since the start; app of the sender, left out for a shared
         # value that named none), with
@@ -405,7 +400,7 @@ module Asterism
             end
             h["bytes"] = r["bytes"]
             h["format"] = r["format"]
-            %w[from seq sent lost].each { |k| h[k] = r[k] if r.key?(k) }
+            %w[from seq run_id sent lost].each { |k| h[k] = r[k] if r.key?(k) }
             if r["raw"] && pics.size < images
               h["image"] = pics.size
               pics << [r["format"], r["raw"]]

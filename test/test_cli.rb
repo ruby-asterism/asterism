@@ -269,25 +269,29 @@ class TestCLI < Minitest::Test
     assert_equal ["x,y\n1,2", "text/csv"], V.decode("x,y\n1,2", "text/csv;charset=utf-8"), "the schema left out"
     assert_equal ["(2 bytes)", "text/plain"], V.decode("\xff\xfe".b, "text/plain"), "not UTF-8"
     assert_equal ["(3 bytes)", "application/cdr"], V.decode("abc", "application/cdr")
-    assert_equal [7, nil], V.attachment(MessagePack.pack([7]))
-    assert_equal [7, 1_700_000_000_123], V.attachment(MessagePack.pack([7, 1_700_000_000_123]))
-    assert_equal [nil, nil], V.attachment(nil)
-    assert_equal [nil, nil], V.attachment(MessagePack.pack(["x"]))
-    assert_equal [nil, nil], V.attachment("\xc1".b)
-    assert_equal [5, nil], V.attachment(MessagePack.pack([5, "not ms"]))
+    assert_equal [7, nil, nil, nil], V.read("a/b/c", MessagePack.pack([7]))
+    assert_equal [7, 3, 1_700_000_000_123, nil], V.read("a/b/c", MessagePack.pack([7, 3, 1_700_000_000_123]))
+    assert_nil V.read("a/b/c", nil)
+    assert_nil V.read("a/b/c", MessagePack.pack(["x"]))
+    assert_nil V.read("a/b/c", "\xc1".b)
+    assert_equal [5, 3, nil, nil], V.read("a/b/c", MessagePack.pack([5, 3, "not ms"]))
     e = V.entry("asterism/a/b/cam", jpeg, Time.at(0), encoding: "image/jpeg",
-                attachment: MessagePack.pack([3, 1_700_000_000_123]))
+                attachment: MessagePack.pack([3, 41, 1_700_000_000_123]))
     assert_equal({ "key" => "a/b/cam", "t" => "1970-01-01T00:00:00.000Z", "bytes" => 6, "format" => "image/jpeg",
-                   "value" => "(6 bytes)", "seq" => 3, "sent" => "2023-11-14T22:13:20.123Z" }, e)
+                   "value" => "(6 bytes)", "seq" => 3, "run_id" => 41, "sent" => "2023-11-14T22:13:20.123Z" }, e)
 
     sq = V::Seq.new
-    assert_equal [0, false], sq.see("k", 5), "the first: nothing lost"
-    assert_equal [0, false], sq.see("k", 6)
-    assert_equal [2, false], sq.see("k", 9)
-    assert_equal [0, false], sq.see("other", 100), "each key its own"
-    assert_equal [1, true], sq.see("k", 1), "back: started again"
-    sq.see("w", Asterism::Topic::SEQ_MAX)
-    assert_equal [0, false], sq.see("w", 0), "the wrap is a step"
+    assert_equal [0, false], sq.see("k", 1, 5), "the first: nothing lost"
+    assert_equal [0, false], sq.see("k", 1, 6)
+    assert_equal [2, false], sq.see("k", 1, 9)
+    assert_equal [0, false], sq.see("other", 1, 100), "each key its own"
+    assert_equal [1, true], sq.see("k", 1, 1), "back: started again"
+    assert_equal [0, true], sq.see("k", 2, 30), "another run id: a new run, nothing counted"
+    sq.see("w", 1, Asterism::Topic::SEQ_MAX)
+    assert_equal [0, false], sq.see("w", 1, 0), "the wrap is a step"
+    sq.see("x", 1, 3, "a/b")
+    assert_equal 1, sq.forget("a/b")
+    assert_equal [0, false], sq.see("x", 1, 9, "a/b"), "forgotten: a first value"
     pk = ->(n) { MessagePack.pack([n]) }
     e = V.entry("a/b/c", MessagePack.pack(1), Time.at(0), attachment: pk.(10), seq: sq)
     refute e.key?("lost")
@@ -299,7 +303,7 @@ class TestCLI < Minitest::Test
     st = V::Store.new(now: -> { Time.at(0) })
     st.put("g/g/cam", jpeg, encoding: "image/jpeg", attachment: pk.(1))
     st.put("g/g/cam", jpeg, encoding: "image/jpeg", attachment: pk.(4))
-    st.put("g/g/imu", MessagePack.pack([1, 2, 3]), attachment: MessagePack.pack([0, 1000]))
+    st.put("g/g/imu", MessagePack.pack([1, 2, 3]), attachment: MessagePack.pack([0, 5, 1000]))
     a = st.answer("g/g/*")
     cam, imu = a["values"]
     assert_equal ["image/jpeg", "(6 bytes)", 4, 2], cam.values_at("format", "value", "seq", "lost")
@@ -360,15 +364,16 @@ class TestCLI < Minitest::Test
     assert V.shared?("@shared/x")
     refute V.shared?("h/g/x")
 
-    att = ->(n, from) { MessagePack.pack([n, nil, from]) }
+    att = ->(n, from) { MessagePack.pack([n, 1, nil, from]) }
     assert_equal "h/room01", V.sender("h/@shared/s/t", att.(0, "h/room01"))
     assert_nil V.sender("h/g/t", att.(0, "h/room01")), "an application's own key: not read"
     assert_nil V.sender("h/@shared/s/t", att.(0, "bad")), "not node/app"
     assert_nil V.sender("h/@shared/s/t", MessagePack.pack([0]))
-    assert_equal [4, nil], V.attachment(att.(4, "h/g"))
+    assert_nil V.sender("h/@shared/s/t", att.(0, "x/room01")), "a node's place: a sender of another node is none"
+    assert_equal [4, 1, nil, "h/g"], V.read("h/@shared/s/t", att.(4, "h/g"))
     e = V.entry("asterism/h/@shared/s/t", MessagePack.pack(1), Time.at(0), attachment: att.(2, "h/g"))
     assert_equal({ "key" => "h/@shared/s/t", "t" => "1970-01-01T00:00:00.000Z", "bytes" => 1, "format" => "msgpack",
-                   "value" => 1, "from" => "h/g", "seq" => 2 }, e)
+                   "value" => 1, "from" => "h/g", "seq" => 2, "run_id" => 1 }, e)
     sq = V::Seq.new
     V.entry("h/@shared/s/t", MessagePack.pack(1), Time.at(0), attachment: att.(0, "h/g"), seq: sq)
     V.entry("h/@shared/s/t", MessagePack.pack(1), Time.at(0), attachment: att.(7, "h/room01"), seq: sq)

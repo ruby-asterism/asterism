@@ -134,9 +134,12 @@ check(net.status_of("mnode", "nothing", timeout: 1.0).nil?, "no status: nil")
 
 # --- topics (topic.rb), on mruby and from node.rb
 check(Asterism::Types.number(:vector3) == 2, "a built-in type's number")
-check(Asterism::Types.definition!([["pts", "int[]"], ["at", :vector3], ["n", 1], ["path", "pose[]"]], "d") ==
-      { "f" => [["pts", "int[]"], ["at", "vector3"], ["n", 1], ["path", "pose[]"]], "d" => "d" },
-      "a definition (built-in types by number or name, arrays of them by name)")
+check(Asterism::Types.definition!([["pts", "int[]"], ["at", :vector3], ["n", "number"], ["path", "pose[]"]], "d") ==
+      { "f" => [["pts", "int[]"], ["at", "vector3"], ["n", "number"], ["path", "pose[]"]], "d" => "d" },
+      "a definition (built-in types by name, arrays of them)")
+raises(ArgumentError, "a field type by number") { Asterism::Types.definition!([["n", 1]], nil) }
+check(Asterism::Types.check({ "a" => { "f" => [["n", 1]] }, "b" => { "f" => [["n", "number"]] } }).keys == ["b"],
+      "a received field type that is a number: the definition left out")
 raises(ArgumentError, "a field type of [] alone") { Asterism::Types.definition!([["a", "[]"]], nil) }
 raises(ArgumentError, "a field type of [][] alone") { Asterism::Types.definition!([["a", "[][]"]], nil) }
 check(Asterism::Types.definition!([["g", "int[][]"], ["x", "any"], ["m", "any[]"]], nil) ==
@@ -149,10 +152,10 @@ raises(ArgumentError, "encoding zenoh/bytes") { net.publish("a", encoding: "zeno
 # Sequence numbers as a subscription reads them (a stand-in for a sample).
 class FakeSample
   attr_reader :key, :payload, :attachment, :kind, :encoding, :timestamp
-  def initialize(key, seq)
+  def initialize(key, seq, run = 7)
     @key = key
     @payload = MessagePack.pack(seq)
-    @attachment = MessagePack.pack([seq])
+    @attachment = MessagePack.pack([seq, run])
     @kind = :put
     @encoding = "zenoh/bytes"
     @timestamp = nil
@@ -164,6 +167,18 @@ check(lost == [[0, false], [0, false], [2, false], [2, true]], "lost and restart
 fs.unwrap(FakeSample.new("asterism/n/a/w", Asterism::Topic::SEQ_MAX))
 w = fs.unwrap(FakeSample.new("asterism/n/a/w", 0))[1]
 check(w.lost == 0 && !w.restarted?, "the wrap")
+r = fs.unwrap(FakeSample.new("asterism/n/a/x", 30, 8))[1]
+check(r.lost == 0 && r.restarted? && r.run_id == 8, "another run id: a new run, nothing counted")
+check(fs.forget("n/a") == 2, "the leave forgets the application's lanes")
+r = fs.unwrap(FakeSample.new("asterism/n/a/x", 40, 8))[1]
+check(r.lost == 0 && !r.restarted?, "after the leave: a first value")
+sq = Asterism::Sequences.new(2)
+sq.see("a", 1, 0)
+sq.see("b", 1, 0)
+sq.see("c", 1, 0)
+check(sq.size == 2 && sq.see("a", 1, 5) == [0, false], "at most max lanes, the oldest forgotten")
+rid = Asterism.new_run_id(1)
+check(rid.is_a?(Integer) && rid >= 0 && rid <= 65535, "a run id of 16 bits: #{rid}")
 # The shared places (topic.rb, docs/protocol.md 17) without the network.
 check(Asterism::Pubs.place("n/@shared/a/b") == [:node, "n", "a/b"] &&
         Asterism::Pubs.place("@shared/x") == [:global, nil, "x"] && Asterism::Pubs.place("imu") == [nil, nil, "imu"],
@@ -185,7 +200,8 @@ class SharedSample
 end
 ss = Asterism::Subscription.new(nil, "x", nil, nil)
 k = "asterism/h/@shared/sp/t1"
-rows = [[0, nil, "h/a"], [4, nil, "h/b"], [3, 1_700_000_000_000, "h/a"], [5, nil, "h/b"], [9]].map do |att|
+rows = [[0, 1, nil, "h/a"], [4, 2, nil, "h/b"], [3, 1, 1_700_000_000_000, "h/a"], [5, 2, nil, "h/b"], [9],
+        [10, nil, nil, "x/a"]].map do |att|
   i = ss.unwrap(SharedSample.new(k, att))[1]
   [i.from, i.node, i.app, i.lost, i.time, i.shared, i.path, i.name]
 end
@@ -193,15 +209,17 @@ check(rows == [["h/a", "h", "a", 0, nil, :node, "h/@shared/sp/t1", "sp/t1"],
                ["h/b", "h", "b", 0, nil, :node, "h/@shared/sp/t1", "sp/t1"],
                ["h/a", "h", "a", 2, 1_700_000_000_000, :node, "h/@shared/sp/t1", "sp/t1"],
                ["h/b", "h", "b", 0, nil, :node, "h/@shared/sp/t1", "sp/t1"],
+               [nil, "h", nil, 0, nil, :node, "h/@shared/sp/t1", "sp/t1"],
                [nil, "h", nil, 0, nil, :node, "h/@shared/sp/t1", "sp/t1"]], "shared values per sender: #{rows.inspect}")
-g = ss.unwrap(SharedSample.new("asterism/@shared/lobby", [0, nil, "pc/chat"]))[1]
+g = ss.unwrap(SharedSample.new("asterism/@shared/lobby", [0, 3, nil, "pc/chat"]))[1]
 check([g.shared, g.from, g.node, g.app, g.path] == [:global, "pc/chat", "pc", "chat", "@shared/lobby"],
       "the network's place: #{g.inspect}")
 sh = net.publish("sp/t1", shared: :node, type: :state)
 gl = net.publish("lobby", shared: :global)
 check(sh.key == "asterism/mtest/@shared/sp/t1" && gl.key == "asterism/@shared/lobby" &&
         net.published.include?("mtest/@shared/sp/t1") && net.published.include?("@shared/lobby"), "shared topics")
-check(MessagePack.unpack(sh.attachment) == [0, nil, "mtest/t"], "a shared attachment: [seq, nil, sender]")
+check(MessagePack.unpack(sh.attachment) == [0, net.run_id, nil, "mtest/t"],
+      "a shared attachment: [seq, run id, nil, sender]")
 check(net.pubs_of("mtest", "t")["mtest/@shared/sp/t1"] == { "t" => 5 }, "own pubs_of with the shared entry")
 check(net.unpublish("sp/t1", shared: :node) && net.unpublish(gl) && !net.published.include?("@shared/lobby"),
       "shared topics withdrawn")

@@ -444,6 +444,62 @@ module Asterism
       ::Asterism::Future.new(self, path, "profile", g, ::Asterism.now_ms + ms, ms)
     end
 
+    # The protocol node speaks (docs/protocol.md 7.3): the "protocol" of its
+    # profile, 0 when its profile has none; nil when it does not answer in
+    # time. Kept from the profile puts the connection follows
+    # (Asterism.watch_protocols, on by default except on a board) or from
+    # the last answer, until the node leaves; otherwise asks its profile
+    # once (without the icon; waits like profile_of). A node that speaks
+    # another protocol than this one (Asterism::PROTOCOL) is not refused:
+    # its calls may work while its data does not; a warning says so once.
+    def protocol_of(node, timeout: nil, timeout_ms: nil)
+      node = ::Asterism.check_name("node", node)
+      return ::Asterism::PROTOCOL if node == @node_id
+      got = protocol_known(node)
+      return got unless got.nil?
+      h = profile_of(node, icon: false, timeout: timeout, timeout_ms: timeout_ms)
+      return nil if h.nil?
+      protocol_seen(node, h)
+    end
+
+    # @api private
+    def protocol_known(node)
+      @protocols ? @protocols[node] : nil
+    end
+
+    # Keeps the protocol of a node's (cleaned) profile, warns once when it
+    # is not this one's, and returns it.
+    # @api private
+    def protocol_seen(node, h)
+      pr = h["protocol"]
+      pr = 0 unless pr.is_a?(Integer)
+      @protocols[node] = pr if @protocols && node != @node_id
+      if pr != ::Asterism::PROTOCOL
+        ::Asterism.warn_text_once("protocol #{node} #{pr}",
+                                  "asterism: node #{node} speaks Asterism protocol #{pr}, this program " \
+                                  "#{::Asterism::PROTOCOL}: its calls may work, its statuses, topics and data " \
+                                  "will not (docs/protocol.md 7.3)")
+      end
+      pr
+    end
+
+    # The nodes' profile puts (asterism/*/@profile): their protocols.
+    # @api private
+    def follow_profiles
+      w = @profile_watch
+      return unless w && w.pending > 0
+      samples = w.each_sample
+      i = 0
+      while i < samples.size
+        sm = samples[i]
+        i += 1
+        parts = sm.key.to_s.split("/")
+        next unless parts.size == 3 && parts[2] == ::Asterism::Profile::KEY && parts[1] != @node_id
+        h = ::Asterism::Profile.check(::Asterism::Codec.unpack(sm.payload))
+        protocol_seen(parts[1], h) if h
+      end
+    end
+
     # Puts the node's profile without its icon on its key (while connected).
     # @api private
     def tell_profile

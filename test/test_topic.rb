@@ -1,8 +1,9 @@
 # Topics (docs/protocol.md 9-11): the checks and the reading of sequence
 # numbers (no network), and between two CRuby processes: Connection#publish
 # and Topic#put (MessagePack without an encoding, the bytes of an image with
-# image/jpeg, the attachment [seq] or [seq, time]), Connection#subscribe
-# (|v, info| and |v|, lost values, wrapping, a restart, close), the puts on
+# image/jpeg, the attachment [seq, run id] or [seq, run id, time]),
+# Connection#subscribe (|v, info| and |v|, lost values, wrapping, a
+# restart, a new run id, close), the puts on
 # @pubs, the application's profile (?status, ?pubs, ?types), pubs_of and
 # types_of, and the CRuby API (net.subscribe on the receiving thread).
 require_relative "helper"
@@ -30,11 +31,15 @@ class TestTopic < Minitest::Test
     assert_raises(ArgumentError) { Asterism::Types.topic_type!(8) }
     assert_raises(ArgumentError) { Asterism::Types.topic_type!("") }
     assert_raises(ArgumentError) { Asterism::Types.topic_type!(1.5) }
-    d = Asterism::Types.definition!([["pts", "int[]"], [:pos, :vector3], ["kids", "mygame/node[]"], ["n", 1],
+    d = Asterism::Types.definition!([["pts", "int[]"], [:pos, :vector3], ["kids", "mygame/node[]"], ["n", "number"],
                                      ["path", "vector3[]"], ["at", "pose"]], "a board")
-    assert_equal({ "f" => [["pts", "int[]"], ["pos", "vector3"], ["kids", "mygame/node[]"], ["n", 1],
+    assert_equal({ "f" => [["pts", "int[]"], ["pos", "vector3"], ["kids", "mygame/node[]"], ["n", "number"],
                            ["path", "vector3[]"], ["at", "pose"]], "d" => "a board" }, d,
-                 "built-in types by number or by name, as written; arrays of them by name")
+                 "built-in types by name (a Symbol as its name); arrays of them")
+    e = assert_raises(ArgumentError, "a number is not a field's type") do
+      Asterism::Types.definition!([["n", 1]], nil)
+    end
+    assert_includes e.message, '"number"'
     assert_equal({ "f" => [] }, Asterism::Types.definition!([], nil))
     assert_raises(ArgumentError) { Asterism::Types.definition!([["a"]], nil) }
     assert_raises(ArgumentError) { Asterism::Types.definition!([["a", "[]"]], nil) }
@@ -47,10 +52,12 @@ class TestTopic < Minitest::Test
     assert_raises(ArgumentError) { Asterism::Types.definition!([["a", 9]], nil) }
     assert_raises(ArgumentError) { Asterism::Types.definition!({ "a" => "int" }, nil) }
     assert_raises(ArgumentError) { Asterism::Types.definition!([], 5) }
-    got = Asterism::Types.check({ "ok" => { "f" => [["a", 1], ["b", "str"]], "d" => "x", "z" => 1 },
+    got = Asterism::Types.check({ "ok" => { "f" => [["a", "number"], ["b", "str"]], "d" => "x", "z" => 1 },
                                   "bad f" => { "f" => [["a"]] }, "no f" => {}, 5 => { "f" => [] },
+                                  "num" => { "f" => [["a", 1]] }, "empty" => { "f" => [["a", ""]] },
                                   "bad d" => { "f" => [], "d" => 5 } })
-    assert_equal({ "ok" => { "f" => [["a", 1], ["b", "str"]], "d" => "x" }, "bad d" => { "f" => [] } }, got)
+    assert_equal({ "ok" => { "f" => [["a", "number"], ["b", "str"]], "d" => "x" }, "bad d" => { "f" => [] } }, got,
+                 "a field's type is a non-empty str: a number leaves the definition out")
     assert_nil Asterism::Types.check([1])
   end
 
@@ -95,39 +102,67 @@ class TestTopic < Minitest::Test
   def test_reading_sequence_numbers
     sub = Asterism::Subscription.new(nil, "n/a/x", nil, nil)
     att = ->(*a) { MessagePack.pack(a) }
-    s = ->(seq, key: "asterism/n/a/x", time: nil) do
-      a = time ? att.(seq, time) : att.(seq)
+    s = ->(seq, key: "asterism/n/a/x", run: 7, time: nil) do
+      a = time ? att.(seq, run, time) : att.(seq, run)
       v, info = sub.unwrap(FakeSample.new(key, MessagePack.pack(seq), a, :put, "zenoh/bytes", nil))
       [v, info.seq, info.lost, info.restarted?]
     end
     assert_equal [5, 5, 0, false], s.(5), "the first: nothing lost (it may not start at 0)"
     assert_equal [6, 6, 0, false], s.(6)
     assert_equal [9, 9, 2, false], s.(9), "7 and 8 missed"
-    assert_equal [2, 2, 2, true], s.(2), "back to 2: a restart, 0 and 1 of the new run missed"
+    assert_equal [2, 2, 2, true], s.(2), "back to 2, the same run id: a restart, 0 and 1 of the new run missed"
+    assert_equal [20, 20, 0, true], s.(20, run: 8), "another run id: a new run, nothing counted (not 17 lost)"
+    assert_equal [21, 21, 0, false], s.(21, run: 8)
+    assert_equal [0, 0, 0, true], s.(0, run: 7), "the old run id again is another run id too"
     assert_equal [0, 0, 0, false], s.(0, key: "asterism/n/a/y"), "per key"
     max = Asterism::Topic::SEQ_MAX
     assert_equal [max - 1, max - 1, 0, false], s.(max - 1, key: "asterism/n/a/w")
     assert_equal [1, 1, 2, false], s.(1, key: "asterism/n/a/w"), "wrapped: max and 0 missed"
     sub2 = Asterism::Subscription.new(nil, "n/a/x", nil, nil)
-    sub2.unwrap(FakeSample.new("asterism/n/a/x", MessagePack.pack(1), att.(max), :put, "zenoh/bytes", nil))
-    _, info = sub2.unwrap(FakeSample.new("asterism/n/a/x", MessagePack.pack(1), att.(0), :put, "zenoh/bytes", nil))
+    sub2.unwrap(FakeSample.new("asterism/n/a/x", MessagePack.pack(1), att.(max, 1), :put, "zenoh/bytes", nil))
+    _, info = sub2.unwrap(FakeSample.new("asterism/n/a/x", MessagePack.pack(1), att.(0, 1), :put, "zenoh/bytes", nil))
     assert_equal [0, false], [info.lost, info.restarted?], "max then 0: the wrap, nothing lost"
-    _, info = sub2.unwrap(FakeSample.new("asterism/n/a/x", MessagePack.pack(1), att.(0), :put, "zenoh/bytes", nil))
+    _, info = sub2.unwrap(FakeSample.new("asterism/n/a/x", MessagePack.pack(1), att.(0, 1), :put, "zenoh/bytes", nil))
     assert_equal [0, true], [info.lost, info.restarted?], "the same number again: a restart"
+    # Without a run id ([seq]): read by the distance alone.
+    sub3 = Asterism::Subscription.new(nil, "n/a/x", nil, nil)
+    sub3.unwrap(FakeSample.new("asterism/n/a/x", MessagePack.pack(1), att.(3), :put, "zenoh/bytes", nil))
+    _, info = sub3.unwrap(FakeSample.new("asterism/n/a/x", MessagePack.pack(1), att.(6, "x"), :put, "zenoh/bytes", nil))
+    assert_equal [6, nil, 2, false], [info.seq, info.run_id, info.lost, info.restarted?], "no run id: none, by distance"
+
+    # The application leaves: its numbers are forgotten; the next is a first one.
+    assert_equal 1, sub3.forget("n/a")
+    assert_equal 0, sub3.forget("n/a")
+    _, info = sub3.unwrap(FakeSample.new("asterism/n/a/x", MessagePack.pack(1), att.(1), :put, "zenoh/bytes", nil))
+    assert_equal [0, false], [info.lost, info.restarted?], "after the leave: a first value"
 
     # The rest of the info, and what is not a value.
-    v, info = sub.unwrap(FakeSample.new("asterism/n/a/b/c", "\xff\xd8".b, att.(3, 1_700_000_000_123), :put,
+    v, info = sub.unwrap(FakeSample.new("asterism/n/a/b/c", "\xff\xd8".b, att.(3, 9, 1_700_000_000_123), :put,
                                         "image/jpeg", nil))
     assert_equal "\xff\xd8".b, v
-    assert_equal ["n", "a", "b/c", "n/a/b/c", 3, 1_700_000_000_123, "image/jpeg"],
-                 [info.node, info.app, info.name, info.path, info.seq, info.time, info.encoding]
+    assert_equal ["n", "a", "b/c", "n/a/b/c", 3, 9, 1_700_000_000_123, "image/jpeg"],
+                 [info.node, info.app, info.name, info.path, info.seq, info.run_id, info.time, info.encoding]
     v, info = sub.unwrap(FakeSample.new("asterism/n/a/z", MessagePack.pack(nil), nil, :put, "zenoh/bytes", nil))
-    assert_equal [nil, nil, nil, 0, "msgpack"], [v, info.seq, info.time, info.lost, info.encoding]
+    assert_equal [nil, nil, nil, nil, 0, "msgpack"], [v, info.seq, info.run_id, info.time, info.lost, info.encoding]
     assert_nil sub.unwrap(FakeSample.new("asterism/n/a/z", "\xc1".b, nil, :put, "zenoh/bytes", nil))
     assert_nil sub.unwrap(FakeSample.new("asterism/n/a/z", "", nil, :delete, "zenoh/bytes", nil))
     assert_equal 1, sub.malformed
     _, info = sub.unwrap(FakeSample.new("asterism/n/a/z", MessagePack.pack(1), att.("x"), :put, nil, nil))
     assert_nil info.seq, "an attachment that is not [seq, ...]"
+  end
+
+  # The memory of the numbers: bounded, the lane seen longest ago goes first.
+  def test_sequences_bounded
+    sq = Asterism::Sequences.new(3)
+    sq.see("a", 1, 0, "n/a")
+    sq.see("b", 1, 0, "n/a")
+    sq.see("c", 1, 0, "n/b")
+    sq.see("a", 1, 1, "n/a") # a seen again: b is now the oldest
+    sq.see("d", 1, 0, "n/b")
+    assert_equal 3, sq.size
+    assert_equal [0, false], sq.see("b", 1, 5, "n/a"), "b was forgotten: a first value"
+    assert_equal [0, false], sq.see("a", 1, 2, "n/a"), "a kept"
+    assert_equal 2, sq.forget("n/a")
   end
 
   def test_publish_needs_a_connection
@@ -143,7 +178,7 @@ class TestTopic < Minitest::Test
   # The other process: node "child", app "t" with three topics and a type. Lines on stdin: "imu", "cam", "strokes"
   # put one value; "skip N" makes the imu topic skip N numbers; "wrap"
   # puts it near the end of the numbers; "drop" withdraws the camera;
-  # "again" publishes imu again (its numbers start over).
+  # "again" publishes imu again (its numbers go on).
   CHILD = <<~'RUBY'
     require "asterism"
     loc = ARGV[0]
@@ -251,12 +286,17 @@ class TestTopic < Minitest::Test
     assert_equal [1, 0], [got[3][1].seq, got[3][1].lost]
     assert_equal [[1.5, -2, 9.8], [1.5, -2, 9.8]], plain, "a block with |v| gets the value"
 
-    # On the wire: no encoding for MessagePack, the attachment [seq] / [seq, ms].
+    # On the wire: no encoding for MessagePack, the attachment [seq, run id]
+    # / [seq, run id, ms], one run id for the connection.
     samples = raw.each_sample
     assert_equal 4, samples.size
     assert_equal ["zenoh/bytes", "image/jpeg", "zenoh/bytes", "zenoh/bytes"], samples.map(&:encoding)
     assert_equal [0, 0, 0, 1], samples.map { MessagePack.unpack(_1.attachment)[0] }
-    assert_equal [2, 1, 1, 2], samples.map { MessagePack.unpack(_1.attachment).size }
+    assert_equal [3, 2, 2, 3], samples.map { MessagePack.unpack(_1.attachment).size }
+    runs = samples.map { MessagePack.unpack(_1.attachment)[1] }.uniq
+    assert_equal 1, runs.size
+    assert_includes 0..65535, runs[0]
+    assert_equal runs[0], got[0][1].run_id
     assert_equal MessagePack.pack([1.5, -2, 9.8]), samples[0].payload
 
     # Lost values, the wrap and a restart.
@@ -275,7 +315,8 @@ class TestTopic < Minitest::Test
     cmd.("again")
     cmd.("imu")
     assert wait_for { @net.poll; got.size >= 8 }
-    assert_equal [0, 0, true], [got[7][1].seq, got[7][1].lost, got[7][1].restarted?], "published again: a restart"
+    assert_equal [1, 0, false], [got[7][1].seq, got[7][1].lost, got[7][1].restarted?],
+                 "published again on the same connection: the numbers go on"
 
     # @pubs: put again when publish replaces imu (the same declarations:
     # nothing), and when the camera goes.
@@ -317,7 +358,7 @@ class TestTopic < Minitest::Test
     net.start
     sleep 0.3
     cmd.("imu")
-    assert_equal [[1.5, -2, 9.8], 2], Timeout.timeout(3) { q.pop }
+    assert_equal [[1.5, -2, 9.8], 3], Timeout.timeout(3) { q.pop }
     assert_equal ["boom", "subscribe"], Timeout.timeout(3) { errors.pop }
     net.stop
     @net.close

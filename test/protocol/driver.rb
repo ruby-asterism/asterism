@@ -413,6 +413,12 @@ begin
     R.add("data puts", id, why.nil?, why)
   end
   R.add("data puts", "no other puts", dp_now.size == SAMPLES["data_puts"].size, "#{dp_now.size} puts")
+  # One run id for all the values of the connection (docs/protocol.md 9.3).
+  runs = dp_now.map do |_k, _b, _e, att|
+    st, v = decode(att)
+    st == :ok && v.is_a?(Array) ? v[1] : nil
+  end.uniq
+  R.add("data puts", "one run id", runs.size == 1 && runs[0].is_a?(Integer), "run ids #{runs.inspect}")
 ensure
   begin
     exited = wait(5) { Process.waitpid(pid, Process::WNOHANG) }
