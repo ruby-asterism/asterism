@@ -143,9 +143,13 @@ module Asterism
       # command line and the MCP bridge show it: {"name", "type" (a built-in
       # type's name, or the application type's; absent: no type),
       # "encoding" (absent: MessagePack), "unit", "desc", "ts" (true: the
-      # sender's time comes with each value)}.
+      # sender's time comes with each value)}. A shared topic's name is its
+      # entry ("<node>/@shared/<name>", "@shared/<name>") and "shared" says
+      # its place ("node", "global"; docs/protocol.md 17).
       def self.topic_entry(name, decl)
         h = { "name" => name }
+        pl = ::Asterism::Pubs.place(name)
+        h["shared"] = pl[0].to_s if pl && pl[0]
         t = decl["t"]
         if t.is_a?(Integer)
           h["type"] = ::Asterism::Types::NAMES[t - 1] || t

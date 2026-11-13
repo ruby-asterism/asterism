@@ -12,9 +12,9 @@
 # its own profile. A program may hold several (one per application it is),
 # also as the same node:
 #
-#   game = Asterism.connect(router, node: "host", app: "game")
-#   spec = Asterism.connect(router, node: "host", app: "spectate")
-#   Asterism.poll_all                  # or game.poll and spec.poll
+#   game = Asterism.connect(router, node: "host", app: "games")
+#   room = Asterism.connect(router, node: "host", app: "room01")
+#   Asterism.poll_all                  # or game.poll and room.poll
 #
 # On a board each connection costs a TLS link and a router seat
 # (docs/protocol.md 1.1); one is the usual.

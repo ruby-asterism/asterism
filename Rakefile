@@ -11,7 +11,8 @@
 #                      receiver started again, sha256; over a stand-in for
 #                      the calls (no Zenoh)
 #   rake test:objects  the object layer, node profiles, statuses, topics,
-#                      several connections in one program and
+#                      several connections in one program, the shared
+#                      places and
 #                      Asterism::ROS between CRuby sessions; needs
 #                      asterism-zenoh (below)
 #   rake test:api      the Ruby-like API of CRuby (lib/asterism/cruby/):
@@ -99,6 +100,7 @@ namespace :test do
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_meta_apps.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_session.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_connections.rb")
+    sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_shared.rb")
   end
 
   desc "The Ruby-like API of CRuby (blocks, threads, Enumerators) for Zenoh, objects and ROS 2 (needs asterism-zenoh)"

@@ -62,7 +62,7 @@ module Asterism
       %i[initialize expose unexpose poll pump nodes [] call_async meta connected? reconnecting? exposed
          on_join on_leave off_join off_leave on_app_join on_app_leave off_app_join off_app_leave
          profile profile_async status app_profile_async apps session publish unpublish published
-         topic_put define_type subscribe unsubscribe].each do |m|
+         topic_put define_type subscribe unsubscribe pubs_get].each do |m|
         define_method(m) do |*args, **kw, &blk|
           ::Asterism::LOCK.synchronize { super(*args, **kw, &blk) }
         end

@@ -10,6 +10,7 @@
 #   asterism_objects   the objects and their methods (meta) (always; reads)
 #   asterism_status    the applications' statuses           (always; reads)
 #   asterism_topics    the topics the applications declare (their types,
+#                      shared places included,
 #                      encodings, units) and their own types' definitions
 #                      (@profile?pubs;types)                (always; reads)
 #   asterism_values    the latest value of each topic the applications put
@@ -188,8 +189,12 @@ module Asterism
                          "vector3 [x, y, z], pose [x, y, z, qx, qy, qz, qw], image, state, log, text) or the name of " \
                          "an application's own type, whose definition is in types ({\"f\": [[field, type], ...], " \
                          "\"d\": what it is}); no type: not declared. encoding: absent for MessagePack, else how " \
-                         "the bytes are (image/jpeg). ts: the sender's time comes with each value. An application " \
-                         "that declares nothing is not listed. The values are asterism_values's.",
+                         "the bytes are (image/jpeg). ts: the sender's time comes with each value. shared: the topic " \
+                         "is on a shared place, its name the key below asterism/ (\"node\": " \
+                         "<node>/@shared/<name>, \"global\": @shared/<name>); several applications may declare " \
+                         "one shared key, each with its own declaration and types (read a value's type from the " \
+                         "application that sent it). An application that declares nothing is not listed. The " \
+                         "values are asterism_values's.",
             input_schema: { properties: { node: { type: "string" }, app: { type: "string" } } },
             annotations: { read_only_hint: true }
           ) do |server_context:, node: nil, app: nil|

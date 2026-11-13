@@ -10,18 +10,40 @@
 # puts the bytes of a small JPEG-like image, unpublish_cam withdraws cam,
 # got returns what the subscriptions got ([path, value, seq, time,
 # encoding, lost, restarted]; the bytes of a value with an encoding as a
-# bin) and plain the values of the |v| block; stop ends the node.
+# bin) and plain the values of the |v| block; stop ends the node. Shared
+# places: it publishes cross/m on its node's place (put_shared(n) puts n
+# values) and subscribes to @shared/cross/** and */@shared/cross/**
+# (shared returns what came, with the sender and the numbers counted per
+# sender).
 port = ARGV[0]
 
 class Probe
   attr_accessor :stop_now
 
-  def initialize(imu, cam, got, plain)
+  def initialize(imu, cam, got, plain, mine, shared)
     @imu = imu
     @cam = cam
     @got = got
     @plain = plain
+    @mine = mine
+    @shared = shared
     @n = 0
+  end
+
+  # n values on this node's shared place (mdata/@shared/cross/m).
+  def put_shared(n)
+    i = 0
+    while i < n
+      @mine.put({ "id" => i, "tags" => [], "at" => [0, 0, 0, 0, 0, 0, 1], "trail" => [], "kind" => 1 })
+      i += 1
+    end
+    @mine.seq
+  end
+
+  # What the shared subscriptions got: [path, value, seq, from, lost,
+  # restarted, shared] each.
+  def shared
+    @shared
   end
 
   def put_imu(n)
@@ -69,8 +91,16 @@ $net.subscribe("cruby/t/**") do |v, info|
   got << [info.path, v, info.seq, info.time, info.encoding, info.lost, info.restarted?]
 end
 $net.subscribe("cruby/t/n") { |v| plain << v }
-probe = Probe.new(imu, cam, got, plain)
-$net.expose("probe", probe, methods: { put_imu: 1, put_cam: 0, unpublish_cam: 0, got: 0, plain: 0, stop: 0 })
+mine = $net.publish("cross/m", shared: :node, type: "mdata/sample")
+shared = []
+rec_shared = lambda do |v, info|
+  shared << [info.path, v, info.seq, info.from, info.lost, info.restarted?, info.shared.to_s]
+end
+$net.subscribe("@shared/cross/**") { |v, info| rec_shared.call(v, info) }
+$net.subscribe("*/@shared/cross/**") { |v, info| rec_shared.call(v, info) }
+probe = Probe.new(imu, cam, got, plain, mine, shared)
+$net.expose("probe", probe, methods: { put_imu: 1, put_cam: 0, unpublish_cam: 0, got: 0, plain: 0, stop: 0,
+                                       put_shared: 1, shared: 0 })
 puts "ready"
 deadline = Time.now + 60
 until probe.stop_now || Time.now > deadline

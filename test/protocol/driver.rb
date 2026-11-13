@@ -142,8 +142,13 @@ s.subscribe("asterism/#{IUT}/*/@status") { |sm| lock.synchronize { status_puts <
 pubs_puts = []
 s.subscribe("asterism/#{IUT}/*/@pubs") { |sm| lock.synchronize { pubs_puts << [sm.key, sm.payload.b] } }
 data_puts = []
-s.subscribe("asterism/#{IUT}/**") do |sm|
-  lock.synchronize { data_puts << [sm.key, sm.payload.b, sm.encoding, sm.attachment&.b] }
+# The implementation's topics, and its shared ones (docs/protocol.md 17):
+# its node's place and the key it uses on the network's place (verbatim
+# @shared chunks are not under asterism/<node>/**).
+["asterism/#{IUT}/**", "asterism/#{IUT}/@shared/**", "asterism/@shared/lobby/**"].each do |k|
+  s.subscribe(k) do |sm|
+    lock.synchronize { data_puts << [sm.key, sm.payload.b, sm.encoding, sm.attachment&.b] }
+  end
 end
 
 icon_file = File.join(Dir.mktmpdir("asterism-protocol"), "icon.png")

@@ -666,6 +666,11 @@ class TestCLI < Minitest::Test
                              desc: "What a sum gave.")
         topics["imu"] = net.publish("imu", type: :vector3, unit: "m/s2", ts: true, desc: "Acceleration.")
         topics["calc/result"] = net.publish("calc/result", type: "calc/result")
+      elsif line.start_with?("shared")
+        # shared: a topic on this node's shared place and one on the
+        # network's.
+        topics["n"] = net.publish("score/t1", shared: :node, type: "calc/result")
+        topics["g"] = net.publish("lobby", shared: :global, type: :text)
       else
         net.status(tables: line.to_i)
       end
@@ -1148,6 +1153,28 @@ class TestCLI < Minitest::Test
       j, = cli("nodes", "--json")
       calc = JSON.parse(j).find { _1["node"] == "calcnode" }
       assert_equal %w[calc/result imu], calc["apps"][0]["topics"].map { _1["name"] }
+
+      # Shared places: listed under their keys, by the application that
+      # declares them; info gives each publisher with its own type.
+      say.("shared")
+      sleep 0.3
+      out, err, code = cli("topic", "list", "calcnode/*")
+      assert_equal 0, code, err
+      assert_includes out, "calcnode/@shared/score/t1  calc/result  (node, by calcnode/calc)\n"
+      assert_includes out, "@shared/lobby  text  (global, by calcnode/calc)\n"
+      j, = cli("topic", "list", "calcnode/calc", "-o", "json")
+      assert_includes JSON.parse(j), { "path" => "@shared/lobby", "by" => "calcnode/calc", "shared" => "global",
+                                       "type" => "text" }
+      out, err, code = cli("topic", "info", "calcnode/@shared/score/t1")
+      assert_equal 0, code, err
+      assert_equal "calcnode/@shared/score/t1  (node)\n  by calcnode/calc  calc/result\n    definition:\n" \
+                   "      calc/result\n        What a sum gave.\n        sum int  at vector3  parts float[]\n", out
+      j, = cli("topic", "info", "@shared/lobby", "-o", "json")
+      assert_equal({ "path" => "@shared/lobby", "shared" => "global",
+                     "publishers" => [{ "by" => "calcnode/calc", "type" => "text" }] }, JSON.parse(j))
+      _, err, code = cli("topic", "info", "@shared/nothing")
+      assert_equal 1, code
+      assert_match(/no application declares @shared\/nothing/, err)
 
       # The values: a picture, the numbers, what was lost.
       cmd = [PLAIN, RbConfig.ruby, *LIB, EXE, "object", "echo", "calcnode/calc/*", "-o", "json", "--duration", "5",

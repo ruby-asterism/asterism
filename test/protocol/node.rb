@@ -86,12 +86,16 @@ $net.define_type("conf/stroke", [["pts", "int[]"], ["color", "str"], ["at", 2], 
 imu = $net.publish("imu", type: :vector3, unit: "m/s2", desc: "acceleration", ts: true)
 strokes = $net.publish("board1/strokes", type: "conf/stroke")
 cam = $net.publish("camera", type: :image, encoding: "image/jpeg")
-# What the subscription got: [path, value, seq, time, encoding, lost,
-# restarted] (the bytes of a value with an encoding as a bin).
+score = $net.publish("score", shared: :node, type: :number)
+hello = $net.publish("lobby/hello", shared: :global, type: :text, ts: true)
+# What the subscriptions got: [path, value, seq, time, encoding, lost,
+# restarted, from] (the bytes of a value with an encoding as a bin).
 got = []
-$net.subscribe("drv/conf/**") do |v, info|
-  v = Asterism::Profile.binary(v) unless info.encoding == "msgpack"
-  got << [info.path, v, info.seq, info.time, info.encoding, info.lost, info.restarted?]
+["drv/conf/**", "drv/@shared/**", "@shared/feed/**"].each do |path|
+  $net.subscribe(path) do |v, info|
+    v = Asterism::Profile.binary(v) unless info.encoding == "msgpack"
+    got << [info.path, v, info.seq, info.time, info.encoding, info.lost, info.restarted?, info.from]
+  end
 end
 $net.expose("subject", Subject.new,
                 methods: { echo: 1, kw: 1, add: 2, boom: 0, any: -1, "ok?" => 0, unsendable: 0, whoami: 0 })
@@ -152,13 +156,15 @@ steps = [
     cam.put("\xff\xd8\xff\xe0JFIF\xff\xd9".b)
     strokes.put({ "pts" => [1, 2], "color" => "red", "at" => [0, 0, 0] })
     imu.put([1.5, -2, 9.8])
+    score.put(3)
+    hello.put("hi")
     nil
   end],
   ["withdraw a topic", -> { cam.close; nil }],
   ["receive values", lambda do
     rec.feed
     t0 = Asterism.now_ms
-    while got.size < 10 && Asterism.now_ms - t0 < 3000
+    while got.size < 17 && Asterism.now_ms - t0 < 3000
       $net.poll
       Asterism.pause(2)
     end

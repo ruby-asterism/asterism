@@ -28,9 +28,11 @@ module Asterism
       },
       "topic" => {
         "list" => ["[NODE/APP]", "the topics the applications put values on, node/app/name a line, with their " \
-                                 "types (NODE/APP: * for a part; */* by default)"],
+                                 "types (NODE/APP: * for a part; */* by default); a shared place's " \
+                                 "(node/@shared/name, @shared/name) with the application that declares it"],
         "info" => ["PATH", "one topic (node/app/name): its type, encoding, unit and text, and the definition " \
-                           "of its type when the application defines it"]
+                           "of its type when the application defines it; for a shared key (node/@shared/name, " \
+                           "@shared/name) each application that declares it, with its own"]
       },
       "status" => {
         "get" => ["NODE/APP", "an application's status, now"],

@@ -20,6 +20,18 @@
 # time they change, and answered by the application's own profile,
 # asterism/<node>/<app>/@profile (status.rb): ?status, ?pubs, ?types.
 #
+# Shared places (docs/protocol.md 17): data with no single owner goes on
+# a node's asterism/<node>/@shared/<name> or the network's
+# asterism/@shared/<name>. The sender declares it in its own @pubs
+# ("<node>/@shared/<name>", "@shared/<name>"), and each value's attachment
+# is [seq, ms or nil, "<node>/<app>"], so that the readers count the
+# numbers per sender and read the type from the sender's declarations.
+#
+#   t = net.publish("spectate/t1/state", shared: :node, type: "mygame/table")
+#   net.subscribe("*/@shared/spectate/**") { |v, info| p [info.from, info.lost] }
+#   net.publishers_of("linux/@shared/spectate/t1/state")  # => {"linux/room01" => {...}}
+#   net.type_of(info)                         # the sender's type of that key
+#
 # Subscription blocks run from Connection#poll only, never from the polling
 # inside a waiting call (the values wait in the subscription's queue).
 module Asterism
@@ -142,6 +154,9 @@ module Asterism
   # The declarations of the topics (asterism/<node>/<app>/@pubs).
   module Pubs
     KEY = "@pubs"
+    # The chunk of the shared places: asterism/@shared/... (the network's)
+    # and asterism/<node>/@shared/... (a node's).
+    SHARED = "@shared"
     UNIT_MAX = 64 # bytes of a unit
     # Zenoh's encodings with a fixed number (Zenoh 1.x), the number is the
     # position: zenoh/bytes is 0, image/jpeg 17. One String, split when an
@@ -179,15 +194,64 @@ module Asterism
       id.is_a?(Integer) && id >= 0 && id < list.size ? list[id] : nil
     end
 
-    # A received map of declarations, cleaned: the entries with a str name
-    # whose declaration is a map, with the known keys that pass ("t" an int
-    # above 0 or a str, "e" an int, "u" and "d" str, "ts" true). nil when
-    # it is not a map.
-    def self.check(h)
+    # Where a declaration's entry puts its values (docs/protocol.md 17):
+    # [nil, nil, name] for a topic of the application's own ("imu",
+    # "board1/strokes": asterism/<node>/<app>/<name>), [:node, node, name]
+    # for "<node>/@shared/<name>" (asterism/<node>/@shared/<name>),
+    # [:global, nil, name] for "@shared/<name>" (asterism/@shared/<name>).
+    # nil for anything else (an empty chunk, a chunk that is not a name,
+    # another verbatim chunk).
+    def self.place(entry)
+      return nil unless entry.is_a?(String) && !entry.empty?
+      return nil if entry.start_with?("/") || entry.end_with?("/")
+      parts = entry.split("/")
+      if parts[0] == SHARED
+        rest = parts[1, parts.size - 1]
+        return names?(rest) ? [:global, nil, rest.join("/")] : nil
+      end
+      if parts.size > 2 && parts[1] == SHARED
+        rest = parts[2, parts.size - 2]
+        return ::Asterism.valid_name?(parts[0]) && names?(rest) ? [:node, parts[0], rest.join("/")] : nil
+      end
+      names?(parts) ? [nil, nil, entry] : nil
+    end
+
+    # The entry of a topic in the declarations: its name for the
+    # application's own, "<node>/@shared/<name>" or "@shared/<name>".
+    def self.entry(shared, node, name)
+      return name if shared.nil?
+      shared == :global ? "#{SHARED}/#{name}" : "#{node}/#{SHARED}/#{name}"
+    end
+
+    # The key a declared entry of <node>/<app> puts its values on, below
+    # asterism/ ("linux/demo/imu", "linux/@shared/spectate/t1/state",
+    # "@shared/lobby"), or nil when the entry is not one.
+    def self.path(node, app, entry)
+      pl = place(entry)
+      return nil if pl.nil?
+      pl[0].nil? ? "#{node}/#{app}/#{entry}" : entry
+    end
+
+    # @api private
+    def self.names?(list)
+      return false if list.empty?
+      list.each { |c| return false unless ::Asterism.valid_name?(c) }
+      true
+    end
+
+    # A received map of declarations, cleaned: the entries whose name is a
+    # topic of the application's own or a shared one (place), whose
+    # declaration is a map, with the known keys that pass ("t" an int above
+    # 0 or a str, "e" an int, "u" and "d" str, "ts" true). With node (the
+    # node of the application that declared them), an entry of another
+    # node's shared place is left out too. nil when it is not a map.
+    def self.check(h, node = nil)
       return nil unless h.is_a?(Hash)
       out = {}
       h.each do |name, d|
-        next unless name.is_a?(String) && !name.empty? && d.is_a?(Hash)
+        next unless d.is_a?(Hash)
+        pl = place(name)
+        next if pl.nil? || (node && pl[0] == :node && pl[1] != node)
         c = {}
         t = d["t"]
         c["t"] = t if (t.is_a?(Integer) && t > 0) || (t.is_a?(String) && !t.empty?)
@@ -206,7 +270,7 @@ module Asterism
     def self.parse(key, payload)
       parts = key.to_s.split("/")
       return nil unless parts.size == 4 && parts[0] == ::Asterism::ROOT && parts[3] == KEY
-      d = check(::Asterism::Codec.unpack(payload))
+      d = check(::Asterism::Codec.unpack(payload), parts[1])
       d ? [parts[1], parts[2], d] : nil
     end
   end
@@ -218,10 +282,14 @@ module Asterism
     # every board's Integer holds it).
     SEQ_MAX = 2147483647
 
-    attr_reader :name, :key, :encoding, :connection
+    # name: as given to publish (below @shared/ for a shared one); key: the
+    # whole key; shared: nil (the application's own), :node or :global;
+    # entry: the name in the declarations ("imu", "<node>/@shared/<name>",
+    # "@shared/<name>").
+    attr_reader :name, :key, :encoding, :connection, :shared, :entry
 
     # @api private
-    def initialize(connection, name, key, publisher, decl, encoding, ts)
+    def initialize(connection, name, key, publisher, decl, encoding, ts, shared = nil, entry = nil, from = nil)
       @connection = connection
       @name = name
       @key = key
@@ -230,6 +298,9 @@ module Asterism
       @encoding = encoding
       @ts = ts
       @seq = 0
+      @shared = shared
+      @entry = entry || name
+      @from = from
     end
 
     # The declaration as sent in @pubs ({"t" => 2, "u" => "m/s2", ...}).
@@ -278,12 +349,12 @@ module Asterism
 
     # The attachment of the next value, and the number after it.
     # @api private
+    # [seq] or [seq, ms] for the application's own topic; [seq, ms or nil,
+    # "<node>/<app>"] for a shared one (docs/protocol.md 9.3).
     def attachment
-      if @ts
-        ms = ::Asterism.wall_ms
-        return ::MessagePack.pack(ms.nil? ? [@seq] : [@seq, ms])
-      end
-      ::MessagePack.pack([@seq])
+      ms = @ts ? ::Asterism.wall_ms : nil
+      return ::MessagePack.pack([@seq, ms, @from]) if @shared
+      ::MessagePack.pack(ms.nil? ? [@seq] : [@seq, ms])
     end
 
     # @api private
@@ -300,21 +371,29 @@ module Asterism
   # What comes with each value to a subscription's block (|v, info|): where
   # it came from, its number and times, and how many were missed before it.
   class SampleInfo
-    # key: the whole key (asterism/<node>/<app>/<name>); node, app, name:
-    # its parts (name may hold "/"). seq: the sender's sequence number (nil
-    # when the value came without one). time: the sender's time in ms since
-    # 1970 (nil unless the topic sends it, ts: true). encoding: "msgpack"
-    # for a MessagePack value, else the Zenoh encoding ("image/jpeg").
-    # timestamp: the router's time (an Asterism::Zenoh::Timestamp), nil
-    # when no router stamped it. lost: how many values of this key did not
-    # come between the last one and this (0 for the first). restarted:
+    # key: the whole key (asterism/<node>/<app>/<name>, or a shared place's
+    # asterism/<node>/@shared/<name> / asterism/@shared/<name>); path: the
+    # key below asterism/. shared: nil for an application's own topic,
+    # :node or :global for a shared place. name: the topic's name (below
+    # @shared/ for a shared one; it may hold "/"). from: the sender,
+    # "<node>/<app>" (for a shared place as its attachment tells it, nil
+    # when it does not); node, app: its parts (a node's shared place without
+    # a sender: the key's node, app nil). seq: the sender's sequence number
+    # (nil when the value came without one). time: the sender's time in ms
+    # since 1970 (nil unless the topic sends it, ts: true). encoding:
+    # "msgpack" for a MessagePack value, else the Zenoh encoding
+    # ("image/jpeg"). timestamp: the router's time (an
+    # Asterism::Zenoh::Timestamp), nil when no router stamped it. lost: how
+    # many values of this key (and, on a shared place, of this sender) did
+    # not come between the last one and this (0 for the first). restarted:
     # true when the number went back (the sender connected again or
-    # started over); lost then counts the values of the new run before
-    # this one.
-    attr_reader :key, :node, :app, :name, :seq, :time, :encoding, :timestamp, :lost
+    # started over); lost then counts the values of the new run before this
+    # one.
+    attr_reader :key, :path, :node, :app, :name, :seq, :time, :encoding, :timestamp, :lost, :shared, :from
 
     # @api private
-    def initialize(key, node, app, name, seq, time, encoding, timestamp, lost, restarted)
+    def initialize(key, node, app, name, seq, time, encoding, timestamp, lost, restarted,
+                   path = nil, shared = nil, from = nil)
       @key = key
       @node = node
       @app = app
@@ -325,23 +404,23 @@ module Asterism
       @timestamp = timestamp
       @lost = lost
       @restarted = restarted
+      @path = path || "#{node}/#{app}/#{name}"
+      @shared = shared
+      @from = from || (shared.nil? && node && app ? "#{node}/#{app}" : nil)
     end
 
     def restarted?
       @restarted
     end
 
-    def path
-      "#{@node}/#{@app}/#{@name}"
-    end
-
     def to_h
-      { key: @key, node: @node, app: @app, name: @name, seq: @seq, time: @time, encoding: @encoding,
-        timestamp: @timestamp, lost: @lost, restarted: @restarted }
+      { key: @key, path: @path, shared: @shared, from: @from, node: @node, app: @app, name: @name, seq: @seq,
+        time: @time, encoding: @encoding, timestamp: @timestamp, lost: @lost, restarted: @restarted }
     end
 
     def inspect
-      "#<Asterism::SampleInfo #{path} seq=#{@seq.inspect} lost=#{@lost}#{@restarted ? ' restarted' : ''} " \
+      by = @shared ? " from #{@from || '?'}" : ""
+      "#<Asterism::SampleInfo #{@path}#{by} seq=#{@seq.inspect} lost=#{@lost}#{@restarted ? ' restarted' : ''} " \
         "#{@encoding}>"
     end
   end
@@ -447,23 +526,45 @@ module Asterism
       root = ::Asterism::ROOT
       rest = key.start_with?("#{root}/") ? key[root.size + 1, key.size] : key
       parts = rest.split("/")
-      node = parts[0]
-      app = parts[1]
-      name = parts.size > 2 ? parts[2, parts.size - 2].join("/") : nil
+      shared = nil
+      if parts[0] == ::Asterism::Pubs::SHARED
+        shared = :global
+        node = nil
+        app = nil
+        name = parts.size > 1 ? parts[1, parts.size - 1].join("/") : nil
+      elsif parts.size > 2 && parts[1] == ::Asterism::Pubs::SHARED
+        shared = :node
+        node = parts[0]
+        app = nil
+        name = parts[2, parts.size - 2].join("/")
+      else
+        node = parts[0]
+        app = parts[1]
+        name = parts.size > 2 ? parts[2, parts.size - 2].join("/") : nil
+      end
       seq = nil
       time = nil
+      from = nil
       att = sm.attachment
       if att && !att.empty?
         a = ::Asterism::Codec.unpack(att)
         if a.is_a?(Array) && a[0].is_a?(Integer) && a[0] >= 0 && a[0] <= Topic::SEQ_MAX
           seq = a[0]
           time = a[1] if a[1].is_a?(Integer)
+          from = ::Asterism::Subscription.sender(a[2]) if shared
         end
       end
+      if from
+        cut = from.index("/")
+        node = from[0, cut]
+        app = from[cut + 1, from.size - cut - 1]
+      end
+      # The numbers of a shared key are counted per sender.
+      lane = from ? "#{key}\n#{from}" : key
       lost = 0
       restarted = false
       unless seq.nil?
-        prev = @last[key]
+        prev = @last[lane]
         unless prev.nil?
           d = seq - prev
           d += Topic::SEQ_MAX + 1 if d < 0
@@ -474,10 +575,23 @@ module Asterism
             lost = seq
           end
         end
-        @last[key] = seq
+        @last[lane] = seq
       end
       @received += 1
-      [value, ::Asterism::SampleInfo.new(key, node, app, name, seq, time, enc, sm.timestamp, lost, restarted)]
+      [value, ::Asterism::SampleInfo.new(key, node, app, name, seq, time, enc, sm.timestamp, lost, restarted,
+                                         rest, shared, from)]
+    end
+
+    # The sender of a shared value from its attachment: "<node>/<app>" when
+    # it is a str of two names, else nil.
+    # @api private
+    def self.sender(s)
+      return nil unless s.is_a?(String)
+      cut = s.index("/")
+      return nil if cut.nil?
+      n = s[0, cut]
+      a = s[cut + 1, s.size - cut - 1]
+      ::Asterism.valid_name?(n) && ::Asterism.valid_name?(a) ? s : nil
     end
   end
 
@@ -492,6 +606,17 @@ module Asterism
     end
     raise ArgumentError, "invalid topic name: #{name.inspect}" if bad
     s
+  end
+
+  # The place of publish's shared: nil (the application's own), :node or
+  # :global (a Symbol or a String).
+  # @api private
+  def self.shared_place!(shared)
+    return nil if shared.nil? || shared == false
+    s = shared.to_s
+    return :node if s == "node"
+    return :global if s == "global"
+    raise ArgumentError, "shared: expects :node or :global (or nil), got #{shared.inspect}"
   end
 
   # The sender's time: milliseconds since 1970 (nil where there is no
@@ -516,9 +641,20 @@ module Asterism
     # put on asterism/<node>/<app>/@pubs. Raises ArgumentError for what it
     # does not accept and Disconnected when not connected. The topics end
     # with the connection.
-    def publish(name, type: nil, unit: nil, desc: nil, ts: false, encoding: nil)
+    #
+    # shared: puts the values on a shared place instead (docs/protocol.md
+    # 17): :node, this node's asterism/<node>/@shared/<name>; :global, the
+    # network's asterism/@shared/<name>. The topic is still declared in this
+    # application's @pubs ("<node>/@shared/<name>", "@shared/<name>"), with
+    # this application's types, and each value says its sender
+    # ("<node>/<app>") in the attachment. Other applications may put on the
+    # same key; the router decides who may (the node's place: its own node;
+    # the network's: whom the roles allow).
+    def publish(name, type: nil, unit: nil, desc: nil, ts: false, encoding: nil, shared: nil)
       s = session!
       name = ::Asterism.check_topic_name(name)
+      place = ::Asterism.shared_place!(shared)
+      entry = ::Asterism::Pubs.entry(place, @node_id, name)
       decl = {}
       t = ::Asterism::Types.topic_type!(type)
       decl["t"] = t unless t.nil?
@@ -548,20 +684,20 @@ module Asterism
       end
       raise ArgumentError, "ts: expects true or false" unless ts == true || ts == false
       decl["ts"] = true if ts
-      old = @topics[name] # replaced in place: the order of @pubs stays
+      old = @topics[entry] # replaced in place: the order of @pubs stays
       close_topic(old) if old
-      key = "#{::Asterism::ROOT}/#{@node_id}/#{@app}/#{name}"
+      key = place ? "#{::Asterism::ROOT}/#{entry}" : "#{::Asterism::ROOT}/#{@node_id}/#{@app}/#{name}"
       begin
         zp = enc ? s.publisher(key, encoding: enc) : s.publisher(key)
       rescue ::Asterism::Zenoh::Error
         if old
-          @topics.delete(name)
+          @topics.delete(entry)
           tell_pubs(false)
         end
         raise
       end
-      topic = ::Asterism::Topic.new(self, name, key, zp, decl, enc, ts)
-      @topics[name] = topic
+      topic = ::Asterism::Topic.new(self, name, key, zp, decl, enc, ts, place, entry, place ? path : nil)
+      @topics[entry] = topic
       app_queryable(s)
       tell_pubs(false)
       topic
@@ -570,12 +706,17 @@ module Asterism
       raise ::Asterism::Disconnected, e.message
     end
 
-    # Withdraws a topic (a Topic, or its name): its declaration leaves
-    # @pubs. True when there was one.
-    def unpublish(topic)
+    # Withdraws a topic (a Topic, or its name with the shared: it was
+    # published with, or its entry as published lists it): its declaration
+    # leaves @pubs. True when there was one.
+    def unpublish(topic, shared: nil)
       tbl = @topics || {}
       is_topic = topic.is_a?(::Asterism::Topic)
-      name = is_topic ? topic.name : topic.to_s
+      name = if is_topic
+               topic.entry
+             else
+               ::Asterism::Pubs.entry(::Asterism.shared_place!(shared), @node_id, topic.to_s)
+             end
       cur = tbl[name]
       if cur.nil? || (is_topic && !cur.equal?(topic))
         close_topic(topic) if is_topic
@@ -587,7 +728,8 @@ module Asterism
       true
     end
 
-    # The names of this application's topics.
+    # The entries of this application's topics: the names of its own, and
+    # "<node>/@shared/<name>" / "@shared/<name>" for the shared ones.
     def published
       @topics ? @topics.keys : []
     end
@@ -604,7 +746,7 @@ module Asterism
     # @api private
     def topic_put(topic, value)
       zp = topic.publisher
-      raise ::Asterism::Disconnected, "topic #{topic.name} is closed" if zp.nil?
+      raise ::Asterism::Disconnected, "topic #{topic.entry} is closed" if zp.nil?
       if topic.encoding
         unless value.is_a?(String)
           raise ArgumentError, "topic #{topic.name} (#{topic.encoding}): put expects the bytes, a String"
@@ -668,13 +810,15 @@ module Asterism
       d
     end
 
-    # Another application's topics: {name => {"t", "e", "u", "d", "ts"}}
-    # (Asterism::Pubs.check has cleaned it), {} when it answers without any,
+    # Another application's topics: {entry => {"t", "e", "u", "d", "ts"}}
+    # (Asterism::Pubs.check has cleaned it; an entry is a topic's name, or
+    # "<node>/@shared/<name>" / "@shared/<name>" for a shared one: place
+    # tells which), {} when it answers without any,
     # nil when nobody answers in time. Waits like status_of.
     def pubs_of(node, app, timeout: nil, timeout_ms: nil)
       raw = app_profile_part(node, app, "pubs", timeout, timeout_ms)
       return nil if raw.nil?
-      ::Asterism::Pubs.check(raw.key?("pubs") ? raw["pubs"] : {})
+      ::Asterism::Pubs.check(raw.key?("pubs") ? raw["pubs"] : {}, node.to_s)
     end
 
     # Another application's own types: {name => {"f" => [...], "d" => ...}}
@@ -684,6 +828,102 @@ module Asterism
       raw = app_profile_part(node, app, "types", timeout, timeout_ms)
       return nil if raw.nil?
       ::Asterism::Types.check(raw.key?("types") ? raw["types"] : {})
+    end
+
+    # The applications that declare a shared key, from their @pubs: path is
+    # "@shared/<name>" or "<node>/@shared/<name>" (node may be *, any node).
+    # Returns {"<node>/<app>" => declaration} (cleaned as pubs_of does; this
+    # application's own among them), {} when nobody declares it. Asks every
+    # application's profile (of that node, for a node's place) at once and
+    # waits for the answers until timeout: (seconds, 2.0 by default) or the
+    # query ends. Raises ArgumentError for a path that is not a shared key and
+    # Disconnected when not connected.
+    def publishers_of(path, timeout: nil, timeout_ms: nil)
+      p = path.to_s
+      star = p.start_with?("*/")
+      pl = ::Asterism::Pubs.place(star ? "x#{p[1, p.size - 1]}" : p)
+      if pl.nil? || pl[0].nil?
+        raise ArgumentError, "publishers_of: expected @shared/<name> or <node>/@shared/<name>, got #{path.inspect}"
+      end
+      node = pl[0] == :node && !star ? pl[1] : nil
+      ms = ::Asterism.time_ms("Connection#publishers_of", timeout, timeout_ms, nil, ::Asterism::DEFAULT_TIMEOUT_MS)
+      out = {}
+      add = lambda do |n, a, pubs|
+        return if pubs.nil?
+        pubs.each do |entry, d|
+          q = ::Asterism::Pubs.place(entry)
+          next if q.nil? || q[0] != pl[0] || q[2] != pl[2]
+          next if q[0] == :node && node && q[1] != node
+          out["#{n}/#{a}"] = d
+        end
+      end
+      add.call(@node_id, @app, ::Asterism::Pubs.check(pubs_hash, @node_id)) if @session
+      g = pubs_get(node, ms)
+      deadline = ::Asterism.now_ms + ms
+      wait_until do
+        ended = g.done?
+        g.each_reply.each do |r|
+          parts = r[0].to_s.split("/")
+          next unless parts.size == 4 && parts[0] == ::Asterism::ROOT
+          raw = ::Asterism::Codec.unpack(r[1])
+          next unless raw.is_a?(Hash)
+          add.call(parts[1], parts[2], ::Asterism::Pubs.check(raw["pubs"], parts[1]))
+        end
+        ended || ::Asterism.now_ms >= deadline || !connected?
+      end
+      out
+    end
+
+    # @api private
+    def pubs_get(node, ms)
+      session!.get("#{::Asterism::ROOT}/#{node || '*'}/*/#{::Asterism::Profile::KEY}", timeout_ms: ms, params: "pubs")
+    rescue ::Asterism::Zenoh::Error => e
+      lost_if_closed(e.message)
+      raise ::Asterism::Disconnected, e.message
+    end
+
+    # The declaration of the topic a value came on, as its sender declared
+    # it (info: the Asterism::SampleInfo of the value): the sender's entry
+    # for that key in its @pubs ({"t", "e", "u", "d", "ts"}). On a shared
+    # key every sender declares the key with its own declaration, so this
+    # asks the sender (info.from). nil when the sender is not known, does not
+    # answer, or does not declare the key. Waits like pubs_of.
+    def declaration_of(info, timeout: nil, timeout_ms: nil)
+      got = sender_parts(info, "pubs", timeout, timeout_ms)
+      got ? got[0] : nil
+    end
+
+    # The type of the values on a key as their sender declared it (info: a
+    # SampleInfo): a built-in type's number, or for an application type
+    # [name, definition] with the definition from the sender's own types
+    # ({"f" => [...], "d" => ...}; nil when it does not tell it). Two senders
+    # on a shared key may give the same type name different definitions;
+    # each value is read with its own sender's. nil when there is no type
+    # or the sender does not answer. Waits like types_of (one query).
+    def type_of(info, timeout: nil, timeout_ms: nil)
+      got = sender_parts(info, "pubs;types", timeout, timeout_ms)
+      return nil if got.nil?
+      t = got[0]["t"]
+      return t unless t.is_a?(String)
+      types = got[1] || {}
+      [t, types[t]]
+    end
+
+    # [the sender's declaration of info's key, the sender's types], or nil.
+    # @api private
+    def sender_parts(info, parts, timeout, timeout_ms)
+      from = info.from
+      return nil if from.nil?
+      cut = from.index("/")
+      n = from[0, cut]
+      a = from[cut + 1, from.size - cut - 1]
+      raw = app_profile_part(n, a, parts, timeout, timeout_ms)
+      return nil if raw.nil?
+      pubs = ::Asterism::Pubs.check(raw["pubs"], n) || {}
+      entry = info.shared ? info.path : info.name
+      d = pubs[entry]
+      return nil if d.nil?
+      [d, ::Asterism::Types.check(raw["types"])]
     end
 
     # @api private
@@ -700,7 +940,10 @@ module Asterism
     end
 
     # Subscribes to the values on asterism/<path> (path: <node>/<app>/<name>,
-    # Zenoh wildcards allowed: * one chunk, ** any number). The block gets
+    # Zenoh wildcards allowed: * one chunk, ** any number; or a shared place,
+    # <node>/@shared/<name> and @shared/<name>: "*/@shared/spectate/**",
+    # "@shared/lobby/**". Wildcards do not reach into @shared: "**" and
+    # "<node>/**" get only applications' own topics). The block gets
     # each value and an Asterism::SampleInfo (|v, info|; |v| is fine too):
     # the value decoded from MessagePack, or the bytes (a String) when it
     # came with an encoding. Blocks run from poll. This application's own

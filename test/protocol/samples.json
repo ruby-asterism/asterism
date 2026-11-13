@@ -1,6 +1,6 @@
 {
   "format": "asterism-protocol-samples",
-  "version": 5,
+  "version": 6,
   "protocol": 2,
   "describes": "the Asterism wire protocol 2 (docs/protocol.md)",
   "names": {
@@ -87,9 +87,24 @@
         "name": "camera",
         "type": "image",
         "encoding": "image/jpeg"
+      },
+      {
+        "name": "score",
+        "shared": "node",
+        "type": "number"
+      },
+      {
+        "name": "lobby/hello",
+        "shared": "global",
+        "type": "text",
+        "ts": true
       }
     ],
-    "subscribe": "drv/conf/**",
+    "subscribe": [
+      "drv/conf/**",
+      "drv/@shared/**",
+      "@shared/feed/**"
+    ],
     "objects": [
       {
         "name": "subject",
@@ -2846,6 +2861,36 @@
                           ]
                         ]
                       }
+                    ],
+                    [
+                      "iut/@shared/score",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "1"
+                            }
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "@shared/lobby/hello",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "7"
+                            }
+                          ],
+                          [
+                            "ts",
+                            true
+                          ]
+                        ]
+                      }
                     ]
                   ]
                 }
@@ -2955,6 +3000,36 @@
                             {
                               "int": "17"
                             }
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "iut/@shared/score",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "1"
+                            }
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "@shared/lobby/hello",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "7"
+                            }
+                          ],
+                          [
+                            "ts",
+                            true
                           ]
                         ]
                       }
@@ -3210,6 +3285,36 @@
                           ]
                         ]
                       }
+                    ],
+                    [
+                      "iut/@shared/score",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "1"
+                            }
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "@shared/lobby/hello",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "7"
+                            }
+                          ],
+                          [
+                            "ts",
+                            true
+                          ]
+                        ]
+                      }
                     ]
                   ]
                 }
@@ -3303,6 +3408,36 @@
                             {
                               "int": "17"
                             }
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "iut/@shared/score",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "1"
+                            }
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "@shared/lobby/hello",
+                      {
+                        "map": [
+                          [
+                            "t",
+                            {
+                              "int": "7"
+                            }
+                          ],
+                          [
+                            "ts",
+                            true
                           ]
                         ]
                       }
@@ -4459,7 +4594,7 @@
         "payload": null
       },
       "reply_hex": [
-        "81a47075627385a16182a17402a17801a3622f6385a174a3782f79a16511a175a16da164a164a27473c3a36f646484a17400a165a46a706567a2747301a175050580a56e6f6d617001"
+        "81a4707562738ba16182a17402a17801a3622f6385a174a3782f79a16511a175a16da164a164a27473c3a36f646484a17400a165a46a706567a2747301a175050580a56e6f6d617001ab407368617265642f672f6881a17401ad6472762f407368617265642f7381a17407af6f746865722f407368617265642f7381a17407a8406f746865722f7880a74073686172656480a3612f2a80"
       ],
       "outcome": [
         "ok",
@@ -4512,11 +4647,37 @@
               {
                 "map": []
               }
+            ],
+            [
+              "@shared/g/h",
+              {
+                "map": [
+                  [
+                    "t",
+                    {
+                      "int": "1"
+                    }
+                  ]
+                ]
+              }
+            ],
+            [
+              "drv/@shared/s",
+              {
+                "map": [
+                  [
+                    "t",
+                    {
+                      "int": "7"
+                    }
+                  ]
+                ]
+              }
             ]
           ]
         }
       ],
-      "note": "the reader keeps the declarations (maps under a str name) and their known keys that pass"
+      "note": "the reader keeps the declarations (maps under a str name that is a topic of the application's own or a shared entry of the network's place or the application's own node's) and their known keys that pass; another node's place, another verbatim chunk, a name that is not one are left out"
     },
     {
       "id": "no topics",
@@ -4738,6 +4899,16 @@
                 "float": 9.8
               }
             ]
+          ],
+          [
+            "iut/@shared/score",
+            {
+              "int": "3"
+            }
+          ],
+          [
+            "@shared/lobby/hello",
+            "hi"
           ]
         ]
       },
@@ -4831,9 +5002,51 @@
             "payload_hex": "05",
             "attachment_hex": "9203a178",
             "encoding": null
+          },
+          {
+            "key": "asterism/drv/@shared/feed/s",
+            "payload_hex": "01",
+            "attachment_hex": "9300c0a56472762f61",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/@shared/feed/s",
+            "payload_hex": "02",
+            "attachment_hex": "9300c0a56472762f62",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/@shared/feed/s",
+            "payload_hex": "03",
+            "attachment_hex": "9302c0a56472762f61",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/@shared/feed/s",
+            "payload_hex": "04",
+            "attachment_hex": "9301c0a56472762f62",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/@shared/feed/s",
+            "payload_hex": "05",
+            "attachment_hex": "9107",
+            "encoding": null
+          },
+          {
+            "key": "asterism/drv/@shared/feed/s",
+            "payload_hex": "06",
+            "attachment_hex": "9308c003",
+            "encoding": null
+          },
+          {
+            "key": "asterism/@shared/feed/g",
+            "payload_hex": "a26869",
+            "attachment_hex": "9305cf0000018bcfe5687ba3782f79",
+            "encoding": null
           }
         ],
-        "expect": 10
+        "expect": 17
       },
       "request": {
         "key": "asterism/drv/conf/rec/call/iut",
@@ -4865,7 +5078,8 @@
             {
               "int": "0"
             },
-            false
+            false,
+            "drv/conf"
           ],
           [
             "drv/conf/feed/a",
@@ -4880,7 +5094,8 @@
             {
               "int": "0"
             },
-            false
+            false,
+            "drv/conf"
           ],
           [
             "drv/conf/feed/a",
@@ -4893,7 +5108,8 @@
             {
               "int": "2"
             },
-            false
+            false,
+            "drv/conf"
           ],
           [
             "drv/conf/feed/cam",
@@ -4908,7 +5124,8 @@
             {
               "int": "0"
             },
-            false
+            false,
+            "drv/conf"
           ],
           [
             "drv/conf/feed/a",
@@ -4925,7 +5142,8 @@
             {
               "int": "2"
             },
-            true
+            true,
+            "drv/conf"
           ],
           [
             "drv/conf/feed/w",
@@ -4940,7 +5158,8 @@
             {
               "int": "0"
             },
-            false
+            false,
+            "drv/conf"
           ],
           [
             "drv/conf/feed/w",
@@ -4955,7 +5174,8 @@
             {
               "int": "0"
             },
-            false
+            false,
+            "drv/conf"
           ],
           [
             "drv/conf/feed/n",
@@ -4975,7 +5195,8 @@
             {
               "int": "0"
             },
-            false
+            false,
+            "drv/conf"
           ],
           [
             "drv/conf/feed/t",
@@ -4990,7 +5211,8 @@
             {
               "int": "0"
             },
-            false
+            false,
+            "drv/conf"
           ],
           [
             "drv/conf/feed/a",
@@ -5005,11 +5227,124 @@
             {
               "int": "0"
             },
-            false
+            false,
+            "drv/conf"
+          ],
+          [
+            "drv/@shared/feed/s",
+            {
+              "int": "1"
+            },
+            {
+              "int": "0"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false,
+            "drv/a"
+          ],
+          [
+            "drv/@shared/feed/s",
+            {
+              "int": "2"
+            },
+            {
+              "int": "0"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false,
+            "drv/b"
+          ],
+          [
+            "drv/@shared/feed/s",
+            {
+              "int": "3"
+            },
+            {
+              "int": "2"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "1"
+            },
+            false,
+            "drv/a"
+          ],
+          [
+            "drv/@shared/feed/s",
+            {
+              "int": "4"
+            },
+            {
+              "int": "1"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false,
+            "drv/b"
+          ],
+          [
+            "drv/@shared/feed/s",
+            {
+              "int": "5"
+            },
+            {
+              "int": "7"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false,
+            null
+          ],
+          [
+            "drv/@shared/feed/s",
+            {
+              "int": "6"
+            },
+            {
+              "int": "8"
+            },
+            null,
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false,
+            null
+          ],
+          [
+            "@shared/feed/g",
+            "hi",
+            {
+              "int": "5"
+            },
+            {
+              "int": "1700000000123"
+            },
+            "msgpack",
+            {
+              "int": "0"
+            },
+            false,
+            "x/y"
           ]
         ]
       ],
-      "note": "no encoding: MessagePack (\"msgpack\"); 4 after 1: 2 lost; 2 after 4: the sender started again (2 lost of its new run); 0 after 2^31-1: the numbers wrapped; no attachment: no number; not MessagePack without an encoding: left out; a time that is not an int: none"
+      "note": "no encoding: MessagePack (\"msgpack\"); 4 after 1: 2 lost; 2 after 4: the sender started again (2 lost of its new run); 0 after 2^31-1: the numbers wrapped; no attachment: no number; not MessagePack without an encoding: left out; a time that is not an int: none; the reports end with the sender (an application's own key: its node/app; the subscriptions' blocks run one subscription after the other, the network's place last). Shared places: the sender from the attachment's third element, the numbers per sender (drv/a: 1 lost; drv/b counted on its own); no sender, or one that is not node/app: none, and the numbers of the key without a sender"
     }
   ],
   "liveliness": {
@@ -5178,6 +5513,36 @@
               ]
             ]
           }
+        ],
+        [
+          "iut/@shared/score",
+          {
+            "map": [
+              [
+                "t",
+                {
+                  "int": "1"
+                }
+              ]
+            ]
+          }
+        ],
+        [
+          "@shared/lobby/hello",
+          {
+            "map": [
+              [
+                "t",
+                {
+                  "int": "7"
+                }
+              ],
+              [
+                "ts",
+                true
+              ]
+            ]
+          }
         ]
       ]
     },
@@ -5215,6 +5580,36 @@
               [
                 "t",
                 "conf/stroke"
+              ]
+            ]
+          }
+        ],
+        [
+          "iut/@shared/score",
+          {
+            "map": [
+              [
+                "t",
+                {
+                  "int": "1"
+                }
+              ]
+            ]
+          }
+        ],
+        [
+          "@shared/lobby/hello",
+          {
+            "map": [
+              [
+                "t",
+                {
+                  "int": "7"
+                }
+              ],
+              [
+                "ts",
+                true
               ]
             ]
           }
@@ -5319,6 +5714,34 @@
         {
           "any": "int"
         }
+      ]
+    },
+    {
+      "key": "asterism/iut/@shared/score",
+      "encoding": "zenoh/bytes",
+      "payload": {
+        "int": "3"
+      },
+      "attachment": [
+        {
+          "int": "0"
+        },
+        null,
+        "iut/conf"
+      ]
+    },
+    {
+      "key": "asterism/@shared/lobby/hello",
+      "encoding": "zenoh/bytes",
+      "payload": "hi",
+      "attachment": [
+        {
+          "int": "0"
+        },
+        {
+          "any": "int"
+        },
+        "iut/conf"
       ]
     }
   ]

@@ -164,6 +164,48 @@ check(lost == [[0, false], [0, false], [2, false], [2, true]], "lost and restart
 fs.unwrap(FakeSample.new("asterism/n/a/w", Asterism::Topic::SEQ_MAX))
 w = fs.unwrap(FakeSample.new("asterism/n/a/w", 0))[1]
 check(w.lost == 0 && !w.restarted?, "the wrap")
+# The shared places (topic.rb, docs/protocol.md 17) without the network.
+check(Asterism::Pubs.place("n/@shared/a/b") == [:node, "n", "a/b"] &&
+        Asterism::Pubs.place("@shared/x") == [:global, nil, "x"] && Asterism::Pubs.place("imu") == [nil, nil, "imu"],
+      "the places of entries")
+check(Asterism::Pubs.place("@other/x").nil? && Asterism::Pubs.place("@shared").nil? &&
+        Asterism::Pubs.place("n/@shared").nil?, "not entries")
+check(Asterism::Pubs.check({ "a" => {}, "@shared/g" => {}, "n/@shared/s" => {}, "m/@shared/s" => {} }, "n").keys ==
+        ["a", "@shared/g", "n/@shared/s"], "pubs check: another node's place left out")
+class SharedSample
+  attr_reader :key, :payload, :attachment, :kind, :encoding, :timestamp
+  def initialize(key, att)
+    @key = key
+    @payload = MessagePack.pack(1)
+    @attachment = MessagePack.pack(att)
+    @kind = :put
+    @encoding = "zenoh/bytes"
+    @timestamp = nil
+  end
+end
+ss = Asterism::Subscription.new(nil, "x", nil, nil)
+k = "asterism/h/@shared/sp/t1"
+rows = [[0, nil, "h/a"], [4, nil, "h/b"], [3, 1_700_000_000_000, "h/a"], [5, nil, "h/b"], [9]].map do |att|
+  i = ss.unwrap(SharedSample.new(k, att))[1]
+  [i.from, i.node, i.app, i.lost, i.time, i.shared, i.path, i.name]
+end
+check(rows == [["h/a", "h", "a", 0, nil, :node, "h/@shared/sp/t1", "sp/t1"],
+               ["h/b", "h", "b", 0, nil, :node, "h/@shared/sp/t1", "sp/t1"],
+               ["h/a", "h", "a", 2, 1_700_000_000_000, :node, "h/@shared/sp/t1", "sp/t1"],
+               ["h/b", "h", "b", 0, nil, :node, "h/@shared/sp/t1", "sp/t1"],
+               [nil, "h", nil, 0, nil, :node, "h/@shared/sp/t1", "sp/t1"]], "shared values per sender: #{rows.inspect}")
+g = ss.unwrap(SharedSample.new("asterism/@shared/lobby", [0, nil, "pc/chat"]))[1]
+check([g.shared, g.from, g.node, g.app, g.path] == [:global, "pc/chat", "pc", "chat", "@shared/lobby"],
+      "the network's place: #{g.inspect}")
+sh = net.publish("sp/t1", shared: :node, type: :state)
+gl = net.publish("lobby", shared: :global)
+check(sh.key == "asterism/mtest/@shared/sp/t1" && gl.key == "asterism/@shared/lobby" &&
+        net.published.include?("mtest/@shared/sp/t1") && net.published.include?("@shared/lobby"), "shared topics")
+check(MessagePack.unpack(sh.attachment) == [0, nil, "mtest/t"], "a shared attachment: [seq, nil, sender]")
+check(net.pubs_of("mtest", "t")["mtest/@shared/sp/t1"] == { "t" => 5 }, "own pubs_of with the shared entry")
+check(net.unpublish("sp/t1", shared: :node) && net.unpublish(gl) && !net.published.include?("@shared/lobby"),
+      "shared topics withdrawn")
+raises(ArgumentError, "shared: neither node nor global") { net.publish("x", shared: :app) }
 pubs = net.pubs_of("mnode", "t")
 check(pubs == { "imu" => { "t" => 2, "u" => "m/s2", "ts" => true } }, "pubs_of: #{pubs.inspect}")
 got = []

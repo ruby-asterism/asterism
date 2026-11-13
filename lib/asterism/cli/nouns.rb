@@ -197,12 +197,20 @@ module Asterism
       end
       connect do |_net, sv|
         list = sv.topics(sv.apps(pattern)).sort.flat_map do |path, h|
-          h["topics"].map { |t| { "path" => "#{path}/#{t['name']}" }.merge(t.except("name")) }
+          h["topics"].map do |t|
+            n, a = path.split("/")
+            e = { "path" => ::Asterism::Pubs.path(n, a, t["name"]) }
+            e["by"] = path if t["shared"] # a shared place: the application that declares it
+            e.merge(t.except("name"))
+          end
         end
         if structured?
           emit(list)
         else
-          list.each { |t| @out.puts "#{paint_path(t['path'])}  #{paint(topic_about(t), :note)}" }
+          list.each do |t|
+            by = t["by"] ? "  #{paint("(#{t['shared']}, by #{t['by']})", :note)}" : ""
+            @out.puts "#{paint_path(t['path'])}  #{paint(topic_about(t), :note)}#{by}"
+          end
         end
       end
       0
@@ -210,9 +218,14 @@ module Asterism
 
     # One topic (node/app/name, the name may have more parts): its
     # declaration, and the definition of its type when it is one of the
-    # application's own.
+    # application's own. A shared key (node/@shared/name, @shared/name):
+    # each application that declares it, with its own declaration and the
+    # definition of its type from its own types (senders may define one
+    # type name differently).
     def cmd_topic_info(rest)
       path = rest.shift.to_s
+      pl = ::Asterism::Pubs.place(path)
+      return shared_topic_info(path, pl) if pl && pl[0]
       parts = path.split("/", -1)
       if parts.size < 3 || parts.any? { _1.empty? || _1.include?("*") }
         raise ArgumentError, "topic info: PATH is node/app/name (asterism topic info games/games/othello1/state)"
@@ -241,6 +254,39 @@ module Asterism
           @out.puts "  #{paint('time:', :note)} the sender's, with each value" if t["ts"]
           Text.wrap_text(t["desc"], style.width, first: "  ").each { @out.puts _1 } if t["desc"]
           types_block({ t["type"] => d }, 2, label: "definition:") if d
+        end
+      end
+      code
+    end
+
+    # topic info for a shared key: the publishers, each with its own
+    # declaration and type definition.
+    def shared_topic_info(path, pl)
+      code = 0
+      connect do |_net, sv|
+        apps = sv.apps(pl[0] == :node ? "#{pl[1]}/*" : "*/*")
+        pubs = sv.topics(apps).sort.filter_map do |app, h|
+          t = h["topics"].find { _1["name"] == path }
+          next unless t
+          e = { "by" => app }.merge(t.except("name", "shared"))
+          d = t["type"].is_a?(String) && h["types"][t["type"]]
+          e["definition"] = d if d
+          e
+        end
+        if pubs.empty?
+          @err.puts "asterism: no application declares #{path}"
+          code = 1
+          next
+        end
+        if structured?
+          emit({ "path" => path, "shared" => pl[0].to_s, "publishers" => pubs })
+        else
+          @out.puts "#{paint_path(path)}  #{paint("(#{pl[0]})", :note)}"
+          pubs.each do |t|
+            @out.puts "  #{paint('by', :note)} #{paint_path(t['by'])}  #{paint(topic_about(t), :note)}"
+            Text.wrap_text(t["desc"], style.width, first: "    ").each { @out.puts _1 } if t["desc"]
+            types_block({ t["type"] => t["definition"] }, 4, label: "definition:") if t["definition"]
+          end
         end
       end
       code
