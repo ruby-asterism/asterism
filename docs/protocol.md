@@ -22,10 +22,17 @@ the key, errors say what kind they are, and each application has its own
 liveliness token. A node of protocol 2 refuses a protocol 0 call (4.3,
 step 2).
 
-The number is told in each node's profile (`"protocol" => 2`, section 7).
-A change that a protocol 2 reader would misread gets a new number; an
-addition that protocol 2 readers ignore (a field in a map: requests,
-replies, errors, meta entries, profiles, declarations; a new key) does not.
+The number is told in three places: each application's liveliness token
+(`asterism/<node>/<app>/protocol/2`, 6.1), so that a reader knows it as
+soon as the application appears; each call's request (`"protocol" => 2`,
+4.1), which a callee of another protocol refuses with the error
+`protocol` (4.4); and each node's profile (`"protocol" => 2`, section 7).
+Values keep flowing between applications of different protocols; a
+reader says once about each application of another protocol. The next
+protocols tell their number the same way. A change that a protocol 2
+reader would misread gets a new number; an addition that protocol 2
+readers ignore (a field in a map: requests, replies, errors, meta
+entries, profiles, declarations; a new key) does not.
 
 The ROS 2 side of Asterism (`Asterism::ROS`) is not part of this protocol:
 it speaks rmw_zenoh's format, described in the README ("ROS 2
@@ -71,7 +78,8 @@ Contents:
   with the calling node's ID; its answer is the query's reply. **Meta**
   (the list of exposed methods) is a query to the object's meta key.
   **Presence** is told with Zenoh liveliness tokens, one per application
-  and one per exposed object. A node's **profile** (the protocol it
+  (its key says the protocol the application speaks) and one per exposed
+  object. A node's **profile** (the protocol it
   speaks, what it is, a name, an icon) is a query to the node's profile
   key, and is also put there on each change. An **application's profile**
   answers its **status** (a small map of its own that changes while it
@@ -159,7 +167,7 @@ write or its proxies cannot forward.
 
 | Key | Zenoh | Who declares it | Section |
 |---|---|---|---|
-| `asterism/<node>/<app>` | liveliness token | the application | 6 |
+| `asterism/<node>/<app>/protocol/<n>` | liveliness token | the application (`<n>`: the protocol it speaks, `2`) | 6 |
 | `asterism/<node>/<app>/<object>` | liveliness token | the application, for each exposed object | 6 |
 | `asterism/<node>/<app>/**` | queryable | the application (one) | 4, 5 |
 | `asterism/<node>/<app>/<object>/call/<caller>` | get | a caller (`<caller>` is its node ID) | 4 |
@@ -328,6 +336,7 @@ The request map:
 | Field | Value | Present |
 |---|---|---|
 | `method` | str, the method's name (not empty) | always |
+| `protocol` | int, the protocol the caller speaks: `2` | always |
 | `args` | array, the positional arguments | when there are any (absent: none) |
 | `kwargs` | map with str keys, the keyword arguments | when there are any (absent: none) |
 
@@ -340,9 +349,14 @@ Example, `info.status` called by `linux` (no arguments):
 
 ```
 key      asterism/fmruby-1a2b3c/demo/info/call/linux
-payload  81 a6 6d6574686f64 a6 737461747573
-         {"method" => "status"}
+payload  82 a6 6d6574686f64 a6 737461747573 a8 70726f746f636f6c 02
+         {"method" => "status", "protocol" => 2}
 ```
+
+The `protocol` field costs 10 bytes per call. It is a field of the map
+and not an attachment so that a callee of any protocol reads it with the
+request, and the error that refuses another protocol is a plain reply
+that callers of every protocol read (4.4).
 
 A block cannot be sent (the Ruby caller raises before sending). A call to
 an object of the caller's own application does not go on the network: it
@@ -373,7 +387,14 @@ For each query the receiver does, in this order:
      fewer or more chunks): **no reply**, nothing is run.
 2. **Protocol 0 call**: reply on `asterism/<node>/<app>/<object>/call` with
    the error `protocol` (4.4), whatever the payload. The method is not run.
-3. Decode the payload. It is **malformed** unless it is exactly one value
+3. Decode the payload. When it is exactly one value (3.1) and that value
+   is a map whose `protocol` is not the int `2` (another number, absent,
+   or not an int): the error `protocol` (4.4); the method is not run. This
+   comes before the other checks of the map, as another protocol's
+   request may have another shape. A caller of protocol 1 sent no
+   `protocol` and is refused here.
+   Otherwise the payload is
+   **malformed** unless it is exactly one value
    (3.1) and that value is a map whose `method` is a non-empty str, whose
    `args` (when present) is an array and whose `kwargs` (when present) is
    a map with str keys only. A missing or empty payload is malformed.
@@ -426,7 +447,7 @@ of unknown kind):
 | Kind | When | Class | Message (exact for the protocol's own) |
 |---|---|---|---|
 | `malformed` | the request cannot be read (4.3 step 3) | `ArgumentError` | `malformed call (expected a map {"method" => name, "args" => [...], "kwargs" => {...}})` |
-| `protocol` | a protocol 0 call (4.3 step 2) | `Asterism::Error` | free text naming this protocol (the implementation says `<node>/<app> speaks Asterism protocol 2: ...`) |
+| `protocol` | a protocol 0 call (4.3 step 2), or a request whose `protocol` is not 2 (4.3 step 3) | `Asterism::Error` | free text naming this protocol (the implementation says `<node>/<app> speaks Asterism protocol 2: ...` and `<node>/<app> speaks Asterism protocol 2, the call says protocol 1` or `... says no protocol (protocol 1 or older)`) |
 | `no_object` | no such object | `NameError` | `no object <object> exposed by <node>/<app>` |
 | `not_exposed` | the method is not exposed | `NoMethodError` | `undefined method '<method>' for <node>/<app>/<object> (not exposed)` |
 | `arguments` | wrong number of positional arguments | `ArgumentError` | `wrong number of arguments (given <k>, expected <n>)` |
@@ -563,8 +584,19 @@ a payload is ignored) is answered with:
 ### 6.1 Tokens
 
 - At connect, the application declares its **application token**
-  `asterism/<node>/<app>`. Each application of a node has its own, so a
-  node stays present while any of its applications runs.
+  `asterism/<node>/<app>/protocol/<n>`, where `<n>` is the protocol it
+  speaks in decimal (`2`). Each application of a node has its own, so a
+  node stays present while any of its applications runs. A reader learns
+  from it, without a query, that the application is there and which
+  protocol it speaks.
+- The number is in the key, as a liveliness token carries nothing else.
+  `protocol` is an ordinary chunk, not a verbatim one, so `asterism/**`
+  and `asterism/<node>/<app>/**` (the liveliness watch, the duplicate
+  check, a router's rules written for an application) reach it. Object
+  tokens have one chunk after the application; the application token has
+  two, so they never meet, whatever an object is named.
+- Protocol 1 declared `asterism/<node>/<app>` (no number). A reader takes
+  such a token as an application of protocol 1.
 - For each exposed object it declares `asterism/<node>/<app>/<object>`.
   Exposing a name again withdraws the old token and declares a new one.
 - Tokens go away when the application unexposes the object, closes, or its
@@ -576,8 +608,16 @@ a payload is ignored) is answered with:
 
 The implementation declares a liveliness subscriber on `asterism/**` with
 history (the tokens alive when it is declared come first) and reads each
-change by the number of chunks after `asterism/`: two is an application
-token, three an object token; anything else is ignored. `Connection#nodes`,
+change by the chunks after `asterism/`: four whose third is `protocol`
+and whose fourth is a decimal number (digits, no sign, no leading zero)
+is an application token of that protocol, two is an application token of
+protocol 1, three an object token; anything else is ignored.
+An application of another protocol than the reader's is an application
+like the others (`apps`, `on_app_join`, its values); the implementation
+says once per program about each such application (on the warning output
+on CRuby, the log on a board): calls between them are refused (4.4),
+values still flow and may be read wrong. `net.protocol_of("<node>/<app>")`
+gives an application's number (nil while it is not there). `Connection#nodes`,
 `#each` and `on_join` / `on_leave` come from this. Each connection
 follows on its own; the program's other connections are applications
 like any other. ROS 2's tokens
@@ -641,14 +681,12 @@ A node without `protocol` speaks protocol 0 (appendix A): its calls and
 replies are not protocol 2's. A node with another number speaks another
 protocol; a reader shows the number and does not call it.
 
-The implementation does not refuse such a node, but tells it:
-`net.protocol_of(node)` gives the number (0 for none; from the profile
-puts the connection follows, or one query of the profile without the
-icon), and a connection that follows the profile puts
-(`asterism/*/@profile`; on CRuby by default, on a board only with
-`Asterism.watch_protocols = true`, as it costs a subscriber) warns once
-about each node that says another number: its calls may work while its
-statuses, topics and data do not.
+The implementation does not refuse such a node. `net.protocol_of(node)`
+gives the number its applications' tokens say (6.1; the lowest when they
+differ), and for a node none of whose applications is known, the
+profile's (0 for none; one query of the profile without the icon, kept
+until the node leaves). The warning about another protocol comes from
+the tokens (6.2).
 
 ### 7.4 The icon and its hash
 
@@ -1196,7 +1234,7 @@ Expected values may also hold matchers: `{"any": "str"}` (or `"int"`,
 
 ```
 {
-  "format": "asterism-protocol-samples", "version": 7, "protocol": 2,
+  "format": "asterism-protocol-samples", "version": 8, "protocol": 2,
   "names":  {"iut": "iut", "app": "conf", "driver": "drv"},
   "icon":   {"hex": "<the PNG>", "icon_hash": "2a8c0626"},
   "iut":    {"profile": ..., "status": ..., "types": [...], "topics": [...],
@@ -1214,7 +1252,7 @@ Expected values may also hold matchers: `{"any": "str"}` (or `"int"`,
 ```
 
 - **values**: each encoding (hex of one value) is sent as the only argument
-  of `subject.echo` (`{"method" => "echo", "args" => [v]}`) by the driver
+  of `subject.echo` (`{"method" => "echo", "protocol" => 2, "args" => [v]}`) by the driver
   as caller `drv`; the reply must be `{"value" => v}`, or the replies in
   `expect` (what is not a value of the protocol: a malformed call). The
   first encoding is what CRuby writes, the others are other valid forms a
@@ -1242,7 +1280,7 @@ Expected values may also hold matchers: `{"any": "str"}` (or `"int"`,
   subscription in the order they came, a value with an encoding as a bin.
   The driver checks the request it receives against `request` (for a
   call, `call` is the request map with absent `args` / `kwargs` read as
-  empty), answers with the replies in `reply_hex` (none: it finishes the
+  empty; its `protocol` must be 2), answers with the replies in `reply_hex` (none: it finishes the
   query without a reply) and then expects the implementation's report of
   the `outcome`.
 - **profile_puts**, **status_puts**: the puts the implementation must make
@@ -1305,7 +1343,7 @@ Node `linux`, app `demo` (Family mruby's asterism_demo in the simulation),
 called by a CRuby node `mypc`:
 
 ```
-liveliness  asterism/linux/demo                 alive (the application)
+liveliness  asterism/linux/demo/protocol/2      alive (the application, protocol 2)
 liveliness  asterism/linux/demo/apu             alive
 liveliness  asterism/linux/demo/screen          alive
 liveliness  asterism/linux/demo/info            alive
@@ -1314,14 +1352,14 @@ put         asterism/linux/@profile
                a4 686f7374 a3 73696d a9 69636f6e5f68617368 a8 3236633030353933
             {"protocol" => 2, "kind" => "family_mruby", "host" => "sim", "icon_hash" => "26c00593"}
 get         asterism/linux/demo/screen/call/mypc
-            82 a6 6d6574686f64 a3 736179 a4 61726773 91 a5 68656c6c6f
-            {"method" => "say", "args" => ["hello"]}
+            83 a6 6d6574686f64 a3 736179 a8 70726f746f636f6c 02 a4 61726773 91 a5 68656c6c6f
+            {"method" => "say", "protocol" => 2, "args" => ["hello"]}
 reply       asterism/linux/demo/screen/call/mypc
             81 a5 76616c7565 05
             {"value" => 5}
 get         asterism/linux/demo/info/call/mypc
-            81 a6 6d6574686f64 a4 626f6f6d
-            {"method" => "boom"}
+            82 a6 6d6574686f64 a4 626f6f6d a8 70726f746f636f6c 02
+            {"method" => "boom", "protocol" => 2}
 reply       asterism/linux/demo/info/call/mypc
             81 a5 6572726f72 83 a4 6b696e64 a6 726169736564 a5 636c617373
                ac 52756e74696d654572726f72 a7 6d657373616765 ad 626f6f6d206f6e206c696e7578
