@@ -194,6 +194,9 @@ module Asterism
         by_node.keys.sort.map do |n|
           apps = by_node[n].keys.sort.map do |ap|
             h = { "app" => ap }
+            # Another protocol than this program's: said (its token's number).
+            v = @net.protocol_of("#{n}/#{ap}")
+            h["protocol"] = v if v && v != ::Asterism::PROTOCOL
             pr = stat["#{n}/#{ap}"]
             st = pr && ::Asterism::Status.check(pr["status"])
             h["status"] = st if st

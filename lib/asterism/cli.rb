@@ -519,8 +519,15 @@ module Asterism
           next unless @watch_started
           path = key.delete_prefix("asterism/")
           next if path == own || path.start_with?("#{own}/")
-          what = { 2 => "app", 3 => "object" }[path.count("/") + 1]
-          event(alive ? "join" : "leave", path, what: what) if what
+          parts = path.split("/")
+          if parts.size == 3
+            event(alive ? "join" : "leave", path, what: "object")
+          elsif (pr = ::Asterism.token_protocol(parts))
+            # An application's token says its protocol (docs/protocol.md 6.1).
+            app = parts[0, 2].join("/")
+            what = pr == ::Asterism::PROTOCOL ? "app" : "app (protocol #{pr})"
+            event(alive ? "join" : "leave", app, what: what)
+          end
         end)
         hold(net.zenoh.subscribe(Survey::STATUS_ALL) do |sample|
           got = ::Asterism::Status.parse(sample.key, sample.payload)

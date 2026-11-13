@@ -122,7 +122,7 @@ class TestApiCredentials < Minitest::Test
       # runner): ask again until the answer comes.
       deadline = Time.now + 5
       until got || Time.now > deadline
-        q = @listener.get("asterism/alice/t/echo/call/me", payload: MessagePack.pack({ "method" => "echo", "args" => [41] }),
+        q = @listener.get("asterism/alice/t/echo/call/me", payload: MessagePack.pack({ "method" => "echo", "protocol" => 2, "args" => [41] }),
                                                             timeout_ms: 500)
         retry_at = Time.now + 0.5
         until got || Time.now > retry_at

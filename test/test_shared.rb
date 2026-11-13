@@ -247,34 +247,117 @@ class TestShared < Minitest::Test
                  "after the leave: a first value"
   end
 
-  # A node whose profile says another protocol: kept, warned about once,
-  # not refused.
+  # The protocol of an application comes with its token
+  # (asterism/<node>/<app>/protocol/<n>); one of another protocol is kept,
+  # said once per program, not refused; its values still flow.
   def test_shared_places_protocol_of_other_nodes
     viewer = connect("viewer", "v")
     other = connect("pc", "chat")
     assert poll_until { viewer.apps.include?("pc/chat") }
     assert_equal 2, viewer.protocol_of("pc", timeout: 1.0)
+    assert_equal 2, viewer.protocol_of("pc/chat")
     assert_equal Asterism::PROTOCOL, viewer.protocol_of("viewer")
+    assert_equal Asterism::PROTOCOL, viewer.protocol_of("viewer/v")
+    assert_nil viewer.protocol_of("pc/nothing")
     old = Z::Session.open(@loc, mode: :client)
-    tok = old.liveliness("asterism/old/app")
+    joined = []
+    viewer.on_app_join { |n, a| joined << "#{n}/#{a}" }
+    toks = []
     begin
       _out, err = capture_io do
-        old.put("asterism/old/@profile", MessagePack.pack({ "protocol" => 1, "kind" => "cruby" }))
-        assert poll_until { viewer.protocol_known("old") == 1 }
-        old.put("asterism/old/@profile", MessagePack.pack({ "protocol" => 1, "kind" => "cruby", "name" => "x" }))
+        toks << old.liveliness("asterism/old/app")              # protocol 1: no number
+        toks << old.liveliness("asterism/new/app/protocol/3")   # a later protocol
+        toks << old.liveliness("asterism/odd/app/protocol/03")  # not a number: ignored
+        toks << old.liveliness("asterism/odd/app/version/2")    # not an application token
+        assert poll_until { viewer.apps.include?("old/app") && viewer.apps.include?("new/app") }
         Asterism.poll_all
         sleep 0.2
         Asterism.poll_all
       end
-      assert_equal 1, err.scan("node old speaks Asterism protocol 1").size, err
+      assert_equal 1, err.scan("old/app speaks Asterism protocol 1").size, err
+      assert_equal 1, err.scan("new/app speaks Asterism protocol 3").size, err
+      assert_equal 1, viewer.protocol_of("old/app")
+      assert_equal 3, viewer.protocol_of("new/app")
       assert_equal 1, viewer.protocol_of("old")
-      capture_io do
-        old.put("asterism/older/@profile", MessagePack.pack({ "kind" => "cruby" }))
-        assert poll_until { viewer.protocol_known("older") == 0 }, "no protocol field: 0"
+      assert_equal 3, viewer.protocol_of("new")
+      assert_includes joined, "old/app"
+      assert_includes joined, "new/app"
+      refute viewer.apps.include?("odd/app"), viewer.apps.inspect
+      # A value of an application of another protocol still flows.
+      got = []
+      viewer.subscribe("new/app/v") { |v, _| got << v }
+      sleep 0.2
+      old.put("asterism/new/app/v", MessagePack.pack(5))
+      assert poll_until { got == [5] }, got.inspect
+      # A node whose profile says another protocol, none of whose
+      # applications is there: the profile's number (0 for none).
+      # (a raw queryable answered from a thread: the CRuby API's receiving
+      # thread would wait for the lock the waiting call holds)
+      q = old.queryable("asterism/older/@profile")
+      stop = false
+      pumper = Thread.new do
+        until stop
+          old.poll
+          q.each_pending.each do |qq|
+            qq.reply("asterism/older/@profile", MessagePack.pack({ "kind" => "cruby" }))
+            qq.finish
+          end
+          sleep 0.005
+        end
       end
-      assert viewer.apps.include?("old/app"), "not refused"
+      sleep 0.3
+      assert_equal 0, viewer.protocol_of("older", timeout: 1.0)
+      stop = true
+      pumper.join
+      q.close
+      # Calls: a request without the protocol (protocol 1's) or with
+      # another number is refused with the error "protocol" (the method
+      # does not run); the caller raises it as RemoteError, like the others.
+      ran = []
+      calc = Class.new { define_method(:add) { |a, b| ran << [a, b]; a + b } }.new
+      other.expose("calc", calc, methods: { add: 2 })
+      sleep 0.2
+      Asterism.poll_all
+      [{ "method" => "add", "args" => [1, 2] }, { "method" => "add", "protocol" => 3, "args" => [1, 2] }].each do |req|
+        g = old.get("asterism/pc/chat/calc/call/old", payload: MessagePack.pack(req), timeout_ms: 2000)
+        replies = []
+        t0 = Time.now
+        while replies.empty? && Time.now - t0 < 2
+          Asterism.poll_all
+          old.poll
+          g.each_reply.each { |r| replies << MessagePack.unpack(r[1]) }
+          sleep 0.01
+        end
+        err_map = replies.first && replies.first["error"]
+        assert_equal "protocol", err_map && err_map["kind"], replies.inspect
+        assert_match(/speaks Asterism protocol 2, the call says/, err_map["message"])
+      end
+      assert_empty ran, "the method is not run"
+      assert_equal 3, viewer["pc/chat/calc"].add(1, 2), "a call of this protocol goes through"
+      fake = old.queryable("asterism/new/app/**")
+      stop = false
+      pumper = Thread.new do
+        until stop
+          old.poll
+          fake.each_pending.each do |qq|
+            qq.reply(qq.key, MessagePack.pack({ "error" => { "kind" => "protocol", "class" => "Asterism::Error",
+                                                              "message" => "new/app speaks Asterism protocol 3" } }))
+            qq.finish
+          end
+          sleep 0.005
+        end
+      end
+      sleep 0.3
+      e = assert_raises(Asterism::RemoteError) { viewer["new/app/x"].anything }
+      assert_equal "protocol", e.remote_kind
+      stop = true
+      pumper.join
+      fake.close
+      toks.shift.close
+      assert poll_until { !viewer.apps.include?("old/app") }
+      assert_nil viewer.protocol_of("old/app")
     ensure
-      tok.close rescue nil
+      toks.each { |t| t.close rescue nil }
       old.close
       other.close
     end

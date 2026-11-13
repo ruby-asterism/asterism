@@ -187,8 +187,8 @@ begin
   echo_key = "asterism/#{IUT}/#{APP}/subject/call/#{DRV}"
   SAMPLES["values"].each do |v|
     v["encodings"].each_with_index do |enc, n|
-      # {"method" => "echo", "args" => [<the value>]}
-      payload = hexbytes("82a66d6574686f64a46563686fa46172677391#{enc}")
+      # {"method" => "echo", "protocol" => 2, "args" => [<the value>]}
+      payload = hexbytes("83a66d6574686f64a46563686fa870726f746f636f6c02a46172677391#{enc}")
       replies = s.get(echo_key, timeout: 2.0, payload: payload, errors: true).to_a
       expected = v["expect"] || [{ "key" => echo_key, "payload" => { "map" => [["value", v["value"]]] } }]
       why = replies_mismatch(expected, replies)
@@ -239,7 +239,7 @@ begin
         elsif !v.is_a?(Hash)
           why = "the request is not a map: #{TV.from_ruby(v).to_json[0, 120]}"
         else
-          got = { "method" => v["method"], "args" => v.key?("args") ? v["args"] : [],
+          got = { "method" => v["method"], "protocol" => v["protocol"], "args" => v.key?("args") ? v["args"] : [],
                   "kwargs" => v.key?("kwargs") ? v["kwargs"] : {} }
           why = TV.mismatch({ "map" => exp["call"].to_a }, got)
         end
@@ -307,7 +307,7 @@ begin
       answer.(o, q)
     end
   end
-  tokens = [s.liveliness("asterism/#{DRV}"), s.liveliness(rec_key)]
+  tokens = [s.liveliness("asterism/#{DRV}/#{APP}/protocol/2"), s.liveliness(rec_key)]
   finished = wait(90) { lock.synchronize { done } }
   R.add("outgoing", "all steps reported", finished, finished ? nil : "#{reports.size} of #{outs.size} reported")
   outs.each_with_index do |o, n|

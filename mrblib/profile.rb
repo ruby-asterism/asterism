@@ -444,60 +444,68 @@ module Asterism
       ::Asterism::Future.new(self, path, "profile", g, ::Asterism.now_ms + ms, ms)
     end
 
-    # The protocol node speaks (docs/protocol.md 7.3): the "protocol" of its
-    # profile, 0 when its profile has none; nil when it does not answer in
-    # time. Kept from the profile puts the connection follows
-    # (Asterism.watch_protocols, on by default except on a board) or from
-    # the last answer, until the node leaves; otherwise asks its profile
-    # once (without the icon; waits like profile_of). A node that speaks
+    # The protocol a node or an application speaks. protocol_of("node/app"):
+    # the number its application token says (docs/protocol.md 6.1), nil
+    # while it is not there. protocol_of(node): the number its applications'
+    # tokens say (the lowest when they differ); for a node none of whose
+    # applications is known, the "protocol" of its profile (7.3; 0 when the
+    # profile has none, nil when it does not answer in time; asked once,
+    # without the icon, and kept until the node leaves). An application of
     # another protocol than this one (Asterism::PROTOCOL) is not refused:
-    # its calls may work while its data does not; a warning says so once.
+    # its values still flow, calls between them are refused with the error
+    # "protocol" (4.3); each connection says so once per application
+    # (app_protocol_seen).
     def protocol_of(node, timeout: nil, timeout_ms: nil)
+      node = node.to_s
+      cut = node.index("/")
+      unless cut.nil?
+        app = ::Asterism.check_name("app", node[cut + 1, node.size])
+        node = ::Asterism.check_name("node", node[0, cut])
+        return ::Asterism::PROTOCOL if node == @node_id && app == @app
+        return @app_protocols ? @app_protocols["#{node}/#{app}"] : nil
+      end
       node = ::Asterism.check_name("node", node)
       return ::Asterism::PROTOCOL if node == @node_id
       got = protocol_known(node)
       return got unless got.nil?
       h = profile_of(node, icon: false, timeout: timeout, timeout_ms: timeout_ms)
       return nil if h.nil?
-      protocol_seen(node, h)
+      protocol_store(node, h["protocol"])
     end
 
+    # Keeps what a node's profile says of its protocol (0: nothing).
     # @api private
-    def protocol_known(node)
-      @protocols ? @protocols[node] : nil
-    end
-
-    # Keeps the protocol of a node's (cleaned) profile, warns once when it
-    # is not this one's, and returns it.
-    # @api private
-    def protocol_seen(node, h)
-      pr = h["protocol"]
+    def protocol_store(node, pr)
       pr = 0 unless pr.is_a?(Integer)
-      @protocols[node] = pr if @protocols && node != @node_id
-      if pr != ::Asterism::PROTOCOL
-        ::Asterism.warn_text_once("protocol #{node} #{pr}",
-                                  "asterism: node #{node} speaks Asterism protocol #{pr}, this program " \
-                                  "#{::Asterism::PROTOCOL}: its calls may work, its statuses, topics and data " \
-                                  "will not (docs/protocol.md 7.3)")
-      end
+      @protocols[node] = pr if @protocols
       pr
     end
 
-    # The nodes' profile puts (asterism/*/@profile): their protocols.
+    # The protocol of a node known without asking: the lowest its
+    # applications' tokens say, else what its profile said before.
     # @api private
-    def follow_profiles
-      w = @profile_watch
-      return unless w && w.pending > 0
-      samples = w.each_sample
-      i = 0
-      while i < samples.size
-        sm = samples[i]
-        i += 1
-        parts = sm.key.to_s.split("/")
-        next unless parts.size == 3 && parts[2] == ::Asterism::Profile::KEY && parts[1] != @node_id
-        h = ::Asterism::Profile.check(::Asterism::Codec.unpack(sm.payload))
-        protocol_seen(parts[1], h) if h
+    def protocol_known(node)
+      low = nil
+      list = @app_protocols
+      if list
+        prefix = "#{node}/"
+        list.each do |name, pr|
+          low = pr if name.start_with?(prefix) && (low.nil? || pr < low)
+        end
       end
+      return low unless low.nil?
+      @protocols ? @protocols[node] : nil
+    end
+
+    # An application token came: says once (per program) about an
+    # application that speaks another protocol than this one.
+    # @api private
+    def app_protocol_seen(name, pr)
+      return if pr == ::Asterism::PROTOCOL
+      ::Asterism.warn_text_once("protocol #{name} #{pr}",
+                                "asterism: #{name} speaks Asterism protocol #{pr}, this program " \
+                                "#{::Asterism::PROTOCOL}: calls between them are refused (error \"protocol\"), " \
+                                "its values still flow but may be read wrong (docs/protocol.md 6.1)")
     end
 
     # Puts the node's profile without its icon on its key (while connected).

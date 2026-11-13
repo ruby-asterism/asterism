@@ -21,13 +21,15 @@
 #
 # Keys and payloads: protocol 2 (docs/protocol.md):
 #   asterism/<node>/<app>/<object>/call/<caller>
-#                     get: {"method" => name, "args" => [...], "kwargs" => {...}}
+#                     get: {"method" => name, "protocol" => 2, "args" => [...],
+#                     "kwargs" => {...}}
 #                     reply {"value" => v} or
 #                     {"error" => {"kind" => k, "class" => c, "message" => m}}
 #   asterism/<node>/<app>/<object>/meta
 #                     get: reply {"methods" => [{"name" => n, "arity" => a,
 #                     "args" => [...], "doc" => "..."}, ...], "doc" => "..."}
-#   asterism/<node>/<app>             liveliness: the application is up
+#   asterism/<node>/<app>/protocol/2  liveliness: the application is up, and
+#                                     the protocol it speaks
 #   asterism/<node>/<app>/<object>    liveliness: the object is exposed
 #   asterism/<node>/@profile          get: reply the node's profile (profile.rb)
 #   asterism/<node>/<app>/@profile    get: reply the application's own profile, its
@@ -45,6 +47,9 @@ module Asterism
   # The version of the wire protocol this implementation speaks (and the
   # only one: protocol 1 and protocol 0 are not spoken).
   PROTOCOL = 2
+  # The chunk before the protocol's number in an application's token,
+  # asterism/<node>/<app>/protocol/<n> (docs/protocol.md 6.1).
+  PROTOCOL_CHUNK = "protocol"
   # The time limit of a call (net[path] without timeout:), in seconds and
   # in milliseconds.
   DEFAULT_TIMEOUT = 2.0
@@ -363,6 +368,42 @@ module Asterism
     @claims.delete("#{node}/#{app}") if @claims
   end
 
+  # The key of the application token of node/app: it says the protocol the
+  # application speaks (docs/protocol.md 6.1).
+  # @api private
+  def self.app_token_key(node, app)
+    "#{ROOT}/#{node}/#{app}/#{PROTOCOL_CHUNK}/#{PROTOCOL}"
+  end
+
+  # The protocol an application token says, from its chunks after
+  # "asterism/": [node, app, "protocol", "<n>"] says n; [node, app] (the
+  # token of protocol 1, which had no number) says 1; anything else is not
+  # an application token (nil).
+  # @api private
+  def self.token_protocol(parts)
+    return 1 if parts.size == 2
+    return nil unless parts.size == 4 && parts[2] == PROTOCOL_CHUNK
+    digits(parts[3])
+  end
+
+  # The non-negative Integer a chunk of decimal digits says (no sign, no
+  # leading zero, at most 9 digits), or nil. Without a Regexp (PicoRuby
+  # has none).
+  # @api private
+  def self.digits(s)
+    return nil if s.nil? || s.empty? || s.size > 9
+    return nil if s.size > 1 && s[0] == "0"
+    n = 0
+    i = 0
+    while i < s.size
+      c = s.getbyte(i)
+      return nil if c < 48 || c > 57
+      n = n * 10 + (c - 48)
+      i += 1
+    end
+    n
+  end
+
   # A new run id (docs/protocol.md 9.3): 16 random bits. Kernel#rand where
   # there is one (CRuby; mruby-random; PicoRuby's picoruby-rng, on the
   # boards their hardware generator); otherwise the clock mixed with salt
@@ -375,20 +416,6 @@ module Asterism
       nil
     end
     (now_ms % 65536 + (salt % 65536) * 251) % 65536
-  end
-
-  # Whether a connection follows the nodes' profile puts to learn the
-  # protocol each speaks and warn about a node that speaks another
-  # (Connection#protocol_of). On by default except on a board (a
-  # subscriber more); Asterism.watch_protocols = true / false decides for
-  # the connections opened after it.
-  # @api private
-  def self.watch_protocols?
-    @watch_protocols.nil? ? !machine? : @watch_protocols
-  end
-
-  def self.watch_protocols=(on)
-    @watch_protocols = on.nil? ? nil : (on ? true : false)
   end
 
   # Says msg once per key (a String) on the program's warning output.
@@ -532,11 +559,12 @@ module Asterism
     [n, out]
   end
 
-  # The request of a call: a map with the method's name, and the arguments
-  # and keyword arguments when there are any (absent means none).
+  # The request of a call: a map with the method's name, the protocol the
+  # caller speaks, and the arguments and keyword arguments when there are
+  # any (absent means none).
   # @api private
   def self.request(method, args, kwargs)
-    req = { "method" => method.to_s }
+    req = { "method" => method.to_s, "protocol" => PROTOCOL }
     req["args"] = args unless args.nil? || args.empty?
     req["kwargs"] = kwargs unless kwargs.nil? || kwargs.empty?
     req
@@ -649,13 +677,10 @@ module Asterism
     def attach(s, node, app)
       root = ::Asterism::ROOT
       begin
-        @app_token = s.liveliness("#{root}/#{node}/#{app}")
+        @app_token = s.liveliness(::Asterism.app_token_key(node, app))
         @queryable = s.queryable("#{root}/#{node}/#{app}/**", depth: 32)
         @watch = s.liveliness_watch("#{root}/**", depth: ::Asterism.watch_depth)
         @profile_queryable = s.queryable("#{root}/#{node}/#{::Asterism::Profile::KEY}", depth: 4)
-        # The nodes' profile puts, for the protocol each speaks (CRuby; not
-        # on a board unless asked for: Asterism.watch_protocols).
-        @profile_watch = ::Asterism.watch_protocols? ? s.subscribe("#{root}/*/#{::Asterism::Profile::KEY}", depth: 8) : nil
       rescue ::Asterism::Zenoh::Error => e
         s.close
         raise ::Asterism::Disconnected, e.message
@@ -668,6 +693,7 @@ module Asterism
                      #          {method name => meta fields}, the object's doc or nil]
       @alive = {}    # "node/app/object" => node (from liveliness)
       @apps = {}     # "node/app" => node (from liveliness)
+      @app_protocols = {} # "node/app" => the protocol its token says
       @proxies = {}
       @lost = nil
       @known = []    # the other nodes told to on_join so far
@@ -684,7 +710,8 @@ module Asterism
       @subscriptions = []
       @pubs_put = nil
       @app_queryable = nil
-      @protocols = {} # node => the protocol its profile says (0: none said)
+      @protocols = {} # node => the protocol its profile says (0: none said), asked
+                      # when none of its applications' tokens is known
       @run_id = ::Asterism.new_run_id(object_id)
       ::Asterism.register(self)
       tell_profile # for those who follow the profiles (the reply is the queryable's)
@@ -764,6 +791,7 @@ module Asterism
       @objects = {}
       @alive = {}
       @apps = {}
+      @app_protocols = {}
       @node_list = nil
       @nodes_changed = true
       @proxies = {}
@@ -772,7 +800,6 @@ module Asterism
       @queryable = nil
       @watch = nil
       @profile_queryable = nil
-      @profile_watch = nil
       @app_queryable = nil
       @status_put = nil
       release_data
@@ -1118,7 +1145,6 @@ module Asterism
       answer_profile
       answer_app_profile
       follow_liveliness
-      follow_profiles
       follow_pubs
       !@session.nil?
     rescue ::Asterism::Zenoh::Error => e
@@ -1185,20 +1211,28 @@ module Asterism
         i += 1
         rest = key[cut, key.length].to_s
         parts = rest.split("/")
-        if parts.size == 2 # an application: asterism/<node>/<app>
-          if alive
-            @apps[rest] = parts[0]
-          else
-            @apps.delete(rest)
-            # What the readers keep of it goes with it (protocol.md 8.5, 9.4).
-            forget_app(rest)
-          end
-        elsif parts.size == 3 # an object: asterism/<node>/<app>/<object>
+        if parts.size == 3 # an object: asterism/<node>/<app>/<object>
           if alive
             @alive[rest] = parts[0]
           else
             @alive.delete(rest)
           end
+          next
+        end
+        # An application: asterism/<node>/<app>/protocol/<n> (or protocol
+        # 1's asterism/<node>/<app>).
+        pr = ::Asterism.token_protocol(parts)
+        next if pr.nil?
+        name = "#{parts[0]}/#{parts[1]}"
+        if alive
+          @apps[name] = parts[0]
+          @app_protocols[name] = pr
+          app_protocol_seen(name, pr)
+        else
+          @apps.delete(name)
+          @app_protocols.delete(name)
+          # What the readers keep of it goes with it (protocol.md 8.5, 9.4).
+          forget_app(name)
         end
       end
       @node_list = nil
@@ -1425,7 +1459,19 @@ module Asterism
     # the caller's node ID, verified how it is known (CurrentCall).
     # @api private
     def dispatch(obj_name, payload, from, verified)
-      req = ::Asterism.parse_request(::Asterism::Codec.unpack(payload))
+      raw = ::Asterism::Codec.unpack(payload)
+      if raw.is_a?(Hash)
+        # The protocol first: a caller of another protocol may send another
+        # shape of request (docs/protocol.md 4.3 step 3).
+        pr = raw["protocol"]
+        unless pr.is_a?(Integer) && pr == ::Asterism::PROTOCOL
+          said = pr.is_a?(Integer) ? "protocol #{pr}" : "no protocol (protocol 1 or older)"
+          return ::Asterism.error_reply("protocol", "Asterism::Error",
+                                        "#{@node_id}/#{@app} speaks Asterism protocol #{::Asterism::PROTOCOL}, " \
+                                        "the call says #{said}")
+        end
+      end
+      req = ::Asterism.parse_request(raw)
       return ::Asterism.error_reply("malformed", "ArgumentError", ::Asterism::MALFORMED) unless req
       entry = @objects[obj_name]
       unless entry

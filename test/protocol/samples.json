@@ -1,6 +1,6 @@
 {
   "format": "asterism-protocol-samples",
-  "version": 7,
+  "version": 8,
   "protocol": 2,
   "describes": "the Asterism wire protocol 2 (docs/protocol.md)",
   "names": {
@@ -1059,7 +1059,7 @@
       "id": "call add",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "82a66d6574686f64a3616464a461726773920203",
+      "payload_hex": "83a66d6574686f64a3616464a870726f746f636f6c02a461726773920203",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1081,7 +1081,7 @@
       "id": "call with an empty kwargs map",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "83a66d6574686f64a3616464a461726773920203a66b776172677380",
+      "payload_hex": "84a66d6574686f64a3616464a870726f746f636f6c02a461726773920203a66b776172677380",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1103,7 +1103,7 @@
       "id": "call kwargs",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "83a66d6574686f64a26b77a4617267739101a66b776172677381a16202",
+      "payload_hex": "84a66d6574686f64a26b77a870726f746f636f6c02a4617267739101a66b776172677381a16202",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1131,7 +1131,7 @@
       "id": "call kwargs two",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "83a66d6574686f64a26b77a4617267739101a66b776172677382a163a178a16202",
+      "payload_hex": "84a66d6574686f64a26b77a870726f746f636f6c02a4617267739101a66b776172677382a163a178a16202",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1159,7 +1159,7 @@
       "id": "call kwargs nil",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "83a66d6574686f64a26b77a4617267739101a66b776172677381a162c0",
+      "payload_hex": "84a66d6574686f64a26b77a870726f746f636f6c02a4617267739101a66b776172677381a162c0",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1186,7 +1186,7 @@
       "id": "call no args key",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "81a66d6574686f64a3616e79",
+      "payload_hex": "82a66d6574686f64a3616e79a870726f746f636f6c02",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1209,7 +1209,7 @@
       "id": "call unknown keyword",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "83a66d6574686f64a26b77a4617267739101a66b776172677381a17a02",
+      "payload_hex": "84a66d6574686f64a26b77a870726f746f636f6c02a4617267739101a66b776172677381a17a02",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1247,7 +1247,7 @@
       "id": "call method with ?",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "81a66d6574686f64a36f6b3f",
+      "payload_hex": "82a66d6574686f64a36f6b3fa870726f746f636f6c02",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1267,7 +1267,7 @@
       "id": "call any arity, 3",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "82a66d6574686f64a3616e79a46172677393010203",
+      "payload_hex": "83a66d6574686f64a3616e79a870726f746f636f6c02a46172677393010203",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1289,7 +1289,7 @@
       "id": "call any arity, 0",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "82a66d6574686f64a3616e79a46172677390",
+      "payload_hex": "83a66d6574686f64a3616e79a870726f746f636f6c02a46172677390",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1311,7 +1311,7 @@
       "id": "call ignores unknown request keys",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "83a66d6574686f64a3616464a461726773920102a56c61746572c3",
+      "payload_hex": "84a66d6574686f64a3616464a870726f746f636f6c02a461726773920102a56c61746572c3",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1334,7 +1334,7 @@
       "id": "call wrong arity",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "82a66d6574686f64a3616464a4617267739101",
+      "payload_hex": "83a66d6574686f64a3616464a870726f746f636f6c02a4617267739101",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1369,7 +1369,7 @@
       "id": "call not exposed",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "81a66d6574686f64a6736563726574",
+      "payload_hex": "82a66d6574686f64a6736563726574a870726f746f636f6c02",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1404,7 +1404,7 @@
       "id": "call no such method",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "81a66d6574686f64a46e6f7065",
+      "payload_hex": "82a66d6574686f64a46e6f7065a870726f746f636f6c02",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1439,7 +1439,7 @@
       "id": "call raises",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "81a66d6574686f64a4626f6f6d",
+      "payload_hex": "82a66d6574686f64a4626f6f6da870726f746f636f6c02",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1475,7 +1475,7 @@
       "id": "call no such object",
       "key": "asterism/iut/conf/nothing/call/drv",
       "params": null,
-      "payload_hex": "82a66d6574686f64a46563686fa4617267739101",
+      "payload_hex": "83a66d6574686f64a46563686fa870726f746f636f6c02a4617267739101",
       "replies": [
         {
           "key": "asterism/iut/conf/nothing/call/drv",
@@ -1510,7 +1510,7 @@
       "id": "call returns what cannot be sent",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "81a66d6574686f64aa756e73656e6461626c65",
+      "payload_hex": "82a66d6574686f64aa756e73656e6461626c65a870726f746f636f6c02",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1547,7 +1547,7 @@
       "id": "call reports the caller",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "81a66d6574686f64a677686f616d69",
+      "payload_hex": "82a66d6574686f64a677686f616d69a870726f746f636f6c02",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1573,7 +1573,7 @@
       "id": "call another caller",
       "key": "asterism/iut/conf/subject/call/someone",
       "params": null,
-      "payload_hex": "81a66d6574686f64a677686f616d69",
+      "payload_hex": "82a66d6574686f64a677686f616d69a870726f746f636f6c02",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/someone",
@@ -1634,7 +1634,7 @@
       "id": "malformed: no method",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "81a4617267739101",
+      "payload_hex": "82a870726f746f636f6c02a4617267739101",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1669,7 +1669,7 @@
       "id": "malformed: method empty",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "81a66d6574686f64a0",
+      "payload_hex": "82a66d6574686f64a0a870726f746f636f6c02",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1704,7 +1704,7 @@
       "id": "malformed: method an int",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "81a66d6574686f6405",
+      "payload_hex": "82a66d6574686f6405a870726f746f636f6c02",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1739,7 +1739,7 @@
       "id": "malformed: args a map",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "82a66d6574686f64a3616464a46172677380",
+      "payload_hex": "83a66d6574686f64a3616464a870726f746f636f6c02a46172677380",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1774,7 +1774,7 @@
       "id": "malformed: args nil",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "82a66d6574686f64a3616464a461726773c0",
+      "payload_hex": "83a66d6574686f64a3616464a870726f746f636f6c02a461726773c0",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1809,7 +1809,7 @@
       "id": "malformed: kwargs an array",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "83a66d6574686f64a26b77a4617267739101a66b776172677390",
+      "payload_hex": "84a66d6574686f64a26b77a870726f746f636f6c02a4617267739101a66b776172677390",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1844,7 +1844,7 @@
       "id": "malformed: kwargs with an int key",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "83a66d6574686f64a26b77a4617267739101a66b7761726773810102",
+      "payload_hex": "84a66d6574686f64a26b77a870726f746f636f6c02a4617267739101a66b7761726773810102",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1949,7 +1949,7 @@
       "id": "malformed: trailing bytes",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "82a66d6574686f64a3616464a46172677392020300",
+      "payload_hex": "83a66d6574686f64a3616464a870726f746f636f6c02a46172677392020300",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -1985,7 +1985,7 @@
       "id": "malformed: two values",
       "key": "asterism/iut/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "82a66d6574686f64a3616464a46172677392020382a66d6574686f64a3616464a461726773920203",
+      "payload_hex": "83a66d6574686f64a3616464a870726f746f636f6c02a46172677392020383a66d6574686f64a3616464a870726f746f636f6c02a461726773920203",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -2014,6 +2014,231 @@
           }
         }
       ],
+      "portable": true
+    },
+    {
+      "id": "protocol: none (protocol 1's request)",
+      "key": "asterism/iut/conf/subject/call/drv",
+      "params": null,
+      "payload_hex": "82a66d6574686f64a3616464a461726773920203",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call/drv",
+          "payload": {
+            "map": [
+              [
+                "error",
+                {
+                  "map": [
+                    [
+                      "kind",
+                      "protocol"
+                    ],
+                    [
+                      "class",
+                      "Asterism::Error"
+                    ],
+                    [
+                      "message",
+                      {
+                        "any": "str"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "note": "a protocol 1 caller sent no protocol field: refused, the method is not run",
+      "portable": true
+    },
+    {
+      "id": "protocol: 1",
+      "key": "asterism/iut/conf/subject/call/drv",
+      "params": null,
+      "payload_hex": "83a66d6574686f64a3616464a870726f746f636f6c01a461726773920203",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call/drv",
+          "payload": {
+            "map": [
+              [
+                "error",
+                {
+                  "map": [
+                    [
+                      "kind",
+                      "protocol"
+                    ],
+                    [
+                      "class",
+                      "Asterism::Error"
+                    ],
+                    [
+                      "message",
+                      {
+                        "any": "str"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "protocol: 3",
+      "key": "asterism/iut/conf/subject/call/drv",
+      "params": null,
+      "payload_hex": "83a66d6574686f64a3616464a870726f746f636f6c03a461726773920203",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call/drv",
+          "payload": {
+            "map": [
+              [
+                "error",
+                {
+                  "map": [
+                    [
+                      "kind",
+                      "protocol"
+                    ],
+                    [
+                      "class",
+                      "Asterism::Error"
+                    ],
+                    [
+                      "message",
+                      {
+                        "any": "str"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "note": "a later protocol is refused too",
+      "portable": true
+    },
+    {
+      "id": "protocol: a str",
+      "key": "asterism/iut/conf/subject/call/drv",
+      "params": null,
+      "payload_hex": "83a66d6574686f64a3616464a870726f746f636f6ca132a461726773920203",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call/drv",
+          "payload": {
+            "map": [
+              [
+                "error",
+                {
+                  "map": [
+                    [
+                      "kind",
+                      "protocol"
+                    ],
+                    [
+                      "class",
+                      "Asterism::Error"
+                    ],
+                    [
+                      "message",
+                      {
+                        "any": "str"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "protocol: a float",
+      "key": "asterism/iut/conf/subject/call/drv",
+      "params": null,
+      "payload_hex": "83a66d6574686f64a3616464a870726f746f636f6ccb4000000000000000a461726773920203",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call/drv",
+          "payload": {
+            "map": [
+              [
+                "error",
+                {
+                  "map": [
+                    [
+                      "kind",
+                      "protocol"
+                    ],
+                    [
+                      "class",
+                      "Asterism::Error"
+                    ],
+                    [
+                      "message",
+                      {
+                        "any": "str"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "portable": true
+    },
+    {
+      "id": "protocol: checked before the request's shape",
+      "key": "asterism/iut/conf/subject/call/drv",
+      "params": null,
+      "payload_hex": "82a66d6574686f6405a870726f746f636f6c03",
+      "replies": [
+        {
+          "key": "asterism/iut/conf/subject/call/drv",
+          "payload": {
+            "map": [
+              [
+                "error",
+                {
+                  "map": [
+                    [
+                      "kind",
+                      "protocol"
+                    ],
+                    [
+                      "class",
+                      "Asterism::Error"
+                    ],
+                    [
+                      "message",
+                      {
+                        "any": "str"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "note": "another protocol's request may have another shape: the protocol comes first",
       "portable": true
     },
     {
@@ -2058,7 +2283,7 @@
       "id": "ignored: object *",
       "key": "asterism/iut/conf/*/call/drv",
       "params": null,
-      "payload_hex": "82a66d6574686f64a46563686fa4617267739101",
+      "payload_hex": "83a66d6574686f64a46563686fa870726f746f636f6c02a4617267739101",
       "replies": [],
       "portable": true
     },
@@ -2066,7 +2291,7 @@
       "id": "ignored: caller *",
       "key": "asterism/iut/conf/subject/call/*",
       "params": null,
-      "payload_hex": "82a66d6574686f64a46563686fa4617267739101",
+      "payload_hex": "83a66d6574686f64a46563686fa870726f746f636f6c02a4617267739101",
       "replies": [],
       "note": "the caller chunk must be a name: a wildcard is not answered (the method is not run)",
       "portable": true
@@ -2075,7 +2300,7 @@
       "id": "ignored: caller **",
       "key": "asterism/iut/conf/subject/call/**",
       "params": null,
-      "payload_hex": "82a66d6574686f64a46563686fa4617267739101",
+      "payload_hex": "83a66d6574686f64a46563686fa870726f746f636f6c02a4617267739101",
       "replies": [],
       "portable": true
     },
@@ -2083,7 +2308,7 @@
       "id": "ignored: caller verbatim",
       "key": "asterism/iut/conf/subject/call/@x",
       "params": null,
-      "payload_hex": "82a66d6574686f64a46563686fa4617267739101",
+      "payload_hex": "83a66d6574686f64a46563686fa870726f746f636f6c02a4617267739101",
       "replies": [],
       "portable": true
     },
@@ -2091,7 +2316,7 @@
       "id": "ignored: another kind",
       "key": "asterism/iut/conf/subject/other",
       "params": null,
-      "payload_hex": "82a66d6574686f64a46563686fa4617267739101",
+      "payload_hex": "83a66d6574686f64a46563686fa870726f746f636f6c02a4617267739101",
       "replies": [],
       "portable": true
     },
@@ -2099,7 +2324,7 @@
       "id": "ignored: seven chunks",
       "key": "asterism/iut/conf/subject/call/drv/x",
       "params": null,
-      "payload_hex": "82a66d6574686f64a46563686fa4617267739101",
+      "payload_hex": "83a66d6574686f64a46563686fa870726f746f636f6c02a4617267739101",
       "replies": [],
       "portable": true
     },
@@ -2123,7 +2348,7 @@
       "id": "call through a wildcard node",
       "key": "asterism/*/conf/subject/call/drv",
       "params": null,
-      "payload_hex": "82a66d6574686f64a3616464a461726773920101",
+      "payload_hex": "83a66d6574686f64a3616464a870726f746f636f6c02a461726773920101",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -2146,7 +2371,7 @@
       "id": "call through **",
       "key": "asterism/iut/**/subject/call/drv",
       "params": null,
-      "payload_hex": "82a66d6574686f64a3616464a461726773920102",
+      "payload_hex": "83a66d6574686f64a3616464a870726f746f636f6c02a461726773920102",
       "replies": [
         {
           "key": "asterism/iut/conf/subject/call/drv",
@@ -2304,7 +2529,7 @@
       "id": "meta ignores a payload",
       "key": "asterism/iut/conf/other/meta",
       "params": null,
-      "payload_hex": "81a66d6574686f64a178",
+      "payload_hex": "82a66d6574686f64a178a870726f746f636f6c02",
       "replies": [
         {
           "key": "asterism/iut/conf/other/meta",
@@ -3507,6 +3732,9 @@
         "params": "",
         "call": {
           "method": "plain",
+          "protocol": {
+            "int": "2"
+          },
           "args": [],
           "kwargs": {
             "map": []
@@ -3547,6 +3775,9 @@
         "params": "",
         "call": {
           "method": "args",
+          "protocol": {
+            "int": "2"
+          },
           "args": [
             {
               "int": "1"
@@ -3613,6 +3844,9 @@
         "params": "",
         "call": {
           "method": "kw",
+          "protocol": {
+            "int": "2"
+          },
           "args": [
             {
               "int": "1"
@@ -3674,6 +3908,9 @@
         "params": "",
         "call": {
           "method": "sym",
+          "protocol": {
+            "int": "2"
+          },
           "args": [
             "abc",
             {
@@ -3753,6 +3990,9 @@
         "params": "",
         "call": {
           "method": "nest",
+          "protocol": {
+            "int": "2"
+          },
           "args": [
             [
               [
@@ -3842,6 +4082,9 @@
         "params": "",
         "call": {
           "method": "num",
+          "protocol": {
+            "int": "2"
+          },
           "args": [
             {
               "int": "4611686018427387904"
@@ -3887,6 +4130,9 @@
         "params": "",
         "call": {
           "method": "utf8",
+          "protocol": {
+            "int": "2"
+          },
           "args": [
             "日本語"
           ],
@@ -3922,6 +4168,9 @@
         "params": "",
         "call": {
           "method": "bytes",
+          "protocol": {
+            "int": "2"
+          },
           "args": [
             {
               "bin_hex": "ff00"
@@ -3957,6 +4206,9 @@
         "params": "",
         "call": {
           "method": "oops",
+          "protocol": {
+            "int": "2"
+          },
           "args": [],
           "kwargs": {
             "map": []
@@ -3988,6 +4240,9 @@
         "params": "",
         "call": {
           "method": "oops2",
+          "protocol": {
+            "int": "2"
+          },
           "args": [],
           "kwargs": {
             "map": []
@@ -4018,6 +4273,9 @@
         "params": "",
         "call": {
           "method": "oops3",
+          "protocol": {
+            "int": "2"
+          },
           "args": [],
           "kwargs": {
             "map": []
@@ -4049,6 +4307,9 @@
         "params": "",
         "call": {
           "method": "both",
+          "protocol": {
+            "int": "2"
+          },
           "args": [],
           "kwargs": {
             "map": []
@@ -4079,6 +4340,9 @@
         "params": "",
         "call": {
           "method": "bad1",
+          "protocol": {
+            "int": "2"
+          },
           "args": [],
           "kwargs": {
             "map": []
@@ -4109,6 +4373,9 @@
         "params": "",
         "call": {
           "method": "bad2",
+          "protocol": {
+            "int": "2"
+          },
           "args": [],
           "kwargs": {
             "map": []
@@ -4139,6 +4406,9 @@
         "params": "",
         "call": {
           "method": "bad3",
+          "protocol": {
+            "int": "2"
+          },
           "args": [],
           "kwargs": {
             "map": []
@@ -4169,6 +4439,9 @@
         "params": "",
         "call": {
           "method": "bad4",
+          "protocol": {
+            "int": "2"
+          },
           "args": [],
           "kwargs": {
             "map": []
@@ -4199,6 +4472,9 @@
         "params": "",
         "call": {
           "method": "silent",
+          "protocol": {
+            "int": "2"
+          },
           "args": [],
           "kwargs": {
             "map": []
@@ -4225,6 +4501,9 @@
         "params": "",
         "call": {
           "method": "twice",
+          "protocol": {
+            "int": "2"
+          },
           "args": [],
           "kwargs": {
             "map": []
@@ -5068,6 +5347,9 @@
         "params": "",
         "call": {
           "method": "feed",
+          "protocol": {
+            "int": "2"
+          },
           "args": [],
           "kwargs": {
             "map": []
@@ -5460,12 +5742,12 @@
   ],
   "liveliness": {
     "alive": [
-      "asterism/iut/conf",
+      "asterism/iut/conf/protocol/2",
       "asterism/iut/conf/subject",
       "asterism/iut/conf/other"
     ],
     "gone_after_close": [
-      "asterism/iut/conf",
+      "asterism/iut/conf/protocol/2",
       "asterism/iut/conf/subject",
       "asterism/iut/conf/other"
     ]

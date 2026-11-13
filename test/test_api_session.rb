@@ -60,7 +60,7 @@ class TestApiSession < Minitest::Test
 
       # Calls are answered meanwhile.
       g = @other.get("asterism/me/t/echo/call/other", timeout: 2.0,
-                     payload: MessagePack.pack({ "method" => "echo", "args" => [7] }))
+                     payload: MessagePack.pack({ "method" => "echo", "protocol" => 2, "args" => [7] }))
       replies = []
       wait_for { d = g.done?; replies.concat(g.each_reply); d }
       assert_equal({ "value" => 7 }, MessagePack.unpack(replies[0][1]))

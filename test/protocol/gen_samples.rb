@@ -132,7 +132,7 @@ q = ->(id, key, payload_hex, replies, params: nil, note: nil, portable: true) do
   inc << h
 end
 req = ->(method, args = nil, kwargs = nil) do
-  r = { "method" => method }
+  r = { "method" => method, "protocol" => 2 }
   r["args"] = args if args
   r["kwargs"] = kwargs if kwargs
   pk(r)
@@ -153,7 +153,7 @@ q.("call unknown keyword", call_key, req.("kw", [1], { "z" => 2 }), err.("raised
 q.("call method with ?", call_key, req.("ok?"), ok.(true))
 q.("call any arity, 3", call_key, req.("any", [1, 2, 3]), ok.(i(3)))
 q.("call any arity, 0", call_key, req.("any", []), ok.(i(0)))
-q.("call ignores unknown request keys", call_key, pk({ "method" => "add", "args" => [1, 2], "later" => true }), ok.(i(3)),
+q.("call ignores unknown request keys", call_key, pk({ "method" => "add", "protocol" => 2, "args" => [1, 2], "later" => true }), ok.(i(3)),
   note: "room for later additions to the request")
 q.("call wrong arity", call_key, req.("add", [1]),
   err.("arguments", "ArgumentError", "wrong number of arguments (given 1, expected 2)"))
@@ -173,17 +173,29 @@ q.("call another caller", "#{base}/subject/call/someone", req.("whoami"),
   ok.(["someone", "claimed", "subject", "whoami"], "#{base}/subject/call/someone"),
   note: "the caller chunk is a claim: only a router's access control makes it binding")
 bad.("malformed: an array (protocol 0's form)", pk(["add", [2, 3], {}]))
-bad.("malformed: no method", pk({ "args" => [1] }))
+bad.("malformed: no method", pk({ "protocol" => 2, "args" => [1] }))
 bad.("malformed: method empty", req.(""))
-bad.("malformed: method an int", pk({ "method" => 5 }))
-bad.("malformed: args a map", pk({ "method" => "add", "args" => {} }))
-bad.("malformed: args nil", pk({ "method" => "add", "args" => nil }))
-bad.("malformed: kwargs an array", pk({ "method" => "kw", "args" => [1], "kwargs" => [] }))
-bad.("malformed: kwargs with an int key", pk({ "method" => "kw", "args" => [1], "kwargs" => { 1 => 2 } }))
+bad.("malformed: method an int", pk({ "method" => 5, "protocol" => 2 }))
+bad.("malformed: args a map", pk({ "method" => "add", "protocol" => 2, "args" => {} }))
+bad.("malformed: args nil", pk({ "method" => "add", "protocol" => 2, "args" => nil }))
+bad.("malformed: kwargs an array", pk({ "method" => "kw", "protocol" => 2, "args" => [1], "kwargs" => [] }))
+bad.("malformed: kwargs with an int key", pk({ "method" => "kw", "protocol" => 2, "args" => [1], "kwargs" => { 1 => 2 } }))
 bad.("malformed: no payload", nil)
 bad.("malformed: not MessagePack", "c1")
 bad.("malformed: trailing bytes", req.("add", [2, 3]) + "00", note: "a payload is exactly one value")
 bad.("malformed: two values", req.("add", [2, 3]) + req.("add", [2, 3]))
+# The protocol the caller speaks (4.1, 4.3 step 3): another number, none
+# or not an int is refused before the request is read further.
+proto = ->(id, payload_hex, note: nil) { q.(id, call_key, payload_hex, err.("protocol", "Asterism::Error", ANY_STR), note: note) }
+proto.("protocol: none (protocol 1's request)", pk({ "method" => "add", "args" => [2, 3] }),
+       note: "a protocol 1 caller sent no protocol field: refused, the method is not run")
+proto.("protocol: 1", pk({ "method" => "add", "protocol" => 1, "args" => [2, 3] }))
+proto.("protocol: 3", pk({ "method" => "add", "protocol" => 3, "args" => [2, 3] }),
+       note: "a later protocol is refused too")
+proto.("protocol: a str", pk({ "method" => "add", "protocol" => "2", "args" => [2, 3] }))
+proto.("protocol: a float", pk({ "method" => "add", "protocol" => 2.0, "args" => [2, 3] }))
+proto.("protocol: checked before the request's shape", pk({ "method" => 5, "protocol" => 3 }),
+       note: "another protocol's request may have another shape: the protocol comes first")
 q.("protocol 0 call (no caller chunk)", "#{base}/subject/call", pk(["add", [2, 3], {}]),
   err.("protocol", "Asterism::Error", ANY_STR, "#{base}/subject/call"),
   note: "a call on protocol 0's key is refused at once, whatever its payload")
@@ -283,7 +295,7 @@ o = ->(id, act, request, reply_hex, outcome, note: nil) do
 end
 call = ->(method, args = [], kwargs = []) { { "call" => method, "args" => args, "kwargs" => m(*kwargs) } }
 reqc = ->(method, args = [], kwargs = []) do
-  { "key" => rec_call, "params" => "", "call" => { "method" => method, "args" => args, "kwargs" => m(*kwargs) } }
+  { "key" => rec_call, "params" => "", "call" => { "method" => method, "protocol" => i(2), "args" => args, "kwargs" => m(*kwargs) } }
 end
 okv = ->(x) { [pk({ "value" => x })] }
 o.("plain", call.("plain"), reqc.("plain"), okv.(nil), ["ok", nil],
@@ -444,7 +456,7 @@ o.("receive values", { "feed" => [
   sfp.(sk, pk(7), [9, nil, nil, "other/a"]),
   sfp.(gk, pk("hi"), [5, 3, T, "x/y"])
 ], "expect" => 20 },
-  { "key" => rec_call, "params" => "", "call" => { "method" => "feed", "args" => [], "kwargs" => m } }, okv.(nil),
+  { "key" => rec_call, "params" => "", "call" => { "method" => "feed", "protocol" => i(2), "args" => [], "kwargs" => m } }, okv.(nil),
   ["ok", [got.("a", i(1), i(0), nil, "msgpack", i(0), false),
           got.("a", "two", i(1), i(T), "msgpack", i(0), false),
           got.("a", nil, i(4), nil, "msgpack", i(2), false),
@@ -476,7 +488,7 @@ o.("receive values", { "feed" => [
 
 samples = {
   "format" => "asterism-protocol-samples",
-  "version" => 7,
+  "version" => 8,
   "protocol" => 2,
   "describes" => "the Asterism wire protocol 2 (docs/protocol.md)",
   "names" => { "iut" => IUT, "app" => APP, "driver" => DRV },
@@ -504,8 +516,9 @@ samples = {
   "incoming" => inc,
   "outgoing" => outs,
   "liveliness" => {
-    "alive" => ["asterism/#{IUT}/#{APP}", "asterism/#{IUT}/#{APP}/subject", "asterism/#{IUT}/#{APP}/other"],
-    "gone_after_close" => ["asterism/#{IUT}/#{APP}", "asterism/#{IUT}/#{APP}/subject", "asterism/#{IUT}/#{APP}/other"]
+    "alive" => ["asterism/#{IUT}/#{APP}/protocol/2", "asterism/#{IUT}/#{APP}/subject", "asterism/#{IUT}/#{APP}/other"],
+    "gone_after_close" => ["asterism/#{IUT}/#{APP}/protocol/2", "asterism/#{IUT}/#{APP}/subject",
+                           "asterism/#{IUT}/#{APP}/other"]
   },
   "profile_puts" => [
     { "when" => "connect", "key" => "asterism/#{IUT}/@profile",

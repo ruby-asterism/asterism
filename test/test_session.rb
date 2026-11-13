@@ -75,7 +75,7 @@ class TestAsterismSession < Minitest::Test
     # Calls are still answered by poll on the shared session.
     @net.expose("echo", Echo.new, methods: [:echo])
     g = @other.get("asterism/me/t/echo/call/other", timeout: 2.0,
-                   payload: MessagePack.pack({ "method" => "echo", "args" => [5] }))
+                   payload: MessagePack.pack({ "method" => "echo", "protocol" => 2, "args" => [5] }))
     replies = []
     wait_for { @net.poll; node.poll; d = g.done?; replies.concat(g.each_reply); d }
     assert_equal({ "value" => 5 }, MessagePack.unpack(replies[0][1]))
@@ -129,7 +129,7 @@ class TestAsterismSession < Minitest::Test
     end
     poll_some.call
 
-    t1 = @other.liveliness("asterism/n1/main")
+    t1 = @other.liveliness("asterism/n1/main/protocol/2")
     assert wait_for { @net.poll; events.size == 1 }
     assert_equal [[:join, "n1"]], events
     assert_equal %w[me n1], @net.nodes
@@ -161,7 +161,7 @@ class TestAsterismSession < Minitest::Test
     assert_equal %w[me n2], @net.nodes
 
     # A token and an object of one node in one burst: one join.
-    t3 = @other.liveliness("asterism/n3/main")
+    t3 = @other.liveliness("asterism/n3/main/protocol/2")
     o3 = @other.liveliness("asterism/n3/app/x")
     assert wait_for { @net.poll; events.size == 4 }
     poll_some.call
@@ -171,7 +171,7 @@ class TestAsterismSession < Minitest::Test
     # A block added later is told only of what comes after.
     late = []
     @net.on_join { |n| late << n }
-    t4 = @other.liveliness("asterism/n4/main")
+    t4 = @other.liveliness("asterism/n4/main/protocol/2")
     assert wait_for { @net.poll; late == ["n4"] }
     t4.close
     assert wait_for { @net.poll; events.last == [:leave, "n4"] }
