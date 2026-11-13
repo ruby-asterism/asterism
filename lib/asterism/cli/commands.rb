@@ -15,7 +15,7 @@ module Asterism
       },
       "app" => {
         "list" => ["", "the applications, node/app a line"],
-        "info" => ["NODE/APP", "one application: its status and its objects"]
+        "info" => ["NODE/APP", "one application: its status, topics, types and objects"]
       },
       "object" => {
         "list" => ["[PATTERN]", "the objects, node/app/object a line (PATTERN: * and ** for whole parts)"],
@@ -25,6 +25,12 @@ module Asterism
                                 "by default; --timeout 5.0)"],
         "echo" => ["PATH [KEY]", "the values it puts there as they come (the text: what changed; --once: " \
                                  "the first; --raw: each whole)"]
+      },
+      "topic" => {
+        "list" => ["[NODE/APP]", "the topics the applications put values on, node/app/name a line, with their " \
+                                 "types (NODE/APP: * for a part; */* by default)"],
+        "info" => ["PATH", "one topic (node/app/name): its type, encoding, unit and text, and the definition " \
+                           "of its type when the application defines it"]
       },
       "status" => {
         "get" => ["NODE/APP", "an application's status, now"],
@@ -67,7 +73,7 @@ module Asterism
     LOCAL = %w[mcp completion].freeze
 
     # What a command does on the network. Every command only reads (the
-    # tokens, metas, profiles, statuses, the values the applications put),
+    # tokens, metas, profiles, statuses, topics, the values the applications put),
     # except call, and ping with --call: those run a method of an object.
     #
     #   :call   path:, method: say which

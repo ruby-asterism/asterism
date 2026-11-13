@@ -8,6 +8,8 @@
 #   asterism object list 'games/games/*' / object info games/games/othello1
 #   asterism object find join             # the objects that have join
 #   asterism status get  games/games      # echo: as it changes, hz: how often
+#   asterism topic list  'games/*'        # the topics put on, with their types
+#   asterism topic info  games/games/othello1/state
 #   asterism object get  games/games/othello1 state   # the next put there
 #   asterism call        games/games/othello1 view '"<token>"'
 #   asterism ping / watch / tree / mcp    # as before
@@ -739,11 +741,48 @@ module Asterism
       "#{paint(n['node'], :node)}#{profile_text(n['profile'])}"
     end
 
-    # An application's status (when it has one) under "status:", indented.
+    # An application's status (when it has one) under "status:", and its
+    # topics (when it has some) under "topics:", indented.
     def status_block(app, indent)
-      return unless app.key?("status")
-      @out.puts "#{' ' * indent}#{paint('status:', :note)}"
-      Text.status_lines(json_safe(app["status"]), style.width, indent + 2).each { @out.puts _1 }
+      if app.key?("status")
+        @out.puts "#{' ' * indent}#{paint('status:', :note)}"
+        Text.status_lines(json_safe(app["status"]), style.width, indent + 2).each { @out.puts _1 }
+      end
+      topics_block(app["topics"], indent)
+    end
+
+    # Topics (Survey.topic_entry) under "topics:", one a line: the name and
+    # what topic_about says.
+    def topics_block(topics, indent)
+      return if topics.nil? || topics.empty?
+      pad = " " * indent
+      @out.puts "#{pad}#{paint('topics:', :note)}"
+      topics.each do |t|
+        about = topic_about(t)
+        @out.puts "#{pad}  #{paint(t['name'], :object)}#{"  #{paint(about, :note)}" unless about.empty?}"
+        Text.wrap_text(t["desc"], style.width, first: "#{pad}    ").each { @out.puts _1 } if t["desc"]
+      end
+    end
+
+    # A topic in a few words: its type, then its encoding, unit and
+    # "ts" (the sender's time comes along) in parentheses.
+    def topic_about(t)
+      more = [t["encoding"], t["unit"], t["ts"] ? "ts" : nil].compact
+      [t["type"] || "(no type)", more.empty? ? nil : "(#{more.join(', ')})"].compact.join(" ")
+    end
+
+    # An application's own types (Asterism::Types.check) under label:
+    # the name, then the fields as name type.
+    def types_block(types, indent, label: "types:")
+      return if types.nil? || types.empty?
+      pad = " " * indent
+      @out.puts "#{pad}#{paint(label, :note)}"
+      types.sort.each do |name, d|
+        @out.puts "#{pad}  #{paint(name, :object)}"
+        Text.wrap_text(d["d"], style.width, first: "#{pad}    ").each { @out.puts _1 } if d["d"]
+        fields = d["f"].map { |f, t| "#{f} #{paint(t.is_a?(Integer) ? (::Asterism::Types::NAMES[t - 1] || t.to_s) : t, :note)}" }
+        Text.wrap(fields, style.width, first: "#{pad}    ", rest: "#{pad}    ", sep: "  ").each { @out.puts _1 } unless fields.empty?
+      end
     end
 
     # The methods' signatures wrapped to the width, indented.

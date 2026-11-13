@@ -1,4 +1,4 @@
-# The noun-verb commands of the command line (node, app, object, status:
+# The noun-verb commands of the command line (node, app, object, topic, status:
 # lib/asterism/cli.rb's NOUNS), `completion` and the hidden `__complete`
 # (lib/asterism/cli/complete.rb).
 module Asterism
@@ -57,7 +57,12 @@ module Asterism
         if a.nil?
           @err.puts "asterism: no application #{node}/#{app} is visible"
           code = 1
-        elsif structured?
+          next
+        end
+        # Its own types too (one more get, ?types), when it defines some.
+        types = a["topics"] ? sv.topics(["#{node}/#{app}"]).dig("#{node}/#{app}", "types") : nil
+        a = a.except("objects").merge("types" => types, "objects" => a["objects"]) if types && !types.empty?
+        if structured?
           emit({ "node" => node }.merge(a))
         else
           app_block("#{node}/#{app}", a, 0)
@@ -126,18 +131,18 @@ module Asterism
       code = 0
       connect do |net, _sv|
         q = Queue.new
-        hold net.session.subscribe(Values.key_expr(pattern), depth: 16) { |s| q << [s.key, s.payload, Time.now] }
+        hold net.session.subscribe(Values.key_expr(pattern), depth: 16) { |s| q << [s, Time.now] }
         got = pop_until(q, wait)
         if got.nil?
           @err.puts nothing_came(pattern, wait)
           code = 1
           next
         end
-        e = Values.entry(*got)
+        e = sample_entry(*got)
         if structured?
           emit(e)
         else
-          put_lines(got[2], e, nil).each { @out.puts _1 }
+          put_lines(got[1], e, nil).each { @out.puts _1 }
         end
       end
       code
@@ -151,21 +156,22 @@ module Asterism
       code = 0
       connect do |net, _sv|
         q = Queue.new
-        hold net.session.subscribe(Values.key_expr(pattern), depth: 256) { |s| q << [s.key, s.payload, Time.now] }
+        hold net.session.subscribe(Values.key_expr(pattern), depth: 256) { |s| q << [s, Time.now] }
         seen = 0
         last = {}
+        seq = Values::Seq.new
         until_stopped(net) do |left|
           got = q.pop(timeout: [left || 0.2, 0.2].min)
           next unless got
           seen += 1
-          e = Values.entry(*got)
+          e = sample_entry(*got, seq: seq)
           if structured?
             emit_line(e)
           else
             whole = @opts[:raw] || !last.key?(e["key"])
             old = last[e["key"]]
             last[e["key"]] = e["value"]
-            lines = whole ? put_lines(got[2], e, nil) : put_lines(got[2], e, old, again: true)
+            lines = whole ? put_lines(got[1], e, nil) : put_lines(got[1], e, old, again: true)
             lines&.each { @out.puts _1 }
           end
           @out.flush
@@ -174,6 +180,67 @@ module Asterism
         if seen.zero?
           @err.puts nothing_came(pattern, @opts[:duration])
           code = 1 if @opts[:once]
+        end
+      end
+      code
+    end
+
+    # ------------------------------------------------------------ topic
+
+    # The topics of the applications that match NODE/APP (* for a part;
+    # */* by default): node/app/name a line, with the type.
+    def cmd_topic_list(rest)
+      pattern = rest.shift || "*/*"
+      parts = pattern.split("/", -1)
+      unless parts.size == 2 && parts.none? { _1.empty? || (_1.include?("*") && _1 != "*") }
+        raise ArgumentError, "topic list: NODE/APP, * for a part (asterism topic list 'games/*')"
+      end
+      connect do |_net, sv|
+        list = sv.topics(sv.apps(pattern)).sort.flat_map do |path, h|
+          h["topics"].map { |t| { "path" => "#{path}/#{t['name']}" }.merge(t.except("name")) }
+        end
+        if structured?
+          emit(list)
+        else
+          list.each { |t| @out.puts "#{paint_path(t['path'])}  #{paint(topic_about(t), :note)}" }
+        end
+      end
+      0
+    end
+
+    # One topic (node/app/name, the name may have more parts): its
+    # declaration, and the definition of its type when it is one of the
+    # application's own.
+    def cmd_topic_info(rest)
+      path = rest.shift.to_s
+      parts = path.split("/", -1)
+      if parts.size < 3 || parts.any? { _1.empty? || _1.include?("*") }
+        raise ArgumentError, "topic info: PATH is node/app/name (asterism topic info games/games/othello1/state)"
+      end
+      app = parts[0, 2].join("/")
+      name = parts[2..].join("/")
+      code = 0
+      connect do |_net, sv|
+        h = sv.topics([app])[app]
+        t = h && h["topics"].find { _1["name"] == name }
+        if t.nil?
+          @err.puts "asterism: no topic #{path} is declared#{h ? '' : " (#{app} does not answer)"}"
+          code = 1
+          next
+        end
+        out = { "path" => path }.merge(t.except("name"))
+        d = t["type"].is_a?(String) && h["types"][t["type"]]
+        out["definition"] = d if d
+        if structured?
+          emit(out)
+        else
+          @out.puts paint_path(path)
+          @out.puts "  #{paint('type:', :note)} #{t['type'] || '(no type)'}"
+          @out.puts "  #{paint('encoding:', :note)} #{t['encoding'] || 'msgpack'}"
+          @out.puts "  #{paint('unit:', :note)} #{t['unit']}" if t["unit"]
+          @out.puts "  #{paint('time:', :note)} the sender's, with each value" if t["ts"]
+          Text.wrap_text(t["desc"], style.width, first: "  ").each { @out.puts _1 } if t["desc"]
+          types_block({ t["type"] => d }, 2, label: "definition:") if d
         end
       end
       code
@@ -393,6 +460,12 @@ module Asterism
       Values.check_pattern!("#{path}/#{key}")
     end
 
+    # Values.entry of a Zenoh sample received at t (its encoding and
+    # attachment too).
+    def sample_entry(sample, t, seq: nil)
+      Values.entry(sample.key, sample.payload, t, encoding: sample.encoding, attachment: sample.attachment, seq: seq)
+    end
+
     def nothing_came(pattern, seconds)
       "asterism: nothing came on #{pattern}#{seconds ? " in #{format('%g', seconds)} s" : ''} " \
         "(the router does not let this node read it, or it has not changed)"
@@ -400,19 +473,38 @@ module Asterism
 
     # The lines of one put received at t: the time, the key and the value
     # whole; again (the key's value before was old): a line for each thing
-    # that changed in a Hash, the value whole otherwise (nil: no change).
+    # that changed in a Hash, the value whole otherwise (nil: no change). A
+    # value that is bytes in an encoding (a picture) shows as its encoding
+    # and size. A line comes first when values were lost before this one,
+    # or the sender started its numbers again (Values.entry).
     def put_lines(t, e, old, again: false)
       head = "#{paint(t.strftime('%H:%M:%S.%L'), :time)} "
       v = e["value"]
+      gap = put_gap(head, e)
       if again && old.is_a?(Hash) && v.is_a?(Hash)
         changes = Text.status_diff(old, v)
-        return nil if changes.empty?
-        return changes.map { |c| "#{head}#{paint(e['key'], :object)} #{change_text(c)}" }
+        return gap if changes.empty?
+        return gap.to_a + changes.map { |c| "#{head}#{paint(e['key'], :object)} #{change_text(c)}" }
       end
-      return nil if again && old == v
+      return gap if again && old == v && !e["format"].include?("/")
       first = "#{head}#{paint(e['key'], :object)}"
-      return ["#{first} #{Text.inline(v)}"] unless v.is_a?(Hash)
-      [first, *Text.status_lines(v, style.width, Text.width(head))]
+      return [*gap, "#{first} #{paint("(#{e['format']}, #{e['bytes']} bytes)", :note)}"] if bytes_value?(e)
+      return [*gap, "#{first} #{Text.inline(v)}"] unless v.is_a?(Hash)
+      [*gap, first, *Text.status_lines(v, style.width, Text.width(head))]
+    end
+
+    # Whether a value is bytes in an encoding (shown by its size).
+    def bytes_value?(e)
+      e["format"].include?("/") && e["value"] == "(#{e['bytes']} bytes)"
+    end
+
+    # [the line] saying what was lost before a value, or nil.
+    def put_gap(head, e)
+      if e["restarted"]
+        ["#{head}#{paint(e['key'], :object)} #{paint("(started again at #{e['seq']})", :note)}"]
+      elsif e["lost"]
+        ["#{head}#{paint(e['key'], :object)} #{paint("(#{e['lost']} lost)", :note)}"]
+      end
     end
 
     def no_status(path)
@@ -432,6 +524,7 @@ module Asterism
       pad = " " * indent
       @out.puts "#{pad}#{paint(name, :app)}"
       status_block(a, indent + 2)
+      types_block(a["types"], indent + 2)
       return if a["objects"].empty?
       @out.puts "#{pad}  #{paint('objects:', :note)}"
       a["objects"].each do |o|

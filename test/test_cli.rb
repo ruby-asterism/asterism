@@ -258,6 +258,64 @@ class TestCLI < Minitest::Test
     assert_raises(ArgumentError) { st2.answer("a/b*") }
   end
 
+  # Protocol 2's values: the encoding, the attachment's numbers, the
+  # values lost between two of a key, the pictures kept for the MCP bridge.
+  def test_values_encodings
+    jpeg = "\xFF\xD8\xFF\xE0\x00\x10".b
+    assert_equal ["(6 bytes)", "image/jpeg"], V.decode(jpeg, "image/jpeg")
+    assert_equal [{ "a" => 1 }, "msgpack"], V.decode(MessagePack.pack({ "a" => 1 }), "zenoh/bytes"), "the default"
+    assert_equal [{ "a" => 1 }, "application/json"], V.decode('{"a": 1}', "application/json")
+    assert_equal ["{not json", "application/json"], V.decode("{not json", "application/json")
+    assert_equal ["x,y\n1,2", "text/csv"], V.decode("x,y\n1,2", "text/csv;charset=utf-8"), "the schema left out"
+    assert_equal ["(2 bytes)", "text/plain"], V.decode("\xff\xfe".b, "text/plain"), "not UTF-8"
+    assert_equal ["(3 bytes)", "application/cdr"], V.decode("abc", "application/cdr")
+    assert_equal [7, nil], V.attachment(MessagePack.pack([7]))
+    assert_equal [7, 1_700_000_000_123], V.attachment(MessagePack.pack([7, 1_700_000_000_123]))
+    assert_equal [nil, nil], V.attachment(nil)
+    assert_equal [nil, nil], V.attachment(MessagePack.pack(["x"]))
+    assert_equal [nil, nil], V.attachment("\xc1".b)
+    assert_equal [5, nil], V.attachment(MessagePack.pack([5, "not ms"]))
+    e = V.entry("asterism/a/b/cam", jpeg, Time.at(0), encoding: "image/jpeg",
+                attachment: MessagePack.pack([3, 1_700_000_000_123]))
+    assert_equal({ "key" => "a/b/cam", "t" => "1970-01-01T00:00:00.000Z", "bytes" => 6, "format" => "image/jpeg",
+                   "value" => "(6 bytes)", "seq" => 3, "sent" => "2023-11-14T22:13:20.123Z" }, e)
+
+    sq = V::Seq.new
+    assert_equal [0, false], sq.see("k", 5), "the first: nothing lost"
+    assert_equal [0, false], sq.see("k", 6)
+    assert_equal [2, false], sq.see("k", 9)
+    assert_equal [0, false], sq.see("other", 100), "each key its own"
+    assert_equal [1, true], sq.see("k", 1), "back: started again"
+    sq.see("w", Asterism::Topic::SEQ_MAX)
+    assert_equal [0, false], sq.see("w", 0), "the wrap is a step"
+    pk = ->(n) { MessagePack.pack([n]) }
+    e = V.entry("a/b/c", MessagePack.pack(1), Time.at(0), attachment: pk.(10), seq: sq)
+    refute e.key?("lost")
+    e = V.entry("a/b/c", MessagePack.pack(1), Time.at(0), attachment: pk.(13), seq: sq)
+    assert_equal [13, 2], e.values_at("seq", "lost")
+    e = V.entry("a/b/c", MessagePack.pack(1), Time.at(0), attachment: pk.(0), seq: sq)
+    assert_equal [true, nil], e.values_at("restarted", "lost")
+
+    st = V::Store.new(now: -> { Time.at(0) })
+    st.put("g/g/cam", jpeg, encoding: "image/jpeg", attachment: pk.(1))
+    st.put("g/g/cam", jpeg, encoding: "image/jpeg", attachment: pk.(4))
+    st.put("g/g/imu", MessagePack.pack([1, 2, 3]), attachment: MessagePack.pack([0, 1000]))
+    a = st.answer("g/g/*")
+    cam, imu = a["values"]
+    assert_equal ["image/jpeg", "(6 bytes)", 4, 2], cam.values_at("format", "value", "seq", "lost")
+    refute cam.key?("image"), "no images unless asked"
+    assert_equal [[1, 2, 3], 0, "1970-01-01T00:00:01.000Z"], imu.values_at("value", "seq", "sent")
+    refute imu.key?("lost")
+    out, pics = st.answer_images("g/g/*")
+    assert_equal 0, out["values"][0]["image"]
+    refute out["values"][1].key?("image")
+    assert_equal [["image/jpeg", jpeg]], pics
+    st.put("g/g/cam", "x", encoding: "image/jpeg", attachment: pk.(5))
+    assert_equal 2, st.answer("g/g/cam")["values"][0]["lost"], "lost counts all the key's since the start"
+    _, pics = st.answer_images("g/g/*", images: 0)
+    assert_empty pics
+  end
+
   def test_values_wait
     st = V::Store.new
     t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -298,6 +356,16 @@ class TestCLI < Minitest::Test
     assert_equal ["#{ts} g/g/t/state 5"], cli.put_lines(t, e.(5), 4, again: true)
     assert_nil cli.put_lines(t, e.(5), 5, again: true)
     assert_equal ["#{ts} g/g/t/state \"a b\""], cli.put_lines(t, e.("a b"), nil)
+    jpeg = V.entry("g/g/cam", "\xFF\xD8\xFF".b, t, encoding: "image/jpeg")
+    assert_equal ["#{ts} g/g/cam (image/jpeg, 3 bytes)"], cli.put_lines(t, jpeg, nil)
+    assert_equal ["#{ts} g/g/cam (image/jpeg, 3 bytes)"], cli.put_lines(t, jpeg, "(3 bytes)", again: true),
+                 "a picture each time, even of the same size"
+    sq = V::Seq.new
+    n = ->(v, i) { V.entry("g/g/t/state", MessagePack.pack(v), t, attachment: MessagePack.pack([i]), seq: sq) }
+    n.({ "n" => 1 }, 0)
+    assert_equal ["#{ts} g/g/t/state (2 lost)", "#{ts} g/g/t/state n 1\u21922"],
+                 cli.put_lines(t, n.({ "n" => 2 }, 3), { "n" => 1 }, again: true)
+    assert_equal ["#{ts} g/g/t/state (started again at 0)"], cli.put_lines(t, n.({ "n" => 2 }, 0), { "n" => 2 }, again: true)
   end
 
   # ------------------------------------------------------------ completion
@@ -339,7 +407,7 @@ class TestCLI < Minitest::Test
 
   def test_complete_words
     src = FakeSource.new
-    assert_equal %w[app call completion echo help mcp node nodes object objects ping status tree version watch],
+    assert_equal %w[app call completion echo help mcp node nodes object objects ping status topic tree version watch],
                  complete("", src)
     assert_equal %w[node nodes], complete("no", src)
     assert_equal %w[info list], complete("node ", src)
@@ -572,6 +640,7 @@ class TestCLI < Minitest::Test
                     doc: "The other calculator.")
     STDOUT.puts "ready"
     STDOUT.flush
+    topics = {}
     loop do
       Asterism.poll
       r, = IO.select([STDIN], nil, nil, 0.002)
@@ -579,9 +648,24 @@ class TestCLI < Minitest::Test
       line = STDIN.gets
       break if line.nil?
       if line.start_with?("put ")
-        # put KEY JSON: a value on this application's own key.
+        # put NAME JSON: a value on this application's topic NAME (declared
+        # the first time, without a type).
         _, key, json = line.chomp.split(" ", 3)
-        Asterism.session.put("asterism/calcnode/calc/#{key}", Asterism::Codec.pack(JSON.parse(json)))
+        (topics[key] ||= Asterism.publish(key)).put(JSON.parse(json))
+      elsif line.start_with?("jpeg ")
+        # jpeg NAME SIZE: SIZE bytes of a JPEG on the topic NAME (image/jpeg).
+        _, key, size = line.split
+        t = (topics[key] ||= Asterism.publish(key, type: :image, encoding: "image/jpeg"))
+        t.put("\xFF\xD8\xFF\xE0".b + ("\x00".b * (size.to_i - 4)))
+      elsif line.start_with?("skip ")
+        # skip NAME: the next number of the topic NAME is not sent (one lost).
+        topics[line.split[1]].advance
+      elsif line.start_with?("declare")
+        # declare: a typed topic and a type of this application's own.
+        Asterism.define_type("calc/result", [["sum", "int"], ["at", :vector3], ["parts", "float[]"]],
+                             desc: "What a sum gave.")
+        topics["imu"] = Asterism.publish("imu", type: :vector3, unit: "m/s2", ts: true, desc: "Acceleration.")
+        topics["calc/result"] = Asterism.publish("calc/result", type: "calc/result")
       else
         Asterism.status(tables: line.to_i)
       end
@@ -1013,6 +1097,89 @@ class TestCLI < Minitest::Test
     end
   end
 
+  # Protocol 2's topics: what an application declares (topic list / info,
+  # app info, tree) and its values with their encodings and numbers.
+  def test_topics
+    with_node do |node|
+      say = lambda do |line, after = 0|
+        sleep after
+        node.puts line
+        node.flush
+      end
+      say.("declare")
+      sleep 0.3
+      out, err, code = cli("topic", "list", "calcnode/*")
+      assert_equal 0, code, err
+      assert_equal "calcnode/calc/calc/result  calc/result\ncalcnode/calc/imu  vector3 (m/s2, ts)\n", out
+      j, = cli("topic", "list", "-o", "json")
+      assert_equal [{ "path" => "calcnode/calc/calc/result", "type" => "calc/result" },
+                    { "path" => "calcnode/calc/imu", "type" => "vector3", "unit" => "m/s2", "desc" => "Acceleration.",
+                      "ts" => true }], JSON.parse(j).select { _1["path"].start_with?("calcnode/") }
+      _, err, code = cli("topic", "list", "calcnode")
+      assert_equal 2, code
+      assert_match(/NODE\/APP/, err)
+
+      out, err, code = cli("topic", "info", "calcnode/calc/calc/result")
+      assert_equal 0, code, err
+      assert_equal "calcnode/calc/calc/result\n  type: calc/result\n  encoding: msgpack\n  definition:\n" \
+                   "    calc/result\n      What a sum gave.\n      sum int  at vector3  parts float[]\n", out
+      j, = cli("topic", "info", "calcnode/calc/calc/result", "-o", "json")
+      assert_equal({ "path" => "calcnode/calc/calc/result", "type" => "calc/result",
+                     "definition" => { "f" => [%w[sum int], %w[at vector3], %w[parts float[]]],
+                                       "d" => "What a sum gave." } }, JSON.parse(j))
+      out, = cli("topic", "info", "calcnode/calc/imu")
+      assert_equal "calcnode/calc/imu\n  type: vector3\n  encoding: msgpack\n  unit: m/s2\n" \
+                   "  time: the sender's, with each value\n  Acceleration.\n", out
+      _, err, code = cli("topic", "info", "calcnode/calc/nothing")
+      assert_equal 1, code
+      assert_match(/no topic calcnode\/calc\/nothing is declared/, err)
+      _, _, code = cli("topic", "info", "calcnode/calc")
+      assert_equal 2, code
+
+      out, err, code = cli("app", "info", "calcnode/calc")
+      assert_equal 0, code, err
+      assert_includes out, "  status:\n    tables=1 st=wait\n  topics:\n    calc/result  calc/result\n" \
+                           "    imu  vector3 (m/s2, ts)\n      Acceleration.\n  types:\n    calc/result\n" \
+                           "      What a sum gave.\n      sum int  at vector3  parts float[]\n  objects:\n"
+      j, = cli("app", "info", "calcnode/calc", "-o", "json")
+      assert_equal %w[node app status topics types objects], JSON.parse(j).keys
+      out, = cli("tree")
+      assert_includes out, "      tables=1 st=wait\n    topics:\n      calc/result  calc/result\n" \
+                           "      imu  vector3 (m/s2, ts)\n        Acceleration.\n    calc  5 methods\n"
+      j, = cli("nodes", "--json")
+      calc = JSON.parse(j).find { _1["node"] == "calcnode" }
+      assert_equal %w[calc/result imu], calc["apps"][0]["topics"].map { _1["name"] }
+
+      # The values: a picture, the numbers, what was lost.
+      cmd = [PLAIN, RbConfig.ruby, *LIB, EXE, "object", "echo", "calcnode/calc/*", "-o", "json", "--duration", "5",
+             *@where, "--settle", "1.0"]
+      text = [PLAIN, RbConfig.ruby, *LIB, EXE, "object", "echo", "calcnode/calc/*", "--duration", "5",
+              *@where, "--settle", "1.0"]
+      Open3.popen3(*cmd) do |_i, o, _e, th|
+        Open3.popen3(*text) do |_i2, o2, _e2, th2|
+          sleep 2.5
+          say.("jpeg cam 100")
+          say.("put calc/state 1", 0.3)
+          say.("skip calc/state", 0.3)
+          say.("put calc/state 2", 0.1)
+          got = Timeout.timeout(10) { o.read }.lines.map { JSON.parse(_1) }
+          th.value
+          cam = got.find { _1["key"] == "calcnode/calc/cam" }
+          assert_equal ["image/jpeg", 100, "(100 bytes)", 0], cam.values_at("format", "bytes", "value", "seq"), got.inspect
+          st = got.select { _1["key"] == "calcnode/calc/calc/state" }
+          assert_equal [[1, 0, nil], [2, 2, 1]], st.map { _1.values_at("value", "seq", "lost") }
+          lines = Timeout.timeout(10) { o2.read }.lines.map(&:chomp)
+          th2.value
+          ts = /\A\d\d:\d\d:\d\d\.\d{3} /
+          assert_match(/#{ts}calcnode\/calc\/cam \(image\/jpeg, 100 bytes\)\z/, lines[0])
+          assert_match(/#{ts}calcnode\/calc\/calc\/state 1\z/, lines[1])
+          assert_match(/#{ts}calcnode\/calc\/calc\/state \(1 lost\)\z/, lines[2])
+          assert_match(/#{ts}calcnode\/calc\/calc\/state 2\z/, lines[3])
+        end
+      end
+    end
+  end
+
   # The bash script: its function, called as bash calls it on a Tab.
   def test_bash_script
     skip "no bash" unless system("bash", "-c", "true", out: File::NULL, err: File::NULL)
@@ -1064,7 +1231,7 @@ class TestCLI < Minitest::Test
       c = MCP::Client.new(transport: t)
       c.connect
       tools = c.tools.to_h { [_1.name, _1] }
-      assert_equal %w[asterism_nodes asterism_objects asterism_status asterism_values calcnode.calc.calc.add
+      assert_equal %w[asterism_nodes asterism_objects asterism_status asterism_topics asterism_values calcnode.calc.calc.add
                       calcnode.calc.calc.any calcnode.calc.calc.boom calcnode.calc.other.add].sort, tools.keys.sort,
                    "only the allowed methods are tools"
       named = tools["calcnode.calc.other.add"]
@@ -1119,6 +1286,32 @@ class TestCLI < Minitest::Test
       assert_equal %w[calcnode/calc/calc/log calcnode/calc/calc/state], v["values"].map { _1["key"] }
       r = c.call_tool(tool: vt, arguments: { pattern: "calcnode/c*" })
       assert r["result"]["isError"]
+
+      # asterism_topics: the declarations and the types; asterism_values: a
+      # picture as an image when asked.
+      node.puts "declare"
+      node.puts "jpeg cam 20"
+      node.flush
+      sleep 0.5
+      r = c.call_tool(tool: tools["asterism_topics"], arguments: { node: "calcnode" })
+      tp = text.(r)
+      assert_equal ["calcnode/calc"], tp.keys
+      assert_equal [{ "name" => "calc/log" }, { "name" => "calc/result", "type" => "calc/result" },
+                    { "name" => "calc/state" }, { "name" => "cam", "type" => "image", "encoding" => "image/jpeg" },
+                    { "name" => "imu", "type" => "vector3", "unit" => "m/s2", "desc" => "Acceleration.", "ts" => true }],
+                   tp["calcnode/calc"]["topics"]
+      assert_equal({ "calc/result" => { "f" => [%w[sum int], %w[at vector3], %w[parts float[]]],
+                                        "d" => "What a sum gave." } }, tp["calcnode/calc"]["types"])
+      assert_equal({}, text.(c.call_tool(tool: tools["asterism_topics"], arguments: { node: "nobody" })))
+      r = c.call_tool(tool: vt, arguments: { pattern: "calcnode/calc/cam", wait: 5 })
+      assert_equal 1, r["result"]["content"].size, "no image unless asked"
+      cam = text.(r)["values"][0]
+      assert_equal ["image/jpeg", "(20 bytes)", 0], cam.values_at("format", "value", "seq")
+      r = c.call_tool(tool: vt, arguments: { pattern: "calcnode/calc/cam", images: true })
+      content = r["result"]["content"]
+      assert_equal 0, JSON.parse(content[0]["text"])["values"][0]["image"]
+      assert_equal ["image", "image/jpeg"], content[1].values_at("type", "mimeType")
+      assert_equal "\xFF\xD8\xFF\xE0".b + ("\x00".b * 16), content[1]["data"].unpack1("m0")
     ensure
       t&.close
     end

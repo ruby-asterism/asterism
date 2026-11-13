@@ -1,8 +1,9 @@
 # What `asterism nodes / objects / tree` and the MCP bridge read from the
 # network, on a connection that is already open (Asterism.connect): the
 # applications and objects from the liveliness tokens, then the meta of
-# the objects, the nodes' profiles and the applications' statuses
-# (docs/protocol.md 5, 7, 8) with one get for each node or application.
+# the objects, the nodes' profiles and the applications' own profiles
+# (their statuses, topics and types: docs/protocol.md 5, 7, 8, 10, 11)
+# with one get for each node or application.
 #
 # Not one wildcard get for all (asterism/*/*/@profile): behind a router's
 # access control a query must fit the rules of every node it would reach
@@ -104,18 +105,68 @@ module Asterism
       # {"<node>/<app>" => status} of the applications that answered (one
       # get per application on its own profile, ?status, all at once).
       def statuses(list = apps)
+        app_profiles(list, "status").filter_map do |path, raw|
+          st = ::Asterism::Status.check(raw["status"])
+          [path, st] if st
+        end.to_h
+      end
+
+      # {"<node>/<app>" => {"topics" => [...], "types" => {...}}} of the
+      # applications that answered (one get per application on its own
+      # profile, ?pubs;types): the topics as Survey.topic_entry gives them,
+      # sorted by name, and the application's own types
+      # (Asterism::Types.check). An application without either is there
+      # with both empty.
+      def topics(list = apps)
+        app_profiles(list, "pubs;types").to_h do |path, raw|
+          [path, { "topics" => Survey.topic_list(::Asterism::Pubs.check(raw["pubs"]) || {}),
+                   "types" => ::Asterism::Types.check(raw["types"]) || {} }]
+        end
+      end
+
+      # {"<node>/<app>" => the answer (a Hash)} of the applications whose
+      # profile (asterism/<node>/<app>/@profile, docs/protocol.md 8)
+      # answered, asked with params (nil: the status and the topics).
+      def app_profiles(list, params)
         out = {}
-        gets(list.map { "asterism/#{_1}/@profile" }, params: "status").each do |key, replies|
+        gets(list.map { "asterism/#{_1}/@profile" }, params: params).each do |key, replies|
           raw = replies.first && ::Asterism::Codec.unpack(replies.first[1])
-          st = raw.is_a?(Hash) && ::Asterism::Status.check(raw["status"])
           parts = key.split("/")
-          out["#{parts[1]}/#{parts[2]}"] = st if st
+          out["#{parts[1]}/#{parts[2]}"] = raw if raw.is_a?(Hash)
         end
         out
       end
 
+      # A topic's declaration (docs/protocol.md 10.1, cleaned) as the
+      # command line and the MCP bridge show it: {"name", "type" (a built-in
+      # type's name, or the application type's; absent: no type),
+      # "encoding" (absent: MessagePack), "unit", "desc", "ts" (true: the
+      # sender's time comes with each value)}.
+      def self.topic_entry(name, decl)
+        h = { "name" => name }
+        t = decl["t"]
+        if t.is_a?(Integer)
+          h["type"] = ::Asterism::Types::NAMES[t - 1] || t
+        elsif t
+          h["type"] = t
+        end
+        if decl["e"]
+          h["encoding"] = ::Asterism::Pubs.encoding_name(decl["e"]) || decl["e"]
+        end
+        h["unit"] = decl["u"] if decl["u"]
+        h["desc"] = decl["d"] if decl["d"]
+        h["ts"] = true if decl["ts"]
+        h
+      end
+
+      # The declarations ({name => declaration}) as topic entries, sorted.
+      def self.topic_list(pubs)
+        pubs.sort.map { |name, d| topic_entry(name, d) }
+      end
+
       # The tree: [{"node", "profile", "apps" => [{"app", "status",
-      # "objects" => [{"name", "methods"}]}]}]. meta: false leaves the
+      # "topics" => [topic entries], "objects" => [{"name", "methods"}]}]}]
+      # ("status" and "topics" only when the application has them). meta: false leaves the
       # methods out (no meta gets); node: (and app:) narrow it to one node
       # (one application).
       def tree(meta: true, node: nil, app: nil)
@@ -125,7 +176,7 @@ module Asterism
         threads = []
         node_list = (app_list.map { _1.split("/")[0] } + objs.map { _1.split("/")[0] }).uniq
         threads << Thread.new { profiles(node_list) }
-        threads << Thread.new { statuses(app_list) }
+        threads << Thread.new { app_profiles(app_list, nil) }
         threads << Thread.new { meta ? metas(objs) : {} }
         prof, stat, met = threads.map(&:value)
         by_node = Hash.new { |h, k| h[k] = {} }
@@ -137,7 +188,11 @@ module Asterism
         by_node.keys.sort.map do |n|
           apps = by_node[n].keys.sort.map do |ap|
             h = { "app" => ap }
-            h["status"] = stat["#{n}/#{ap}"] if stat.key?("#{n}/#{ap}")
+            pr = stat["#{n}/#{ap}"]
+            st = pr && ::Asterism::Status.check(pr["status"])
+            h["status"] = st if st
+            pubs = pr && ::Asterism::Pubs.check(pr["pubs"])
+            h["topics"] = Survey.topic_list(pubs) if pubs && !pubs.empty?
             h["objects"] = by_node[n][ap].sort.map do |name|
               e = { "name" => name }
               e["methods"] = met["#{n}/#{ap}/#{name}"] if met.key?("#{n}/#{ap}/#{name}")

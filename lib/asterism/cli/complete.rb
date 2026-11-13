@@ -81,7 +81,8 @@ module Asterism
         i = args.size
         case [key, i]
         when ["node info", 0] then nodes
-        when ["app info", 0], ["status get", 0], ["status echo", 0], ["status hz", 0] then staged(cur, apps, 2)
+        when ["app info", 0], ["status get", 0], ["status echo", 0], ["status hz", 0], ["topic list", 0],
+             ["topic info", 0] then staged(cur, apps, 2)
         when ["object list", 0], ["object info", 0], ["object get", 0], ["object echo", 0], ["objects", 0], ["call", 0]
           staged(cur, objects, 3)
         when ["ping", 0], ["echo", 0] then (cur.include?("/") ? [] : nodes) + staged(cur, objects, 3)

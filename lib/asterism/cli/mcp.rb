@@ -9,10 +9,14 @@
 #                      and objects                         (always; reads)
 #   asterism_objects   the objects and their methods (meta) (always; reads)
 #   asterism_status    the applications' statuses           (always; reads)
-#   asterism_values    the latest value of each key the applications put
-#                      on (asterism/<node>/<app>/<object>/<more>), as this
-#                      server received them since it started (always;
-#                      reads; lib/asterism/cli/values.rb)
+#   asterism_topics    the topics the applications declare (their types,
+#                      encodings, units) and their own types' definitions
+#                      (@profile?pubs;types)                (always; reads)
+#   asterism_values    the latest value of each topic the applications put
+#                      on (asterism/<node>/<app>/<name>), as this server
+#                      received them since it started, with their
+#                      encodings and sequence numbers, pictures as images
+#                      when asked (always; reads; lib/asterism/cli/values.rb)
 #   <node>.<app>.<object>.<method>
 #                      one per method that an --allow pattern names, made
 #                      from the object's meta: the arguments' names the
@@ -34,8 +38,9 @@ module Asterism
         These tools look at an Asterism network: Ruby programs and boards that expose objects to each other over
         Zenoh. Paths are <node>/<app>/<object>. asterism_nodes lists the nodes and their applications (with the
         status each application tells about itself, a JSON object of its own), asterism_objects the objects and
-        their methods, asterism_status the statuses, asterism_values the latest values the applications put on
-        their own keys (a game table's state). The other tools call one method each, on the object their
+        their methods, asterism_status the statuses, asterism_topics the topics the applications put values on
+        (with their types), asterism_values the latest values put on them (a game table's state). The other
+        tools call one method each, on the object their
         name says (<node>.<app>.<object>.<method>); only the methods this server was started to allow are there.
         A call's answer is {"value": ...}; an error says its kind (raised, not_exposed, arguments, ...).
       TEXT
@@ -72,7 +77,9 @@ module Asterism
       # does not match @profile and @status), and the applications that
       # leave (their values are marked).
       def remember_values
-        @net.session.subscribe("#{Values::PREFIX}**", depth: 1024) { |s| @values.put(s.key, s.payload) }
+        @net.session.subscribe("#{Values::PREFIX}**", depth: 1024) do |s|
+          @values.put(s.key, s.payload, encoding: s.encoding, attachment: s.attachment)
+        end
         @net.session.liveliness_watch("#{Values::PREFIX}*/*", depth: 1024) do |key, alive|
           @values.left(key.delete_prefix(Values::PREFIX)) unless alive
         end
@@ -174,43 +181,80 @@ module Asterism
             end
           end,
           ::MCP::Tool.define(
+            name: "asterism_topics",
+            description: "The topics the applications put values on (asterism/<node>/<app>/<name>), as they " \
+                         "declare them: {\"<node>/<app>\": {\"topics\": [{\"name\", \"type\", \"encoding\", " \
+                         "\"unit\", \"desc\", \"ts\"}], \"types\": {...}}}. type: a built-in type (number, " \
+                         "vector3 [x, y, z], pose [x, y, z, qx, qy, qz, qw], image, state, log, text) or the name of " \
+                         "an application's own type, whose definition is in types ({\"f\": [[field, type], ...], " \
+                         "\"d\": what it is}); no type: not declared. encoding: absent for MessagePack, else how " \
+                         "the bytes are (image/jpeg). ts: the sender's time comes with each value. An application " \
+                         "that declares nothing is not listed. The values are asterism_values's.",
+            input_schema: { properties: { node: { type: "string" }, app: { type: "string" } } },
+            annotations: { read_only_hint: true }
+          ) do |server_context:, node: nil, app: nil|
+            bridge.answer do
+              list = sv.apps("#{node || '*'}/#{app || '*'}")
+              sv.topics(list).reject { |_, h| h["topics"].empty? && h["types"].empty? }
+            end
+          end,
+          ::MCP::Tool.define(
             name: "asterism_values",
             description: VALUES_DOC,
             input_schema: {
               properties: {
                 pattern: { type: "string",
-                           description: "keys as node/app/object/more, with * (one part) and ** (any parts); " \
-                                        "default ** (every key). A key always has a part after the object: " \
-                                        "games/games/othello1/** or games/*/*/state, not games/games/othello1" },
+                           description: "keys as node/app/<topic name> (a name may have several parts), with * " \
+                                        "(one part) and ** (any parts); default ** (every key). The whole name: " \
+                                        "games/games/othello1/** or games/*/*/state, not games/games/othello1 " \
+                                        "for the topic othello1/state" },
                 wait: { type: "number",
                         description: "seconds (at most #{Values::Store::MAX_WAIT}) to wait for the first put " \
-                                     "that matches when none has come yet; default 0 (answer now)" }
+                                     "that matches when none has come yet; default 0 (answer now)" },
+                images: { type: "boolean",
+                          description: "true: the values that are pictures (image/png, image/jpeg, image/gif, " \
+                                       "image/webp) come along as images, at most #{Values::Store::MAX_IMAGES}; " \
+                                       "default false (their size only)" }
               }
             },
             annotations: { read_only_hint: true }
-          ) do |server_context:, pattern: "**", wait: 0|
-            bridge.answer { bridge.values.answer(pattern, wait: wait) }
+          ) do |server_context:, pattern: "**", wait: 0, images: false|
+            bridge.values_answer(pattern, wait: wait, images: images)
           rescue ArgumentError => e
             bridge.error(e.message)
           end
         ]
       end
 
-      VALUES_DOC = "The latest value each application put on its own keys (asterism/<node>/<app>/<object>/<more>: " \
-                   "a game table's state, a log), as this server received them: {\"since\", \"values\": " \
-                   "[{\"key\", \"value\", \"t\", \"age_s\", \"app\", \"bytes\", \"format\"}]}. " \
+      VALUES_DOC = "The latest value each application put on its topics (asterism/<node>/<app>/<name>: " \
+                   "a game table's state, a log, a camera's pictures), as this server received them: {\"since\", " \
+                   "\"values\": [{\"key\", \"value\", \"t\", \"age_s\", \"app\", \"bytes\", \"format\", " \
+                   "\"seq\", \"sent\", \"lost\"}]}. " \
                    "A put comes only when the value changes, and this server remembers only what it received " \
                    "since it started (since): a key that has not been put since then is not listed. Give wait " \
                    "(seconds) to wait for the first put that matches when none has come yet (a quiet table, " \
                    "just after the start). age_s: seconds since it came. app: alive; gone (the application is " \
                    "not on the network now: this is its last value, not the present); restarted (it left and " \
-                   "came back after this value). value: MessagePack or JSON as it is, text as a string; a " \
+                   "came back after this value). format: msgpack (the value as it is), or the encoding the " \
+                   "value came with (image/jpeg: the value is its size; JSON and text encodings as they are). " \
+                   "seq: the value's sequence number, sent: the sender's time (when it sends it), lost: how " \
+                   "many values of the key this server missed since it started. value: a " \
                    "value whose JSON is longer than #{Values::Store::VALUE_CUT} bytes is cut (truncated: " \
                    "true, value: the start of its JSON text). It keeps at most #{Values::Store::MAX_KEYS} keys " \
                    "(those received longest ago are forgotten first) and lists at most " \
                    "#{Values::Store::MAX_ANSWER} (more: how many it left out). Nothing came: the note says so " \
                    "(not put since the start, or the router does not let this server read it). The statuses " \
-                   "(@status) are asterism_status's."
+                   "(@status) are asterism_status's, what each topic is asterism_topics's. images: true hands the " \
+                   "pictures over as images (the entry's image: its place among them)."
+
+      # asterism_values's answer: its JSON, then the pictures asked for as
+      # MCP images.
+      def values_answer(pattern, wait:, images:)
+        out, pics = @values.answer_images(pattern, wait: wait, images: images ? Values::Store::MAX_IMAGES : 0)
+        content = [{ type: "text", text: JSON.generate(json_safe(out)) }]
+        pics.each { |fmt, bytes| content << { type: "image", data: [bytes].pack("m0"), mimeType: fmt } }
+        ::MCP::Tool::Response.new(content)
+      end
 
       def objects(pattern)
         paths = @survey.objects(pattern)
