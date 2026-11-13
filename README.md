@@ -819,9 +819,11 @@ method of it (`net.` in the tables); the module keeps only
 | `net.profile_of(node, icon: true, timeout: 2.0)` | Hash or nil | Another node's profile, nil when it does not answer (an older version, a ROS 2 node). |
 | `net.status(hash = nil, **fields)` / `net.status` | Hash or nil | This application's status: a Hash is the whole status, keywords change those fields (nil removes one); put on the network when it changes. Without arguments, returns it. See [Status](#status). |
 | `net.status_of(node, app, timeout: 2.0)` | Hash or nil | Another application's status, nil when it has none or does not answer. |
-| `net.publish(name, type:, unit:, desc:, ts:, encoding:)` | `Asterism::Topic` | Declares a topic of this application; `topic.put(value)` sends. See [Topics](#topics). |
-| `net.subscribe(path, depth: nil) { \|v, info\| }` | `Asterism::Subscription` | The values on `<node>/<app>/<topic>` (wildcards allowed), from `net.poll`; `close` ends it. |
-| `net.pubs_of(node, app)` / `net.types_of(node, app)` | Hash or nil | Another application's topics / types, `{}` when it has none, nil when it does not answer. |
+| `net.publish(name, type:, unit:, desc:, ts:, encoding:, shared: nil)` | `Asterism::Topic` | Declares a topic of this application; `topic.put(value)` sends. `shared: :node` / `:global` puts it on a shared place instead. See [Topics](#topics) and [Shared places](#shared-places). |
+| `net.subscribe(path, depth: nil) { \|v, info\| }` | `Asterism::Subscription` | The values on `<node>/<app>/<topic>` (wildcards allowed), or a shared place's `<node>/@shared/<name>` / `@shared/<name>`, from `net.poll`; `close` ends it. |
+| `net.pubs_of(node, app)` / `net.types_of(node, app)` | Hash or nil | Another application's topics (shared ones under their entries) / types, `{}` when it has none, nil when it does not answer. |
+| `net.publishers_of(path, timeout: 2.0)` | Hash | The applications that declare a shared key (`@shared/<name>`, `<node>/@shared/<name>`, `*` for the node): `{"<node>/<app>" => declaration}`. |
+| `net.declaration_of(info)` / `net.type_of(info)` | Hash / Integer or `[name, definition]`, or nil | A received value's declaration / type, from its sender (`info.from`). |
 | `net.define_type(name, fields, desc: nil)` | Hash | An application type, told by `@profile?types`. |
 | `net.published` / `net.unpublish(topic or name)` / `net.unsubscribe(sub)` | | |
 
@@ -987,14 +989,56 @@ net.pubs_of("linux", "demo")                   # => {"imu" => {"t" => 2, "u" => 
   `time` (the sender's, ms since 1970, with `ts: true`), `encoding`
   (`"msgpack"` for a MessagePack value), `timestamp` (the router's, when it
   stamped the value), `lost` (values of this key missed since the last
-  one) and `restarted?` (the sender started the topic over). A block that
+  one) and `restarted?` (the sender started the topic over), `path` (the
+  key below `asterism/`), `from` (the sender, `"<node>/<app>"`) and
+  `shared` (nil, or `:node` / `:global` on a shared place). A block that
   takes only `|v|` gets the value.
 - Topics and subscriptions end with the connection; the types and the
   status are the connection's too. After a new `connect`, declare them on
   the new connection.
-- A topic that belongs to another application (a game host's spectators'
-  view) is declared by a connection that is that application
+- A topic that belongs to another application is declared by a
+  connection that is that application
   ([Several connections](#several-connections)).
+
+### Shared places
+
+Data with no single owner goes on a shared place: a node's
+`asterism/<node>/@shared/<name>` (what the node emits: its tables'
+spectators' view, fed by whichever of its programs runs a table) or the
+network's `asterism/@shared/<name>` (a meeting place for the network's
+trusted members). Each sender declares the key in its own `@pubs`, with its
+own types; several applications may put on one key, and each value says
+its sender.
+
+```ruby
+t = net.publish("spectate/t1/state", shared: :node, type: "mygame/table")
+t.put(state)                                   # asterism/<node>/@shared/spectate/t1/state
+g = net.publish("lobby", shared: :global, type: :text)
+
+net.subscribe("*/@shared/spectate/**") do |v, info|
+  info.from     # => "linux/room01" (the sender)
+  info.lost     # counted per sender
+  net.type_of(info)                            # the sender's type: 7, or ["mygame/table", definition]
+end
+net.publishers_of("linux/@shared/spectate/t1/state")  # => {"linux/games" => {"t" => "mygame/table"}, ...}
+net.pubs_of("linux", "games")                  # => {"linux/@shared/spectate/t1/state" => {...}}
+```
+
+- **Entries.** A shared topic is declared under the key below `asterism/`:
+  `<node>/@shared/<name>` or `@shared/<name>` (an application's own topic
+  under its name). `net.published` lists entries; `net.unpublish(topic)` or
+  `net.unpublish(name, shared: :node)`.
+- **Attachment.** `[seq, ms or nil, "<node>/<app>"]`; the numbers are each
+  sender's, and the reader counts `lost` per key and sender.
+- **Types.** Two senders may define one type name differently: read a
+  value's type from its sender (`net.type_of(info)`,
+  `net.declaration_of(info)`), not from another sender of the key.
+- **Wildcards.** `@shared` is a verbatim chunk: `net.subscribe("**")` and
+  `"<node>/**"` do not reach it; subscribe to `"*/@shared/**"` and
+  `"@shared/**"`.
+- **Who may put there** is the router's: a node's place by its own node
+  (`asterism/${node}/@shared/**`), the network's by the roles an
+  administrator grants it to ([docs/protocol.md](docs/protocol.md) 17).
 
 ## The connection's session: `net.session`
 
@@ -1059,16 +1103,18 @@ A program that is several applications opens a connection for each,
 as the same node or another:
 
 ```ruby
-game = Asterism.connect(router, node: "host", app: "game")
-game.expose("table1", table, methods: { move: 2, view: 1 })
-game.publish("table1/state", type: "mygame/table.state").put(state)
-spec = Asterism.connect(router, node: "host", app: "spectate")
-spec.publish("table1/state", type: "mygame/table.state")       # what the spectators see
+game = Asterism.connect(router, node: "host", app: "games")
+game.expose("lobby", lobby, methods: { tables: 0 })
+room = Asterism.connect(router, node: "host", app: "room01")    # a room as its own application
+room.expose("table1", table, methods: { move: 2, view: 1 })
+room.publish("table1/state", type: "mygame/table.state").put(state)
+room.publish("spectate/table1/state", shared: :node,            # what the spectators see,
+             type: "mygame/table.state")                        # on the node's shared place
 loop do
-  Asterism.poll_all                                             # or game.poll; spec.poll
+  Asterism.poll_all                                             # or game.poll; room.poll
   ...
 end
-spec.close                                                      # game goes on
+room.close                                                      # game goes on
 ```
 
 - **Each its own.** Objects, `status`, `publish`, `subscribe`,

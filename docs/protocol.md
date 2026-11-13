@@ -13,7 +13,8 @@ predecessors the data an application streams on its own keys: values
 whose format is told by the Zenoh encoding (none for MessagePack), a
 sequence number with each value, the declarations of an application's
 topics and types, and an application's own profile that answers its
-status, topics and types (sections 8 to 12). Calls are what they were
+status, topics and types (sections 8 to 12), and the shared places, where
+data with no single owner goes (section 17). Calls are what they were
 designed to be from the review of protocol 0
 ([protocol_review.md](protocol_review.md)): every request and reply is a
 map with named fields, binary data is a MessagePack bin, the caller is in
@@ -50,6 +51,7 @@ Contents:
 14. [Differences between the implementations](#14-differences-between-the-implementations)
 15. [Conformance tests](#15-conformance-tests)
 16. [Examples](#16-examples)
+17. [Shared places](#17-shared-places)
 - [Appendix A. Protocol 0 (discarded)](#appendix-a-protocol-0-discarded)
 
 ## 1. Model
@@ -79,6 +81,12 @@ Contents:
   a put on `asterism/<node>/<app>/<topic>`, with a sequence number (and,
   when the topic says so, the sender's time) in the attachment. The type,
   unit and description of a topic are said once, in its declaration.
+- Data that no one application owns (what a node shows its spectators, a
+  meeting place of the network) goes on a **shared place**: a node's
+  `asterism/<node>/@shared/...` or the network's `asterism/@shared/...`.
+  A shared place has keys and values only (no objects, profile or token);
+  each sender declares the keys it puts on in its own declarations, and
+  several senders may put on one key (section 17).
 - There is no server: every application answers the queries for its own
   objects. A Zenoh router (zenohd) usually connects them; a direct peer
   link works the same.
@@ -91,9 +99,8 @@ Contents:
 
 ### 1.1 Several connections in one program
 
-A program that is several applications (a game host that is also the
-spectators' view, `host/game` and `host/spectate`) opens one connection
-for each. Nothing on the wire tells them apart from applications of
+A program that is several applications (a game host and one of its
+rooms, `host/games` and `host/room01`) opens one connection for each. Nothing on the wire tells them apart from applications of
 different programs: each has its own application token, its own
 queryables and its own `<node>/<app>` keys, and they reach each other as
 any two applications do (through the router, with its access control).
@@ -162,6 +169,8 @@ write or its proxies cannot forward.
 | `asterism/<node>/<app>/@status` | put | the application, at connect and when its status changes | 8 |
 | `asterism/<node>/<app>/@pubs` | put | the application, when its topics change | 10 |
 | `asterism/<node>/<app>/<topic>` | publisher, put | the application, for each value of a topic (`<topic>` may have several chunks) | 9 |
+| `asterism/<node>/@shared/<name>` | publisher, put | an application of `<node>`, for each value it puts on its node's shared place (`<name>` may have several chunks) | 17 |
+| `asterism/@shared/<name>` | publisher, put | an application the network allows, for each value it puts on the network's shared place | 17 |
 
 - The root chunk is `asterism`.
 - There is no token for the node alone: a node is present while any of
@@ -192,6 +201,12 @@ write or its proxies cannot forward.
   object's token and calls and the topic's puts do not meet. A topic
   SHOULD NOT be named like a call or meta key (`x/meta`, `x/call/y`), so
   that a reader of the keys does not take one for the other.
+- `@shared` is a verbatim chunk too, in a node's place (the application
+  position, `asterism/<node>/@shared/...`) and in the network's (the node
+  position, `asterism/@shared/...`): `asterism/**` and `asterism/<node>/**`
+  do **not** reach them, nor do `asterism/*/*/...` patterns written for
+  applications; `asterism/*/@shared/**` and `asterism/@shared/**` do. Their
+  access rules are written on their own (17.4).
 - Other verbatim chunks under `asterism/` are reserved for this protocol.
 
 ## 3. Values
@@ -834,6 +849,7 @@ Every value of a topic carries a Zenoh attachment: a MessagePack array
 |---|---|
 | `[seq]` | always, unless the topic sends the time |
 | `[seq, time]` | the topic is declared with `ts` (10.1) |
+| `[seq, time or nil, sender]` | a value on a shared place (17.3), always; `time` is nil (MessagePack nil) unless the topic is declared with `ts` |
 
 - `seq`: an int, the **sequence number** of the value in its topic: 0 for
   the first value after the topic is declared, then one more for each
@@ -842,6 +858,9 @@ Every value of a topic carries a Zenoh attachment: a MessagePack array
   declared again, or an application that connects again, starts over at 0.
 - `time`: an int, the **sender's time** when the value was put (or
   measured), in **milliseconds since 1970-01-01 UTC** (12).
+- `sender`: a str, `"<node>/<app>"`, the application that put a value on
+  a shared place (17.3). A reader of an application's own key ignores it
+  (the key says the sender).
 - A reader ignores elements after these (room for later additions). A
   value without an attachment, or with one that is not an array starting
   with an int from 0 to `2^31 - 1`, has no sequence number; a `time` that
@@ -853,8 +872,9 @@ profiles) carry no attachment.
 
 ### 9.4 Reading the sequence numbers
 
-A reader keeps the last number of each key it receives and reads the next
-one by its distance forward, `d = (seq - last) mod 2^31`:
+A reader keeps the last number of each key it receives (of each key and
+sender, on a shared place: 17.3) and reads the next one by its distance
+forward, `d = (seq - last) mod 2^31`:
 
 - `0 < d < 2^30`: a step forward; `d - 1` values were **lost** (put but
   not received: a full queue, a link that dropped them, the router away);
@@ -879,7 +899,9 @@ allowed) gives each value decoded (MessagePack) or as its bytes (another
 encoding), and an `Asterism::SampleInfo`: `key`, `node`, `app`, `name`,
 `seq`, `time`, `encoding` (`"msgpack"` for no encoding, the MCAP word;
 else Zenoh's name), `timestamp` (the router's, 12), `lost` and
-`restarted?` (9.4). A value without an encoding that is not one
+`restarted?` (9.4), and `path` (the key below `asterism/`), `from` (the
+sender, `"<node>/<app>"`) and `shared` (nil, `:node` or `:global`) for the
+shared places (17.5). A value without an encoding that is not one
 MessagePack value is left out (counted in the subscription's `malformed`).
 The blocks run from `net.poll`, never inside a waiting call. An
 application's subscription does not get the values the application puts
@@ -910,10 +932,18 @@ with short keys:
  "camera"         => {"t" => 4, "e" => 17}}
 ```
 
+The name of a declaration (its **entry**) is the topic's name for a topic
+of the application's own (`imu`: `asterism/<node>/<app>/imu`), and the key
+below `asterism/` for a topic on a shared place: `<node>/@shared/<name>`
+for its node's place, `@shared/<name>` for the network's (17.2). The two
+cannot be confused: no chunk of a topic's name starts with `@` (2.1).
+
 A reader (`Asterism::Pubs.check`) keeps the declarations that are maps
-under a non-empty str name, and in each the keys above that have the right
-shape (`t` an int above 0 or a non-empty str, `e` an int above 0, `u` and
-`d` str, `ts` true); it drops the rest.
+under an entry of these three forms (each chunk of the name a name of 2.1;
+in the node's form, the declaring application's own node), and in each the
+keys above that have the right shape (`t` an int above 0 or a non-empty
+str, `e` an int above 0, `u` and `d` str, `ts` true); it drops the rest
+(an entry with another verbatim chunk is reserved).
 
 ### 10.2 Where they are told
 
@@ -975,6 +1005,13 @@ is a map, type name => definition:
 `any` is a value of any shape (what the type does not say: a list of
 mixed parts such as `[name, seat, flags]` is an `any`, a list of them
 `any[]`). `[]` alone, with no type before it, is not a type.
+
+Types are each application's own: a type name means what the application
+that declared the topic defines it to be. On a shared place several
+senders may declare one key, and may give the same type name different
+definitions; **a reader reads a value's type from its sender's
+declarations and types** (the sender is the attachment's `sender`, 17.3;
+Ruby: `net.type_of(info)`), never from another sender of the same key.
 
 The value of such a type is a MessagePack map with the fields as str keys.
 A built-in type is written in a field by its number or by its name (an
@@ -1093,10 +1130,11 @@ Expected values may also hold matchers: `{"any": "str"}` (or `"int"`,
 
 ```
 {
-  "format": "asterism-protocol-samples", "version": 5, "protocol": 2,
+  "format": "asterism-protocol-samples", "version": 6, "protocol": 2,
   "names":  {"iut": "iut", "app": "conf", "driver": "drv"},
   "icon":   {"hex": "<the PNG>", "icon_hash": "2a8c0626"},
-  "iut":    {"profile": ..., "status": ..., "types": [...], "topics": [...], "subscribe": "drv/conf/**",
+  "iut":    {"profile": ..., "status": ..., "types": [...], "topics": [...],
+             "subscribe": ["drv/conf/**", "drv/@shared/**", "@shared/feed/**"],
              "objects": [{"name": "subject", "methods": [[name, arity], ...]}, ...]},
   "values":   [{"id", "value", "encodings": [hex, ...], "portable", "expect"?, "note"?}, ...],
   "incoming": [{"id", "key", "params", "payload_hex", "replies": [{"key", "payload"}], "portable", "note"?}, ...],
@@ -1129,10 +1167,12 @@ Expected values may also hold matchers: `{"any": "str"}` (or `"int"`,
   order); `{"unpublish": topic}`; `{"feed": [...], "expect": n}`: call
   `rec.feed()`; while answering it, the driver puts the values listed
   (`key`, `payload_hex`, `attachment_hex`, `encoding`; nil: none) on
-  `asterism/drv/conf/feed/...`, and the implementation reports what its
-  subscription to `drv/conf/**` got (9.5): `[path, value, seq, time,
-  encoding, lost, restarted]` for each value in the order they came, a
-  value with an encoding as a bin.
+  `asterism/drv/conf/feed/...` and on the shared places
+  `asterism/drv/@shared/feed/...` and `asterism/@shared/feed/...`, and the
+  implementation reports what its subscriptions (`iut.subscribe`, in that
+  order) got (9.5, 17.5): `[path, value, seq, time, encoding, lost,
+  restarted, from]` for each value, subscription after subscription in
+  the order they came, a value with an encoding as a bin.
   The driver checks the request it receives against `request` (for a
   call, `call` is the request map with absent `args` / `kwargs` read as
   empty), answers with the replies in `reply_hex` (none: it finishes the
@@ -1144,7 +1184,8 @@ Expected values may also hold matchers: `{"any": "str"}` (or `"int"`,
 - **pubs_puts**: the last two puts on `@pubs` are `declared` (the three
   topics) and `after_unpublish`; puts before them (one per topic as they
   are declared) are not checked.
-- **data_puts**: the puts on the topics' keys, in order, and no others:
+- **data_puts**: the puts on the topics' keys (its own, its node's shared
+  place, and the key it uses on the network's), in order, and no others:
   the encoding Zenoh reports (`zenoh/bytes` for none), the payload (a
   MessagePack value, or the bytes as they are) and the attachment.
 - **portable: false** samples are where the implementations may differ
@@ -1161,7 +1202,8 @@ the router at LOCATOR). The program:
    and its status to `{"st" => "wait", "n" => 1}`, and defines the type
    in `iut.types`;
 2. connects as node `iut`, application `conf`, declares the topics in
-   `iut.topics` and subscribes to `drv/conf/**`;
+   `iut.topics` (those with `shared` on that place, 17) and subscribes to
+   the paths in `iut.subscribe`;
 3. exposes `subject` with `echo(v) -> v` (1), `kw(a, b: nil, c: nil) ->
    [a, b, c]` (1), `add(a, b) -> a + b` (2), `boom` raising a `RuntimeError`
    "boom" (0), `any(*args) -> number of args` (-1), `ok? -> true` (0),
@@ -1238,6 +1280,155 @@ reply       asterism/linux/demo/@profile
 
 Per value, besides the key: the payload and 11 bytes of attachment (2
 without `ts`); no encoding.
+
+A game host `linux/games` and a room `linux/room01` both put a table's
+view for its spectators on the node's shared place, each declaring it in
+its own `@pubs`:
+
+```
+put         asterism/linux/games/@pubs
+            {"linux/@shared/spectate/t1/state" => {"t" => "mygame/table"}}
+put         asterism/linux/room01/@pubs
+            {"linux/@shared/spectate/t1/state" => {"t" => "mygame/table"}}
+put         asterism/linux/@shared/spectate/t1/state    (from linux/games)
+            attachment  93 07 c0 ab 6c696e75782f67616d6573   [7, nil, "linux/games"]
+put         asterism/linux/@shared/spectate/t1/state    (from linux/room01)
+            attachment  93 00 c0 ac 6c696e75782f726f6f6d3031 [0, nil, "linux/room01"]
+```
+
+A spectator subscribes to `asterism/*/@shared/spectate/**`, counts the
+numbers of each sender on its own and reads each value's type from its
+sender (`linux/games/@profile?pubs;types` for the first,
+`linux/room01/@profile?pubs;types` for the second).
+
+## 17. Shared places
+
+### 17.1 Why
+
+An application's keys (`asterism/<node>/<app>/...`) have one owner: the
+application answers its objects, its profile and its declarations, and
+puts its values. Some data has no single owner: what a node shows the
+spectators of its game tables, whichever of its programs runs the table;
+a place where the members of the network announce themselves or exchange
+small notices. Putting such data under one application's name would tie
+the key to whichever program happens to send it, and would let only that
+application's connection put there.
+
+A **shared place** is a namespace of data only. Its keys are shared
+names; the declarations are each sender's (as in Zenoh, where a key
+expression is shared and each publisher is its own, and in ROS 2, where a
+topic name is shared and each publisher declares its type). It has no
+liveliness token, no objects, no queryable and no profile of its own.
+
+### 17.2 The two places
+
+| Place | Keys | Who puts on it | Entry in the sender's declarations |
+|---|---|---|---|
+| a node's | `asterism/<node>/@shared/<name>` | the applications of `<node>` | `<node>/@shared/<name>` |
+| the network's | `asterism/@shared/<name>` | the applications the network's roles allow | `@shared/<name>` |
+
+`<name>` is one or more chunks separated by `/`, each a name (2.1), as a
+topic's name (9.1). An application puts only on its own node's place
+(`<node>` is its node ID) and on the network's.
+
+Which to use:
+
+- **a node's place** for a copy of what that node emits: what its tables
+  show their spectators (`asterism/<node>/@shared/spectate/<table>/...`), a
+  view of the node's own state that several of its programs feed. Readers
+  follow one node (`asterism/<node>/@shared/**`) or all
+  (`asterism/*/@shared/**`).
+- **the network's place** for a meeting place of the whole network: data
+  exchange and notices of the network's state among its participants. An
+  Asterism network is for trusted members only; the network's place is
+  for them, not for anyone who reaches the router.
+
+### 17.3 Values
+
+A value on a shared place is a topic's value (section 9): the payload and
+the encoding as in 9.2, a declared Zenoh publisher on its key, and the
+attachment
+
+```
+[seq, time or nil, "<node>/<app>"]
+```
+
+always with three elements: `seq` as in 9.3 (per sender and key: each
+sender numbers its own values from 0), `time` the sender's time when the
+topic is declared with `ts` and nil otherwise, and the sender's
+`"<node>/<app>"`. The sender is in the attachment because the key does not
+say it: several applications may put on one key.
+
+A reader counts the numbers (9.4) **per key and sender**: the values of
+two senders on one key are two runs, each with its own lost values and
+restarts. A value whose third element is not a str of two names
+(`<node>/<app>`), or that has none, has no sender: its numbers are counted
+per key (as an application's own key), and its node, for a node's place, is
+the key's.
+
+### 17.4 Who may put there: the router's rules
+
+The protocol does not decide who may put on a shared place; the router's
+access control does, from the keys (principle: what is controlled is in
+the key). The `@shared` chunk is verbatim, so rules written for
+`asterism/**` or for applications (`asterism/<node>/*/...`) do not reach
+it: a deployment writes its rules for it on their own.
+
+- **A node's place** is naturally writable by its own node: the rule for a
+  node allows put (and the publisher's declaration) on
+  `asterism/${node}/@shared/**`, where `${node}` is the node the router
+  knows the client to be (its certificate's name). Readers: subscription on
+  `asterism/*/@shared/**`.
+- **The network's place** is writable by nobody unless a rule grants it:
+  an administrator grants put on `asterism/@shared/**` (or a part of it,
+  `asterism/@shared/lobby/**`) to the roles that should have it; which
+  roles have it from the start is the deployment's choice. Readers:
+  subscription on `asterism/@shared/**` (or the part).
+- A sender says who it is in the attachment, but a reader cannot check it
+  there: on a node's place the router's rule ties the key to the node; on
+  the network's place a sender trusts the roles that may write there.
+
+### 17.5 Declaring and reading (the Ruby API)
+
+```ruby
+t = net.publish("spectate/t1/state", shared: :node, type: "mygame/table")  # asterism/<node>/@shared/spectate/t1/state
+g = net.publish("lobby", shared: :global, type: :text)                     # asterism/@shared/lobby
+t.put(state)                                       # attachment [seq, nil, "<node>/<app>"]
+
+net.subscribe("*/@shared/spectate/**") do |v, info|
+  info.from      # => "linux/room01", the sender
+  info.shared    # => :node (:global on the network's place)
+  info.path      # => "linux/@shared/spectate/t1/state"
+  info.name      # => "spectate/t1/state"
+  info.lost      # values of this sender on this key that did not come
+end
+net.publishers_of("linux/@shared/spectate/t1/state")   # => {"linux/games" => {...}, "linux/room01" => {...}}
+net.type_of(info)          # the sender's type of the key: a number, or [name, its definition]
+```
+
+- `net.publish(..., shared:)`: `:node` (this connection's node's place) or
+  `:global`; the topic is declared in this application's `@pubs` under its
+  entry (17.2), with this application's types, and withdrawn with
+  `net.unpublish(topic)` (or `net.unpublish(name, shared: :node)`).
+  `net.published` lists entries.
+- `net.subscribe` takes a shared path: `<node>/@shared/<name>` (`*` for the
+  node), `@shared/<name>`, with `*` and `**` in the name.
+- `net.pubs_of(node, app)` gives the shared entries too.
+  `net.publishers_of(path)` asks every application's `@profile?pubs` (of
+  that node, for a node's place; `*` for the node: all) and returns the
+  ones that declare the key with their declarations.
+- `net.declaration_of(info)` and `net.type_of(info)` read a received
+  value's declaration and type from **its sender** (11.2): two senders may
+  give one type name different definitions.
+
+### 17.6 Several senders
+
+Any number of applications may put on one key of a shared place, each
+with its own declaration (type, unit, encoding, `ts`) in its own `@pubs`.
+They SHOULD agree on what the key carries; when they do not, a reader
+still reads each value correctly by its sender (17.5). Nothing on the wire
+merges them: the key's latest value is the last one put, from whichever
+sender.
 
 ## Appendix A. Protocol 0 (discarded)
 
