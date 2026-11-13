@@ -890,27 +890,6 @@ cost each board a declaration and its memory). A topic lives as long as
 its application's token (6.1); who wants to know the topics follows
 `asterism/*/*/@pubs`.
 
-### 10.4 Another name on the same connection
-
-A connection MAY also declare topics and types under another application
-name of its node (`Asterism.publish("t1/state", app: "spectate")`,
-`Asterism.define_type(..., app: "spectate")`): a game host puts what
-spectators see under `spectate`, which the players' rules do not reach,
-on the connection it plays on. The other name has:
-
-- its topics on `asterism/<node>/<name>/<topic>` (9.1), declared on its
-  own `asterism/<node>/<name>/@pubs` (10.2);
-- its own profile queryable `asterism/<node>/<name>/@profile` (8), declared
-  once it has a topic or a type, which answers `pubs` and `types` (8.3) and
-  never a status (`?status` gives the empty map);
-- **no objects, no `**` queryable and no liveliness token**: it does not
-  show as an application in `Asterism.apps` or `on_app_join`, and the
-  duplicate check (6.3) does not cover it. Tools find it through its
-  `@pubs` put or by asking `asterism/<node>/*/@profile`. A program that
-  wants it listed as an application declares a token for it itself.
-
-The name follows 2.1; the application's own name is the application.
-
 ## 11. Types
 
 ### 11.1 Built-in types
@@ -946,12 +925,8 @@ is a map, type name => definition:
 
 | Key | Value |
 |---|---|
-| `f` | the fields, in order: an array of `[name, type]`, name a str; type an int (a built-in type's number), or a str: a built-in type's name (`number`, `vector3`, `pose`, `image`, `state`, `log`, `text`), a basic type (`int`, `float`, `str`, `bin`, `bool`, `any`) or another application type's name, any of them with `[]` at the end for an array of them (`vector3[]`, `int[]`, `asterism-games/point[]`), repeated for arrays of arrays (`int[][]`: an array of arrays of ints) |
+| `f` | the fields, in order: an array of `[name, type]`, name a str; type an int (a built-in type's number), or a str: a built-in type's name (`number`, `vector3`, `pose`, `image`, `state`, `log`, `text`), a basic type (`int`, `float`, `str`, `bin`, `bool`) or another application type's name, any of them with `[]` at the end for an array of them (`vector3[]`, `int[]`, `asterism-games/point[]`) |
 | `d` | optional, a str: what the type is |
-
-`any` is a value of any shape (what the type does not say: a list of
-mixed parts such as `[name, seat, flags]` is an `any`, a list of them
-`any[]`). `[]` alone, with no type before it, is not a type.
 
 The value of such a type is a MessagePack map with the fields as str keys.
 A built-in type is written in a field by its number or by its name (an

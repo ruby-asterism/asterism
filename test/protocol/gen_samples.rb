@@ -239,7 +239,7 @@ pubs_tv = m(["imu", m(["t", i(2)], ["u", "m/s2"], ["d", "acceleration"], ["ts", 
             ["board1/strokes", m(["t", "conf/stroke"])],
             ["camera", m(["t", i(4)], ["e", i(17)])])
 types_tv = m(["conf/stroke", m(["f", [["pts", "int[]"], ["color", "str"], ["at", i(2)], ["path", "vector3[]"],
-                                     ["pose", "pose"], ["grid", "int[][]"], ["extra", "any"]]], ["d", "one stroke"])])
+                                     ["pose", "pose"]]], ["d", "one stroke"])])
 ap = ->(*pairs) { [{ "key" => app_prof, "payload" => m(*pairs) }] }
 q.("app profile", app_prof, nil, ap.(["status", st_tv], ["pubs", pubs_tv]),
   note: "without parameters: the status and the topics (the types only when asked for)")
@@ -251,21 +251,12 @@ q.("app profile ?types", app_prof, nil, ap.(["types", types_tv]), params: "types
 q.("app profile two parts", app_prof, nil, ap.(["status", st_tv], ["types", types_tv]), params: "status;types")
 q.("app profile unknown parameters", app_prof, nil, ap.(["status", st_tv], ["pubs", pubs_tv]), params: "x=1",
   note: "parameters naming no part: the default reply")
-q.("app profile under */*", "asterism/*/*/@profile", nil,
-  ap.(["status", st_tv], ["pubs", pubs_tv]) + [{ "key" => "asterism/#{IUT}/watch/@profile", "payload" => m() }],
-  note: "wildcard node and app chunks reach it (a node's profile has one chunk less), and the other name's " \
-        "(define_type app: watch) too")
+q.("app profile under */*", "asterism/*/*/@profile", nil, ap.(["status", st_tv], ["pubs", pubs_tv]),
+  note: "wildcard node and app chunks reach it (a node's profile has one chunk less)")
 q.("app profile not under **", "#{base}/**", nil, [],
   note: "@profile is a verbatim chunk: asterism/<node>/<app>/** does not reach it")
 q.("nothing answers @status", "asterism/#{IUT}/#{APP}/@status", nil, [],
   note: "the status is only put there; it is asked for at @profile?status")
-watch_prof = "asterism/#{IUT}/watch/@profile"
-cell_tv = m(["conf/cell", m(["f", [["mb", "any[]"]]])])
-wp = ->(*pairs) { [{ "key" => watch_prof, "payload" => m(*pairs) }] }
-q.("other name ?types", watch_prof, nil, wp.(["types", cell_tv]), params: "types",
-  note: "another name of the connection (define_type app: watch) answers its own profile")
-q.("other name, no parameters", watch_prof, nil, wp.(), note: "no topics and no status there: an empty map")
-q.("other name ?status", watch_prof, nil, wp.(), params: "status", note: "another name has no status")
 q.("app profile of no such app", "asterism/#{IUT}/nothing/@profile", nil, [],
   note: "an application that is not there answers nothing")
 q.("method name as bin", call_key, pk({ "method" => "add".b, "args" => [2, 3] }),
@@ -446,7 +437,7 @@ samples = {
     "profile" => m(["name", "iut"]),
     "status" => m(["st", "wait"], ["n", i(1)]),
     "types" => [{ "name" => "conf/stroke", "fields" => [["pts", "int[]"], ["color", "str"], ["at", 2], ["path", "vector3[]"],
-                                                                ["pose", "pose"], ["grid", "int[][]"], ["extra", "any"]],
+                                                                ["pose", "pose"]],
                   "desc" => "one stroke" }],
     "topics" => [{ "name" => "imu", "type" => "vector3", "unit" => "m/s2", "desc" => "acceleration", "ts" => true },
                  { "name" => "board1/strokes", "type" => "conf/stroke" },

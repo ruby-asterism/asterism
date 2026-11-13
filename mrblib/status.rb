@@ -135,9 +135,6 @@ module Asterism
     if @session && node == @node && app == @app
       return Future.answered(path, what, Codec.pack(app_profile_hash(part)))
     end
-    if @session && node == @node && @others && @others[app] && @others[app]["qa"]
-      return Future.answered(path, what, Codec.pack(app_profile_hash(part, app)))
-    end
     begin
       g = session!.get("#{ROOT}/#{path}", timeout_ms: ms, params: part)
     rescue Asterism::Zenoh::Error => e
@@ -207,35 +204,25 @@ module Asterism
 
   # The reply of asterism/<node>/<app>/@profile: the parts asked for
   # (part: one name, or the parameters of a query), each left out when
-  # this application has none. a: another name of this connection
-  # (publish's app:), which has topics and types but no status.
+  # this application has none.
   # @api private
-  def self.app_profile_hash(params, a = nil)
+  def self.app_profile_hash(params)
     h = {}
-    topics = a ? other_entry(a)["topics"] : @topics
-    types = a ? other_entry(a)["types"] : @types
     app_profile_parts(params).each do |n|
       if n == "status"
-        h["status"] = @status if @status && a.nil?
+        h["status"] = @status if @status
       elsif n == "pubs"
-        h["pubs"] = pubs_hash(a) if topics && !topics.empty?
-      elsif types && !types.empty?
-        h["types"] = types
+        h["pubs"] = pubs_hash if @topics && !@topics.empty?
+      elsif @types && !@types.empty?
+        h["types"] = @types
       end
     end
     h
   end
 
-  # Answers the queries of the application's @profile and of each other
-  # name's.
   # @api private
   def self.answer_app_profile
-    answer_app_profile_on(@app_queryable, nil)
-    (@others || {}).each { |a, e| answer_app_profile_on(e["qa"], a) }
-  end
-
-  # @api private
-  def self.answer_app_profile_on(qa, a)
+    qa = @app_queryable
     return unless qa && qa.pending > 0
     queries = qa.each_pending
     i = 0
@@ -243,7 +230,7 @@ module Asterism
       q = queries[i]
       i += 1
       begin
-        q.reply("#{ROOT}/#{@node}/#{a || @app}/#{Profile::KEY}", Codec.pack(app_profile_hash(q.params, a)))
+        q.reply("#{ROOT}/#{@node}/#{@app}/#{Profile::KEY}", Codec.pack(app_profile_hash(q.params)))
       ensure
         begin
           q.finish

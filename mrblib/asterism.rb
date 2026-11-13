@@ -312,7 +312,6 @@ module Asterism
     tell_profile   # for those who follow the profiles (the reply is the queryable's)
     tell_status(true) # a status set before connecting (status.rb)
     app_queryable(s) if @types && !@types.empty? # types defined before connecting (topic.rb)
-    (@others || {}).each { |a, e| other_queryable(s, a) unless e["types"].empty? }
     self
   end
 

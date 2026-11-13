@@ -137,9 +137,6 @@ check(Asterism::Types.definition!([["pts", "int[]"], ["at", :vector3], ["n", 1],
       { "f" => [["pts", "int[]"], ["at", "vector3"], ["n", 1], ["path", "pose[]"]], "d" => "d" },
       "a definition (built-in types by number or name, arrays of them by name)")
 raises(ArgumentError, "a field type of [] alone") { Asterism::Types.definition!([["a", "[]"]], nil) }
-raises(ArgumentError, "a field type of [][] alone") { Asterism::Types.definition!([["a", "[][]"]], nil) }
-check(Asterism::Types.definition!([["g", "int[][]"], ["x", "any"], ["m", "any[]"]], nil) ==
-        { "f" => [["g", "int[][]"], ["x", "any"], ["m", "any[]"]] }, "[] repeated and any")
 check(Asterism::Pubs.encoding_id("image/jpeg") == 17 && Asterism::Pubs.encoding_id("video/vp9") == 52,
       "encoding numbers")
 check(Asterism::Pubs.check({ "a" => { "t" => 2, "x" => 1 }, 5 => {} }) == { "a" => { "t" => 2 } }, "pubs check")
@@ -165,14 +162,6 @@ w = fs.unwrap(FakeSample.new("asterism/n/a/w", 0))[1]
 check(w.lost == 0 && !w.restarted?, "the wrap")
 pubs = Asterism.pubs_of("mnode", "t")
 check(pubs == { "imu" => { "t" => 2, "u" => "m/s2", "ts" => true } }, "pubs_of: #{pubs.inspect}")
-vp = Asterism.pubs_of("mnode", "watch")
-check(vp == { "t1/state" => { "t" => "t/view" } }, "pubs_of another name: #{vp.inspect}")
-vt = Asterism.types_of("mnode", "watch")
-check(vt == { "t/view" => { "f" => [["mb", "any[]"], ["fin", "int[][]"]] } }, "types_of another name: #{vt.inspect}")
-check(Asterism.status_of("mnode", "watch").nil?, "another name has no status")
-check(!Asterism.apps.include?("mnode/watch"), "another name has no token")
-vgot = []
-Asterism.subscribe("mnode/watch/**") { |v, info| vgot << [v, info.app, info.name, info.seq] }
 got = []
 plain = []
 Asterism.subscribe("mnode/t/imu") { |v, info| got << [v, info.seq, info.encoding, info.time.is_a?(Integer)] }
@@ -188,13 +177,6 @@ while got.size < 2 && Time.now - t < 3
 end
 check(got == [[[1, 2, 7], 0, "msgpack", true], [[1, 2, 8], 1, "msgpack", true]], "values with |v, info|: #{got.inspect}")
 check(plain == [[1, 2, 7], [1, 2, 8]], "values with |v|: #{plain.inspect}")
-s.put("test/view", "3")
-t = Time.now
-while vgot.empty? && Time.now - t < 3
-  Asterism.poll
-  usleep 2000
-end
-check(vgot == [[{ "n" => 3 }, "watch", "t1/state", 0]], "a value under another name: #{vgot.inspect}")
 s.put("test/stop", "")
 Asterism.poll
 Asterism.close

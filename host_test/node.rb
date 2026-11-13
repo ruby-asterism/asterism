@@ -14,9 +14,6 @@ Asterism.profile(name: "mruby node", host: "host_test", icon: icon)
 Asterism.status({ "n" => 1, "st" => "wait" })
 Asterism.connect(nil, node: "mnode", app: "t", mode: :peer, listen: "tcp/127.0.0.1:#{port}")
 imu = Asterism.publish("imu", type: :vector3, unit: "m/s2", ts: true)
-# Another name of this connection (publish / define_type app:).
-Asterism.define_type("t/view", [["mb", "any[]"], ["fin", "int[][]"]], app: "watch")
-view = Asterism.publish("t1/state", type: "t/view", app: "watch")
 s = Asterism.session
 sub = s.subscribe("test/**")
 puts "ready"
@@ -29,7 +26,6 @@ until stop || Time.now > deadline
     Asterism.profile(name: payload) if key == "test/name"
     Asterism.status(n: payload.to_i) if key == "test/status"
     imu.put([1, 2, payload.to_i]) if key == "test/imu"
-    view.put({ "n" => payload.to_i }) if key == "test/view"
   end
   usleep 2000
 end
