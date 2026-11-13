@@ -1,5 +1,5 @@
 # The shared pure Ruby layers on CRuby: the object layer between two CRuby
-# processes (Asterism is one connection per process), and Asterism::ROS
+# processes (one connection each), and Asterism::ROS
 # between two sessions of this process.
 require_relative "helper"
 require "asterism"
@@ -14,9 +14,9 @@ class TestAsterismObjects < Minitest::Test
     require "asterism"
     loc = ARGV[0]
     if ARGV[1] == "router"
-      Asterism.connect(loc, node: "child", app: "t")
+      NET = Asterism.connect(loc, node: "child", app: "t")
     else
-      Asterism.connect(nil, node: "child", app: "t", mode: :peer, listen: loc)
+      NET = Asterism.connect(nil, node: "child", app: "t", mode: :peer, listen: loc)
     end
     class Calc
       def add(a, b) = a + b
@@ -26,9 +26,9 @@ class TestAsterismObjects < Minitest::Test
       def echo(v) = v
       def secret = "no"
       # Calls the caller back while answering (nested waits on both sides).
-      def relay(node) = Asterism["#{node}/t/back"].name + "!"
+      def relay(node) = NET["#{node}/t/back"].name + "!"
       def who
-        c = Asterism.current_call
+        c = NET.current_call
         [c.from, c.verified.to_s, c.object, c.method]
       end
       def display = "remote display"
@@ -36,16 +36,16 @@ class TestAsterismObjects < Minitest::Test
     class Greeter
       def hello(name, from:) = "#{name} from #{from}"
     end
-    Asterism.expose("calc", Calc.new, methods: { add: 2, kw: 1, boom: 0, bin: 0, echo: 1, relay: 1, who: 0, display: 0 })
-    Asterism.expose("greet", Greeter.new, methods: { hello: 1 }, caller: :from)
+    NET.expose("calc", Calc.new, methods: { add: 2, kw: 1, boom: 0, bin: 0, echo: 1, relay: 1, who: 0, display: 0 })
+    NET.expose("greet", Greeter.new, methods: { hello: 1 }, caller: :from)
     STDOUT.puts "ready"
     STDOUT.flush
     loop do
-      Asterism.poll
+      NET.poll
       r, = IO.select([STDIN], nil, nil, 0.002)
       break if r && STDIN.read_nonblock(1, exception: false).nil?
     end
-    Asterism.close
+    NET.close
   RUBY
 
   class Back
@@ -65,21 +65,21 @@ class TestAsterismObjects < Minitest::Test
     child = IO.popen([RbConfig.ruby, *lib.flat_map { |l| ["-I", l] }, "-e", CHILD, loc, mode], "r+")
     assert_equal "ready", child.gets&.strip
     if router
-      Asterism.connect(loc, node: "parent", app: "t")
+      @net = Asterism.connect(loc, node: "parent", app: "t")
     else
-      Asterism.connect(loc, node: "parent", app: "t", mode: :peer)
+      @net = Asterism.connect(loc, node: "parent", app: "t", mode: :peer)
     end
-    Asterism.expose("back", Back.new, methods: [:name])
+    @net.expose("back", Back.new, methods: [:name])
     joined = []
     left = []
-    Asterism.on_join { |n| joined << n }
-    Asterism.on_leave { |n| left << n }
-    assert wait_for { Asterism.poll; Asterism.nodes.include?("child") }
-    # Told from Asterism.poll (the shared layer; no receiving thread here).
+    @net.on_join { |n| joined << n }
+    @net.on_leave { |n| left << n }
+    assert wait_for { @net.poll; @net.nodes.include?("child") }
+    # Told from net.poll (the shared layer; no receiving thread here).
     assert_equal ["child"], joined
     assert_equal [], left
 
-    calc = Asterism["child/t/calc"]
+    calc = @net["child/t/calc"]
     assert_equal 5, calc.add(2, 3)
     assert_equal 12, calc.kw(4, scale: 3)
     assert_equal "\xff\x00\x01".b, calc.bin.b
@@ -104,8 +104,8 @@ class TestAsterismObjects < Minitest::Test
 
     # Who called (protocol 1: the caller's node is the call key's last chunk).
     assert_equal ["parent", "claimed", "calc", "who"], calc.who
-    assert_nil Asterism.current_call
-    greet = Asterism["child/t/greet"]
+    assert_nil @net.current_call
+    greet = @net["child/t/greet"]
     assert_equal "hi from parent", greet.hello("hi")
     e = assert_raises(Asterism::RemoteError) { greet.hello("hi", from: "someone else") }
     assert_equal "arguments", e.remote_kind
@@ -122,63 +122,63 @@ class TestAsterismObjects < Minitest::Test
     assert_match(/Proxy#methods is deprecated.*remote_methods/, warned[0])
 
     f = calc.async.add(10, 20)
-    assert wait_for { Asterism.poll; f.done? }
+    assert wait_for { @net.poll; f.done? }
     assert_equal 30, f.value
     assert f.took_ms
     assert_in_delta f.took_ms / 1000.0, f.took
 
     # The time limit in seconds; the old positional milliseconds warn.
-    assert_equal 9, Asterism["child/t/calc", timeout: 1.5].add(4, 5)
-    assert_equal 9, Asterism["child/t/calc", timeout_ms: 1500].add(4, 5)
-    assert_raises(ArgumentError) { Asterism["child/t/calc", timeout: 1, timeout_ms: 1000] }
+    assert_equal 9, @net["child/t/calc", timeout: 1.5].add(4, 5)
+    assert_equal 9, @net["child/t/calc", timeout_ms: 1500].add(4, 5)
+    assert_raises(ArgumentError) { @net["child/t/calc", timeout: 1, timeout_ms: 1000] }
     warned = with_deprecations do
-      assert_equal 3, Asterism["child/t/calc", 2000].add(1, 2)
-      Asterism["child/t/calc", 2.0]
+      assert_equal 3, @net["child/t/calc", 2000].add(1, 2)
+      @net["child/t/calc", 2.0]
     end
     assert_equal 2, warned.size
-    assert_match(/Asterism\[\] with the time limit as a positional argument/, warned[0])
+    assert_match(/Connection#\[\] with the time limit as a positional argument/, warned[0])
     assert_match(/Float.*2\.0 waits 2 ms/, warned[1])
 
-    assert_equal ["child/t/calc", "child/t/greet"], Asterism.each("child/*/*").map(&:asterism_path).sort
-    assert_equal ["parent", "child"], Asterism.nodes
-    assert_equal "parent", Asterism["parent/t/back"].name, "own objects are called in place"
+    assert_equal ["child/t/calc", "child/t/greet"], @net.each("child/*/*").map(&:asterism_path).sort
+    assert_equal ["parent", "child"], @net.nodes
+    assert_equal "parent", @net["parent/t/back"].name, "own objects are called in place"
 
     t = Time.now
-    e = assert_raises(Asterism::TimeoutError) { Asterism["child/other/x"].anything }
+    e = assert_raises(Asterism::TimeoutError) { @net["child/other/x"].anything }
     assert_match(/nobody answers/, e.message)
     assert Time.now - t < 1.5
     # The old name still rescues, and warns once.
     warned = with_deprecations do
-      assert_raises(Asterism::Timeout) { Asterism["child/other/x"].anything }
+      assert_raises(Asterism::Timeout) { @net["child/other/x"].anything }
       assert_equal Asterism::TimeoutError, Asterism::Timeout
     end
     assert_equal 1, warned.size
     assert_match(/Asterism::Timeout is deprecated.*TimeoutError/, warned[0])
     # off_join removes a block given to on_join.
     h = proc { |n| joined << "again #{n}" }
-    Asterism.on_join(&h)
-    Asterism.off_join(h)
+    @net.on_join(&h)
+    @net.off_join(h)
 
     child.close_write
     child.read
     child.close
     if router
-      assert wait_for(3) { Asterism.poll; !Asterism.nodes.include?("child") }
+      assert wait_for(3) { @net.poll; !@net.nodes.include?("child") }
       assert_raises(Asterism::TimeoutError) { calc.add(1, 2) }
     else
       # The only peer is gone: the session closes (no reconnection).
-      assert wait_for(5) { !Asterism.poll }
-      refute Asterism.connected?
-      assert Asterism.lost_reason
+      assert wait_for(5) { !@net.poll }
+      refute @net.connected?
+      assert @net.lost_reason
       assert_raises(Asterism::Disconnected) { calc.add(1, 2) }
     end
     # Gone (or the connection lost): told once.
     assert_equal ["child"], left
-    Asterism.poll
+    @net.poll
     assert_equal ["child"], left
     assert_equal ["child"], joined
   ensure
-    Asterism.close
+    @net&.close
     if child && !child.closed?
       child.close_write rescue nil
       child.close rescue nil

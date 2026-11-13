@@ -164,7 +164,7 @@ module Asterism
       attr_reader :session, :runner
 
       # runner: an existing Runner to receive on instead of a new one
-      # (Asterism::Net#session gives the object layer's: the session and
+      # (Asterism::Connection#zenoh gives the object layer's: the session and
       # its receiving thread are Asterism's, see shared?). @api private
       def initialize(session, interval: Runner::DEFAULT_INTERVAL, runner: nil)
         @session = session
@@ -179,10 +179,10 @@ module Asterism
         end
       end
 
-      # True for the Connection of Asterism's own session (net.session):
-      # its close does nothing, start / stop / run are the object layer's
-      # receiving thread (net.start / net.stop / net.run), and
-      # Asterism.close (or the end of the connect block) closes the session
+      # True for the Connection of an Asterism connection's session
+      # (net.zenoh): its close does nothing, start / stop / run are that
+      # connection's receiving thread (net.start / net.stop / net.run), and
+      # net.close (or the end of the connect block) closes the session
       # with everything declared on it.
       def shared?
         @shared
@@ -399,12 +399,12 @@ module Asterism
       def declare_keyexpr(key) = @session.declare_keyexpr(key)
 
       # Stops receiving and closes the session (with everything declared on
-      # it). Idempotent. On a shared? Connection (net.session) it does
+      # it). Idempotent. On a shared? Connection (net.zenoh) it does
       # nothing: close what you declared on it (subscriptions, publishers,
-      # ROS nodes) one by one, or let Asterism.close close them.
+      # ROS nodes) one by one, or let net.close close them.
       def close
         if @shared
-          ::Asterism.warn_once(self, "asterism: net.session belongs to Asterism; its close is ignored " \
+          ::Asterism.warn_once(self, "asterism: net.zenoh belongs to its Asterism connection; its close is ignored " \
                                      "(net.close closes it)")
           return nil
         end

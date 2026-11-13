@@ -2,14 +2,15 @@
 # topics it declares, the values it puts on them, and the subscriptions of
 # the readers.
 #
-#   imu = Asterism.publish("imu", type: :vector3, unit: "m/s2", ts: true)
+#   net = Asterism.connect(router, node: "linux", app: "demo")
+#   imu = net.publish("imu", type: :vector3, unit: "m/s2", ts: true)
 #   imu.put([0.1, 0.0, 9.8])                  # MessagePack, no encoding
-#   cam = Asterism.publish("camera", type: :image, encoding: "image/jpeg")
+#   cam = net.publish("camera", type: :image, encoding: "image/jpeg")
 #   cam.put(jpeg_bytes)                       # the bytes as they are
-#   Asterism.define_type("mygame/board.strokes", [["pts", "int[]"], ["color", "str"]])
+#   net.define_type("mygame/board.strokes", [["pts", "int[]"], ["color", "str"]])
 #
-#   Asterism.subscribe("*/demo/imu") { |v, info| p [v, info.seq, info.lost] }
-#   Asterism.pubs_of("linux", "demo")         # => {"imu" => {"t" => 2, ...}}
+#   net.subscribe("*/demo/imu") { |v, info| p [v, info.seq, info.lost] }
+#   net.pubs_of("linux", "demo")              # => {"imu" => {"t" => 2, ...}}
 #
 # Keys: a value goes on asterism/<node>/<app>/<name> (a declared Zenoh
 # publisher: the key travels as a number), with no encoding when it is
@@ -19,7 +20,7 @@
 # time they change, and answered by the application's own profile,
 # asterism/<node>/<app>/@profile (status.rb): ?status, ?pubs, ?types.
 #
-# Subscription blocks run from Asterism.poll only, never from the polling
+# Subscription blocks run from Connection#poll only, never from the polling
 # inside a waiting call (the values wait in the subscription's queue).
 module Asterism
   # The types of a topic's values: the built-in ones by number (their
@@ -210,17 +211,18 @@ module Asterism
     end
   end
 
-  # A declared topic (Asterism.publish). put sends a value; close withdraws
+  # A declared topic (Connection#publish). put sends a value; close withdraws
   # the declaration.
   class Topic
     # The sequence number goes back to 0 after this (below 2^31, so that
     # every board's Integer holds it).
     SEQ_MAX = 2147483647
 
-    attr_reader :name, :key, :encoding
+    attr_reader :name, :key, :encoding, :connection
 
     # @api private
-    def initialize(name, key, publisher, decl, encoding, ts)
+    def initialize(connection, name, key, publisher, decl, encoding, ts)
+      @connection = connection
       @name = name
       @key = key
       @publisher = publisher
@@ -249,11 +251,11 @@ module Asterism
     # or for a topic with an encoding, the bytes (a String) as they are.
     # Raises Disconnected when the connection is closed (or the topic is).
     def put(value)
-      ::Asterism.topic_put(self, value)
+      @connection.topic_put(self, value)
     end
 
     def close
-      ::Asterism.unpublish(self)
+      @connection.unpublish(self)
     end
 
     def closed?
@@ -344,17 +346,18 @@ module Asterism
     end
   end
 
-  # A subscription (Asterism.subscribe). close ends it.
+  # A subscription (Connection#subscribe). close ends it.
   class Subscription
     # Sequence numbers are compared within half of their range: a step
     # forward smaller than this is a step, anything else a restart (the
     # numbers wrap at Topic::SEQ_MAX).
     HALF = 1073741824
 
-    attr_reader :path
+    attr_reader :path, :connection
 
     # @api private
-    def initialize(path, zsub, blk)
+    def initialize(connection, path, zsub, blk)
+      @connection = connection
       @path = path
       @zsub = zsub
       @blk = blk
@@ -381,7 +384,7 @@ module Asterism
     end
 
     def close
-      ::Asterism.unsubscribe(self)
+      @connection.unsubscribe(self)
     end
 
     def closed?
@@ -478,123 +481,6 @@ module Asterism
     end
   end
 
-  # Declares a topic of this application, asterism/<node>/<app>/<name>
-  # (name: chunks separated by "/", each a name of docs/protocol.md 2.1),
-  # and returns it (an Asterism::Topic; topic.put(value) sends). type: a
-  # built-in type (:vector3, or its number) or an application's own type
-  # (a String, "mygame/board.strokes"); unit:, desc: Strings for the
-  # readers; ts: true sends the sender's time with each value; encoding: a
-  # Zenoh encoding with a fixed number ("image/jpeg"): the values are then
-  # Strings sent as they are, not MessagePack. Publishing a name again
-  # replaces the topic (its numbers start again at 0). The declaration is
-  # put on asterism/<node>/<app>/@pubs. Raises ArgumentError for what it
-  # does not accept and Disconnected when not connected. The topics end
-  # with the connection.
-  def self.publish(name, type: nil, unit: nil, desc: nil, ts: false, encoding: nil)
-    s = session!
-    name = check_topic_name(name)
-    decl = {}
-    t = Types.topic_type!(type)
-    decl["t"] = t unless t.nil?
-    enc = nil
-    unless encoding.nil?
-      enc = encoding.to_s
-      id = Pubs.encoding_id(enc)
-      if id.nil?
-        raise ArgumentError, "encoding: #{enc.inspect} is not one of Zenoh's encodings with a number " \
-                             "(image/jpeg, image/png, text/plain, application/cdr, ...)"
-      end
-      if id == 0
-        raise ArgumentError, "encoding: zenoh/bytes is how a MessagePack value goes; leave encoding: out " \
-                             "(a binary String is sent as a MessagePack bin)"
-      end
-      decl["e"] = id
-    end
-    unless unit.nil?
-      raise ArgumentError, "unit: expects a String, got #{unit.class}" unless unit.is_a?(String)
-      raise ArgumentError, "unit: at most #{Pubs::UNIT_MAX} bytes" if unit.bytesize > Pubs::UNIT_MAX
-      decl["u"] = unit unless unit.empty?
-    end
-    unless desc.nil?
-      raise ArgumentError, "desc: expects a String, got #{desc.class}" unless desc.is_a?(String)
-      raise ArgumentError, "desc: at most #{DOC_MAX} bytes" if desc.bytesize > DOC_MAX
-      decl["d"] = desc unless desc.empty?
-    end
-    raise ArgumentError, "ts: expects true or false" unless ts == true || ts == false
-    decl["ts"] = true if ts
-    @topics ||= {}
-    old = @topics[name] # replaced in place: the order of @pubs stays
-    close_topic(old) if old
-    key = "#{ROOT}/#{@node}/#{@app}/#{name}"
-    begin
-      zp = enc ? s.publisher(key, encoding: enc) : s.publisher(key)
-    rescue Asterism::Zenoh::Error
-      if old
-        @topics.delete(name)
-        tell_pubs(false)
-      end
-      raise
-    end
-    topic = Topic.new(name, key, zp, decl, enc, ts)
-    @topics[name] = topic
-    app_queryable(s)
-    tell_pubs(false)
-    topic
-  rescue Asterism::Zenoh::Error => e
-    lost_if_closed(e.message)
-    raise Disconnected, e.message
-  end
-
-  # Withdraws a topic (a Topic, or its name): its declaration leaves
-  # @pubs. True when there was one.
-  def self.unpublish(topic)
-    tbl = @topics || {}
-    name = topic.is_a?(Topic) ? topic.name : topic.to_s
-    cur = tbl[name]
-    if cur.nil? || (topic.is_a?(Topic) && !cur.equal?(topic))
-      close_topic(topic) if topic.is_a?(Topic)
-      return false
-    end
-    tbl.delete(name)
-    close_topic(cur)
-    tell_pubs(false)
-    true
-  end
-
-  # The names of this application's topics.
-  def self.published
-    @topics ? @topics.keys : []
-  end
-
-  # @api private
-  def self.close_topic(topic)
-    zp = topic.publisher
-    topic.closed!
-    zp.close if zp
-  rescue Asterism::Zenoh::Error
-    nil
-  end
-
-  # @api private
-  def self.topic_put(topic, value)
-    zp = topic.publisher
-    raise Disconnected, "topic #{topic.name} is closed" if zp.nil?
-    if topic.encoding
-      raise ArgumentError, "topic #{topic.name} (#{topic.encoding}): put expects the bytes, a String" unless value.is_a?(String)
-      bytes = value
-    else
-      bytes = Codec.pack(value)
-    end
-    begin
-      zp.put(bytes, attachment: topic.attachment)
-    rescue Asterism::Zenoh::Error => e
-      lost_if_closed(e.message)
-      raise Disconnected, e.message
-    end
-    topic.advance
-    nil
-  end
-
   # A topic's name: key chunks separated by "/", each a name.
   # @api private
   def self.check_topic_name(name)
@@ -608,31 +494,6 @@ module Asterism
     s
   end
 
-  # The declarations as sent: {name => {"t", "e", "u", "d", "ts"}}.
-  # @api private
-  def self.pubs_hash
-    h = {}
-    (@topics || {}).each { |name, t| h[name] = t.decl_raw }
-    h
-  end
-
-  # Puts the declarations on asterism/<node>/<app>/@pubs while connected:
-  # when they changed since the last put of this connection, or always with
-  # force (a connection that came back) once there were any.
-  # @api private
-  def self.tell_pubs(force)
-    s = @session
-    return unless s
-    tbl = @topics || {}
-    return if tbl.empty? && @pubs_put.nil?
-    bytes = Codec.pack(pubs_hash)
-    return if !force && !@pubs_put.nil? && @pubs_put == bytes
-    s.put("#{ROOT}/#{@node}/#{@app}/#{Pubs::KEY}", bytes)
-    @pubs_put = bytes
-  rescue Asterism::Zenoh::Error
-    nil # the next poll notices a lost connection
-  end
-
   # The sender's time: milliseconds since 1970 (nil where there is no
   # clock of the day).
   # @api private
@@ -642,133 +503,281 @@ module Asterism
     t.to_i * 1000 + t.usec / 1000
   end
 
-  # Defines an application type (docs/protocol.md 10), told to the readers
-  # by asterism/<node>/<app>/@profile?types. name: a String
-  # ("mygame/board.strokes"); fields: [[name, type], ...], each type a
-  # built-in one (its number, or its name: "vector3", :vector3), a basic
-  # one ("int", "float", "str", "bin", "bool") or another application
-  # type's name, with "[]" at the end for an array ("vector3[]", "int[]",
-  # "mygame/point[]"), repeated for arrays of arrays ("int[][]"); "any"
-  # for a value of any shape; names are sent as written. desc: a text. Defining
-  # a name again replaces it. Kept across connect and close. Returns the
-  # definition as sent ({"f" => [...], "d" => ...}).
-  def self.define_type(name, fields, desc: nil)
-    name = Types.name!("define_type: name:", name)
-    d = Types.definition!(fields, desc)
-    (@types ||= {})[name] = d
-    s = @session
-    app_queryable(s) if s
-    d
-  end
-
-  # Another application's topics: {name => {"t", "e", "u", "d", "ts"}}
-  # (Asterism::Pubs.check has cleaned it), {} when it answers without any,
-  # nil when nobody answers in time. Waits like status_of.
-  def self.pubs_of(node, app, timeout: nil, timeout_ms: nil)
-    raw = app_profile_part(node, app, "pubs", timeout, timeout_ms)
-    return nil if raw.nil?
-    Pubs.check(raw.key?("pubs") ? raw["pubs"] : {})
-  end
-
-  # Another application's own types: {name => {"f" => [...], "d" => ...}}
-  # (Asterism::Types.check), {} when it answers without any, nil when
-  # nobody answers in time. Waits like status_of.
-  def self.types_of(node, app, timeout: nil, timeout_ms: nil)
-    raw = app_profile_part(node, app, "types", timeout, timeout_ms)
-    return nil if raw.nil?
-    Types.check(raw.key?("types") ? raw["types"] : {})
-  end
-
-  # @api private
-  def self.app_profile_part(node, app, part, timeout, timeout_ms)
-    f = app_profile_async(node, app, part, timeout, timeout_ms)
-    begin
-      raw = f.raw_value
-    rescue Disconnected
-      raise
-    rescue Error
-      return nil # no answer in time, or not MessagePack
-    end
-    raw.is_a?(Hash) ? raw : nil
-  end
-
-  # Subscribes to the values on asterism/<path> (path: <node>/<app>/<name>,
-  # Zenoh wildcards allowed: * one chunk, ** any number). The block gets
-  # each value and an Asterism::SampleInfo (|v, info|; |v| is fine too):
-  # the value decoded from MessagePack, or the bytes (a String) when it
-  # came with an encoding. Blocks run from Asterism.poll. This
-  # application's own values do not come back to it. depth: the values
-  # kept between two polls (Asterism::Zenoh::DEFAULT_DEPTH). Returns the
-  # Asterism::Subscription (close it to stop); it ends with the connection.
-  def self.subscribe(path, depth: nil, &blk)
-    raise ArgumentError, "subscribe needs a block" unless blk
-    s = session!
-    p = path.to_s
-    if p.empty? || p.start_with?("/") || p.end_with?("/")
-      raise ArgumentError, "subscribe: expected <node>/<app>/<name> (wildcards allowed), got #{path.inspect}"
-    end
-    key = "#{ROOT}/#{p}"
-    begin
-      zs = depth.nil? ? s.subscribe(key) : s.subscribe(key, depth: depth)
-    rescue Asterism::Zenoh::Error => e
+  class Connection
+    # Declares a topic of this application, asterism/<node>/<app>/<name>
+    # (name: chunks separated by "/", each a name of docs/protocol.md 2.1),
+    # and returns it (an Asterism::Topic; topic.put(value) sends). type: a
+    # built-in type (:vector3, or its number) or an application's own type
+    # (a String, "mygame/board.strokes"); unit:, desc: Strings for the
+    # readers; ts: true sends the sender's time with each value; encoding: a
+    # Zenoh encoding with a fixed number ("image/jpeg"): the values are then
+    # Strings sent as they are, not MessagePack. Publishing a name again
+    # replaces the topic (its numbers start again at 0). The declaration is
+    # put on asterism/<node>/<app>/@pubs. Raises ArgumentError for what it
+    # does not accept and Disconnected when not connected. The topics end
+    # with the connection.
+    def publish(name, type: nil, unit: nil, desc: nil, ts: false, encoding: nil)
+      s = session!
+      name = ::Asterism.check_topic_name(name)
+      decl = {}
+      t = ::Asterism::Types.topic_type!(type)
+      decl["t"] = t unless t.nil?
+      enc = nil
+      unless encoding.nil?
+        enc = encoding.to_s
+        id = ::Asterism::Pubs.encoding_id(enc)
+        if id.nil?
+          raise ArgumentError, "encoding: #{enc.inspect} is not one of Zenoh's encodings with a number " \
+                               "(image/jpeg, image/png, text/plain, application/cdr, ...)"
+        end
+        if id == 0
+          raise ArgumentError, "encoding: zenoh/bytes is how a MessagePack value goes; leave encoding: out " \
+                               "(a binary String is sent as a MessagePack bin)"
+        end
+        decl["e"] = id
+      end
+      unless unit.nil?
+        raise ArgumentError, "unit: expects a String, got #{unit.class}" unless unit.is_a?(String)
+        raise ArgumentError, "unit: at most #{::Asterism::Pubs::UNIT_MAX} bytes" if unit.bytesize > ::Asterism::Pubs::UNIT_MAX
+        decl["u"] = unit unless unit.empty?
+      end
+      unless desc.nil?
+        raise ArgumentError, "desc: expects a String, got #{desc.class}" unless desc.is_a?(String)
+        raise ArgumentError, "desc: at most #{::Asterism::DOC_MAX} bytes" if desc.bytesize > ::Asterism::DOC_MAX
+        decl["d"] = desc unless desc.empty?
+      end
+      raise ArgumentError, "ts: expects true or false" unless ts == true || ts == false
+      decl["ts"] = true if ts
+      old = @topics[name] # replaced in place: the order of @pubs stays
+      close_topic(old) if old
+      key = "#{::Asterism::ROOT}/#{@node_id}/#{@app}/#{name}"
+      begin
+        zp = enc ? s.publisher(key, encoding: enc) : s.publisher(key)
+      rescue ::Asterism::Zenoh::Error
+        if old
+          @topics.delete(name)
+          tell_pubs(false)
+        end
+        raise
+      end
+      topic = ::Asterism::Topic.new(self, name, key, zp, decl, enc, ts)
+      @topics[name] = topic
+      app_queryable(s)
+      tell_pubs(false)
+      topic
+    rescue ::Asterism::Zenoh::Error => e
       lost_if_closed(e.message)
-      raise Disconnected, e.message
+      raise ::Asterism::Disconnected, e.message
     end
-    sub = Subscription.new(p, zs, blk)
-    (@subscriptions ||= []) << sub
-    sub
-  end
 
-  # Ends a subscription. True when it was open.
-  def self.unsubscribe(sub)
-    list = @subscriptions || []
-    z = sub.zsub
-    sub.closed!
-    list.delete(sub)
-    return false if z.nil?
-    begin
-      z.close
-    rescue Asterism::Zenoh::Error
+    # Withdraws a topic (a Topic, or its name): its declaration leaves
+    # @pubs. True when there was one.
+    def unpublish(topic)
+      tbl = @topics || {}
+      is_topic = topic.is_a?(::Asterism::Topic)
+      name = is_topic ? topic.name : topic.to_s
+      cur = tbl[name]
+      if cur.nil? || (is_topic && !cur.equal?(topic))
+        close_topic(topic) if is_topic
+        return false
+      end
+      tbl.delete(name)
+      close_topic(cur)
+      tell_pubs(false)
+      true
+    end
+
+    # The names of this application's topics.
+    def published
+      @topics ? @topics.keys : []
+    end
+
+    # @api private
+    def close_topic(topic)
+      zp = topic.publisher
+      topic.closed!
+      zp.close if zp
+    rescue ::Asterism::Zenoh::Error
       nil
     end
-    true
-  end
 
-  # Hands the values that came to the subscriptions' blocks (from poll).
-  # @api private
-  def self.deliver_samples
-    list = @subscriptions
-    return if list.nil? || list.empty?
-    subs = list.dup
-    i = 0
-    while i < subs.size
-      sub = subs[i]
-      i += 1
-      next if sub.closed?
-      got = sub.take
-      j = 0
-      while j < got.size
-        break if sub.closed?
-        tell_sample(sub.block, got[j][0], got[j][1])
-        j += 1
+    # @api private
+    def topic_put(topic, value)
+      zp = topic.publisher
+      raise ::Asterism::Disconnected, "topic #{topic.name} is closed" if zp.nil?
+      if topic.encoding
+        unless value.is_a?(String)
+          raise ArgumentError, "topic #{topic.name} (#{topic.encoding}): put expects the bytes, a String"
+        end
+        bytes = value
+      else
+        bytes = ::Asterism::Codec.pack(value)
+      end
+      begin
+        zp.put(bytes, attachment: topic.attachment)
+      rescue ::Asterism::Zenoh::Error => e
+        lost_if_closed(e.message)
+        raise ::Asterism::Disconnected, e.message
+      end
+      topic.advance
+      nil
+    end
+
+    # The declarations as sent: {name => {"t", "e", "u", "d", "ts"}}.
+    # @api private
+    def pubs_hash
+      h = {}
+      (@topics || {}).each { |name, t| h[name] = t.decl_raw }
+      h
+    end
+
+    # Puts the declarations on asterism/<node>/<app>/@pubs while connected:
+    # when they changed since the last put of this connection, or always with
+    # force (a connection that came back) once there were any.
+    # @api private
+    def tell_pubs(force)
+      s = @session
+      return unless s
+      tbl = @topics || {}
+      return if tbl.empty? && @pubs_put.nil?
+      bytes = ::Asterism::Codec.pack(pubs_hash)
+      return if !force && !@pubs_put.nil? && @pubs_put == bytes
+      s.put("#{::Asterism::ROOT}/#{@node_id}/#{@app}/#{::Asterism::Pubs::KEY}", bytes)
+      @pubs_put = bytes
+    rescue ::Asterism::Zenoh::Error
+      nil # the next poll notices a lost connection
+    end
+
+    # Defines an application type (docs/protocol.md 10), told to the readers
+    # by asterism/<node>/<app>/@profile?types. name: a String
+    # ("mygame/board.strokes"); fields: [[name, type], ...], each type a
+    # built-in one (its number, or its name: "vector3", :vector3), a basic
+    # one ("int", "float", "str", "bin", "bool") or another application
+    # type's name, with "[]" at the end for an array ("vector3[]", "int[]",
+    # "mygame/point[]"), repeated for arrays of arrays ("int[][]"); "any"
+    # for a value of any shape; names are sent as written. desc: a text.
+    # Defining a name again replaces it. The types are the connection's
+    # (kept after close, to read). Returns the definition as sent
+    # ({"f" => [...], "d" => ...}).
+    def define_type(name, fields, desc: nil)
+      name = ::Asterism::Types.name!("define_type: name:", name)
+      d = ::Asterism::Types.definition!(fields, desc)
+      @types[name] = d
+      s = @session
+      app_queryable(s) if s
+      d
+    end
+
+    # Another application's topics: {name => {"t", "e", "u", "d", "ts"}}
+    # (Asterism::Pubs.check has cleaned it), {} when it answers without any,
+    # nil when nobody answers in time. Waits like status_of.
+    def pubs_of(node, app, timeout: nil, timeout_ms: nil)
+      raw = app_profile_part(node, app, "pubs", timeout, timeout_ms)
+      return nil if raw.nil?
+      ::Asterism::Pubs.check(raw.key?("pubs") ? raw["pubs"] : {})
+    end
+
+    # Another application's own types: {name => {"f" => [...], "d" => ...}}
+    # (Asterism::Types.check), {} when it answers without any, nil when
+    # nobody answers in time. Waits like status_of.
+    def types_of(node, app, timeout: nil, timeout_ms: nil)
+      raw = app_profile_part(node, app, "types", timeout, timeout_ms)
+      return nil if raw.nil?
+      ::Asterism::Types.check(raw.key?("types") ? raw["types"] : {})
+    end
+
+    # @api private
+    def app_profile_part(node, app, part, timeout, timeout_ms)
+      f = app_profile_async(node, app, part, timeout, timeout_ms)
+      begin
+        raw = f.raw_value
+      rescue ::Asterism::Disconnected
+        raise
+      rescue ::Asterism::Error
+        return nil # no answer in time, or not MessagePack
+      end
+      raw.is_a?(Hash) ? raw : nil
+    end
+
+    # Subscribes to the values on asterism/<path> (path: <node>/<app>/<name>,
+    # Zenoh wildcards allowed: * one chunk, ** any number). The block gets
+    # each value and an Asterism::SampleInfo (|v, info|; |v| is fine too):
+    # the value decoded from MessagePack, or the bytes (a String) when it
+    # came with an encoding. Blocks run from poll. This application's own
+    # values do not come back to it (another connection of the program gets
+    # them, as any other application). depth: the values kept between two
+    # polls (Asterism::Zenoh::DEFAULT_DEPTH). Returns the
+    # Asterism::Subscription (close it to stop); it ends with the connection.
+    def subscribe(path, depth: nil, &blk)
+      raise ArgumentError, "subscribe needs a block" unless blk
+      s = session!
+      p = path.to_s
+      if p.empty? || p.start_with?("/") || p.end_with?("/")
+        raise ArgumentError, "subscribe: expected <node>/<app>/<name> (wildcards allowed), got #{path.inspect}"
+      end
+      key = "#{::Asterism::ROOT}/#{p}"
+      begin
+        zs = depth.nil? ? s.subscribe(key) : s.subscribe(key, depth: depth)
+      rescue ::Asterism::Zenoh::Error => e
+        lost_if_closed(e.message)
+        raise ::Asterism::Disconnected, e.message
+      end
+      sub = ::Asterism::Subscription.new(self, p, zs, blk)
+      @subscriptions << sub
+      sub
+    end
+
+    # Ends a subscription. True when it was open.
+    def unsubscribe(sub)
+      list = @subscriptions || []
+      z = sub.zsub
+      sub.closed!
+      list.delete(sub)
+      return false if z.nil?
+      begin
+        z.close
+      rescue ::Asterism::Zenoh::Error
+        nil
+      end
+      true
+    end
+
+    # Hands the values that came to the subscriptions' blocks (from poll).
+    # @api private
+    def deliver_samples
+      list = @subscriptions
+      return if list.nil? || list.empty?
+      subs = list.dup
+      i = 0
+      while i < subs.size
+        sub = subs[i]
+        i += 1
+        next if sub.closed?
+        got = sub.take
+        j = 0
+        while j < got.size
+          break if sub.closed?
+          tell_sample(sub.block, got[j][0], got[j][1])
+          j += 1
+        end
       end
     end
-  end
 
-  # One value for one block (CRuby routes what it raises to on_error).
-  # @api private
-  def self.tell_sample(blk, value, info)
-    blk.call(value, info)
-  end
+    # One value for one block (CRuby routes what it raises to on_error).
+    # @api private
+    def tell_sample(blk, value, info)
+      blk.call(value, info)
+    end
 
-  # Forgets the topics and subscriptions of a connection that ends (its
-  # session closes their Zenoh entities).
-  # @api private
-  def self.release_data
-    (@topics || {}).each_value { |t| t.closed! }
-    @topics = {}
-    (@subscriptions || []).each { |sub| sub.closed! }
-    @subscriptions = []
-    @pubs_put = nil
+    # Forgets the topics and subscriptions of a connection that ends (its
+    # session closes their Zenoh entities).
+    # @api private
+    def release_data
+      (@topics || {}).each_value { |t| t.closed! }
+      @topics = {}
+      (@subscriptions || []).each { |sub| sub.closed! }
+      @subscriptions = []
+      @pubs_put = nil
+    end
   end
 end

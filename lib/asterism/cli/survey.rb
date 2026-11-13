@@ -1,5 +1,5 @@
 # What `asterism nodes / objects / tree` and the MCP bridge read from the
-# network, on a connection that is already open (Asterism.connect): the
+# network, on a connection that is already open (an Asterism::Connection): the
 # applications and objects from the liveliness tokens, then the meta of
 # the objects, the nodes' profiles and the applications' own profiles
 # (their statuses, topics and types: docs/protocol.md 5, 7, 8, 10, 11)
@@ -24,10 +24,12 @@ module Asterism
 
       attr_reader :timeout
 
-      # own: this connection's "<node>/<app>", left out of the listings.
-      def initialize(timeout: 2.0, own: nil)
+      # net: the connection to read on (an Asterism::Connection). own: this
+      # connection's "<node>/<app>", left out of the listings.
+      def initialize(net, timeout: 2.0, own: nil)
+        @net = net
         @timeout = timeout
-        @own = own || "#{::Asterism.node_id}/#{::Asterism.app}"
+        @own = own || net.path
         @object_docs = {}
       end
 
@@ -39,7 +41,7 @@ module Asterism
         last = nil
         since = now
         loop do
-          cur = [::Asterism.apps, ::Asterism.each("**").size]
+          cur = [@net.apps, @net.each("**").size]
           if cur != last
             last = cur
             since = now
@@ -51,7 +53,7 @@ module Asterism
 
       # The applications alive, "<node>/<app>", sorted (this one left out).
       def apps(pattern = "*/*")
-        (::Asterism.apps(pattern) - [@own]).sort
+        (@net.apps(pattern) - [@own]).sort
       end
 
       # The nodes that have an application or an object alive (sorted).
@@ -62,7 +64,7 @@ module Asterism
       # The objects alive, "<node>/<app>/<object>", sorted (this
       # application's own left out).
       def objects(pattern = "**")
-        ::Asterism.each(pattern).map(&:asterism_path).reject { _1.start_with?("#{@own}/") }.sort
+        @net.each(pattern).map(&:asterism_path).reject { _1.start_with?("#{@own}/") }.sort
       end
 
       # {path => [{"name", "arity"}, ...]} for the paths given (an object
@@ -212,7 +214,7 @@ module Asterism
       # Sends a get on each key at once and waits for all of them (at most
       # the time limit): {key => [[reply key, payload], ...]}.
       def gets(keys, params: nil)
-        s = ::Asterism.session
+        s = @net.session
         ms = (@timeout * 1000).round
         pending = keys.to_h { |k| [k, s.get(k, timeout_ms: ms, params: params)] }
         out = keys.to_h { [_1, []] }

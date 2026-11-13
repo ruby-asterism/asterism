@@ -49,11 +49,11 @@ def line(s)
          p["x"], p["y"], p["yaw_deg"], o["x"], o["y"], o["yaw_deg"], s["speed"]["v"], s["speed"]["w"])
 end
 
-Asterism.connect(opt[:router], node: opt[:name], app: "driver")
+net = Asterism.connect(opt[:router], node: opt[:name], app: "driver")
 base = "#{opt[:rover]}/rover"
-drive = Asterism["#{base}/drive"]
-state = Asterism["#{base}/state"]
-world = Asterism["#{base}/world"]
+drive = net["#{base}/drive"]
+state = net["#{base}/state"]
+world = net["#{base}/world"]
 by = opt[:name]
 begin
   info = world.info
@@ -87,7 +87,7 @@ if opt[:keys]
         drive.cmd(v, w, by: by)
         sent_stop = false
       end
-      Asterism.poll
+      net.poll
       print "\r#{format('cmd v %5.2f w %5.2f  ', v, w)}#{line(state.all)}\e[K"
     end
   end
@@ -142,4 +142,4 @@ else
   puts format("forward: odom %.4f m, true %.4f m (odom %+.2f %%)", d_odom, d_true, (d_odom - d_true) / d_true * 100)
   puts format("turn:    odom %.2f deg, true %.2f deg (odom %+.2f deg)", a_odom, a_true, a_odom - a_true)
 end
-Asterism.close
+net.close

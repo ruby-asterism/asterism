@@ -1,6 +1,7 @@
 # Asterism for CRuby: Ruby objects on other machines called like local ones
-# (Asterism.connect / expose / [] / poll), and a ROS 2 node over rmw_zenoh's
-# wire format (Asterism::ROS, Asterism::CDR, generated message types).
+# (Asterism.connect, then expose / [] / poll on the connection), and a ROS 2
+# node over rmw_zenoh's wire format (Asterism::ROS, Asterism::CDR, generated
+# message types).
 #
 # The Ruby code is the one the mruby / PicoRuby boards run: mrblib/ of this
 # repository, which is also the mrbgem (mrbgem.rake). Nothing is copied:

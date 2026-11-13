@@ -60,7 +60,7 @@ begin
   system("docker", "run", "-d", "--rm", "--name", ctr, "-p", "127.0.0.1:#{port}:7448",
          "-v", "#{router_dir}:/certs:ro", IMAGE, "-c", "/certs/router.json5", out: File::NULL) or fail!("docker run")
   sleep 1.5
-  # alice: a separate process (Asterism is one connection per process).
+  # alice: a separate process.
   script = <<~RUBY
     require "asterism"
     class Echo; def echo(v) = "echo \#{v}"; end

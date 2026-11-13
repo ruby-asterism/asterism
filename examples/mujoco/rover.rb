@@ -69,7 +69,7 @@ def r6(x) = x.round(6)
 
 # The robot in the simulator: wheels, odometry, sensors. Not thread safe;
 # everything runs on the main loop (the objects are called from
-# Asterism.poll there).
+# net.poll there).
 class Rover
   WHEEL_RADIUS = 0.05
   WHEEL_SEPARATION = 0.24
@@ -303,10 +303,10 @@ class World
 end
 
 stats = { "steps_per_s" => nil, "cpu_percent" => nil, "realtime" => nil }
-Asterism.connect(opt[:router], node: opt[:node], app: "rover")
-Asterism.expose("drive", Drive.new(rover), methods: { cmd: 2, stop: 0 })
-Asterism.expose("state", State.new(rover), methods: { pose: 0, odom: 0, imu: 0, speed: 0, all: 0 })
-Asterism.expose("world", World.new(rover, stats), methods: { reset: 0, objects: 0, info: 0 })
+net = Asterism.connect(opt[:router], node: opt[:node], app: "rover")
+net.expose("drive", Drive.new(rover), methods: { cmd: 2, stop: 0 })
+net.expose("state", State.new(rover), methods: { pose: 0, odom: 0, imu: 0, speed: 0, all: 0 })
+net.expose("world", World.new(rover, stats), methods: { reset: 0, objects: 0, info: 0 })
 # The state key goes out through a session of its own (the object layer's
 # session is internal to Asterism).
 pub_session = Asterism::Zenoh::Session.open(opt[:router])
@@ -336,7 +336,7 @@ begin
     rover.control(now) while rover.clock - sim0 < target
 
     p0 = mono
-    break unless Asterism.poll
+    break unless net.poll
 
     win[:poll_s] += mono - p0
     win[:polls] += 1
@@ -365,14 +365,14 @@ begin
 
       sleep([nap, POLL_STEP].min)
       p0 = mono
-      running &&= Asterism.poll
+      running &&= net.poll
       win[:poll_s] += mono - p0
       win[:polls] += 1
     end
   end
 ensure
   log("closing")
-  Asterism.close
+  net.close
   pub_session&.close
   rover.close
 end

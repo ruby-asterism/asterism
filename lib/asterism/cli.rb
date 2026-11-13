@@ -27,11 +27,11 @@
 # Inside another program (a console's bridge) it runs on that program's
 # connection instead of opening one:
 #
-#   cli = Asterism::CLI.new(out: io, err: io, env: {}, net: Asterism.net,
+#   cli = Asterism::CLI.new(out: io, err: io, env: {}, net: conn,
 #                           stop: -> { asked_to_stop }, permit: ->(plan) { nil })
 #   cli.run(%w[node list])
 #
-# net: the Asterism::Net to use (it is neither started nor closed here; what
+# net: the Asterism::Connection to use (it is neither started nor closed here; what
 # a command subscribes to or hooks onto it is released when the command
 # ends); stop: asked often while a command streams (watch, echo, hz, get,
 # ping), true ends it as Ctrl-C does; permit: asked once the words are read
@@ -342,7 +342,7 @@ module Asterism
     end
 
     # Connects, starts the receiving thread, waits for the tokens and yields
-    # the Net and a Survey.
+    # the connection and a Survey.
     def connect(app_prefix: "cli", &blk)
       return connect_given(&blk) if embedded?
       router, creds, peer = network
@@ -360,16 +360,18 @@ module Asterism
         locator = peer
         kw[:mode] = :peer
       end
-      ::Asterism.profile(name: app_prefix == "mcp" ? "asterism MCP" : "asterism CLI")
       ::Asterism.connect(locator, **kw) do |net|
+        net.profile(name: app_prefix == "mcp" ? "asterism MCP" : "asterism CLI")
         net.on_error { |e, where| @err.puts "asterism: #{where}: #{e.class}: #{e.message}" }
         net.start
-        survey = Survey.new(timeout: @opts[:timeout])
+        @net = net
+        survey = Survey.new(net, timeout: @opts[:timeout])
         survey.settle(@opts[:settle])
         begin
           yield net, survey
         ensure
           release_held
+          @net = nil
         end
       end
     end
@@ -379,7 +381,8 @@ module Asterism
     # the command subscribed to or hooked onto it is released at the end.
     def connect_given
       raise ::Asterism::Disconnected, "the connection is not there" unless @given_net.connected?
-      yield @given_net, Survey.new(timeout: @opts[:timeout])
+      @net = @given_net
+      yield @given_net, Survey.new(@given_net, timeout: @opts[:timeout])
     ensure
       release_held
     end
@@ -396,8 +399,8 @@ module Asterism
       held = @lock.synchronize { @held.slice!(0..) }
       held.reverse_each do |h|
         case h
-        in [:join, blk] then (@given_net || ::Asterism).off_join(blk)
-        in [:leave, blk] then (@given_net || ::Asterism).off_leave(blk)
+        in [:join, blk] then @net&.off_join(blk)
+        in [:leave, blk] then @net&.off_leave(blk)
         else h.close
         end
       rescue StandardError
@@ -511,7 +514,7 @@ module Asterism
         sv.statuses.sort.each { |path, st| event("status", path, status: st, now: true) }
         net.on_join(&hold([:join, proc { |n| event("join", n, what: "node") }])[1])
         net.on_leave(&hold([:leave, proc { |n| event("leave", n, what: "node") }])[1])
-        hold(net.session.liveliness_watch("asterism/**") do |key, alive|
+        hold(net.zenoh.liveliness_watch("asterism/**") do |key, alive|
           # The tokens alive at the start come first, in one burst: not news.
           next unless @watch_started
           path = key.delete_prefix("asterism/")
@@ -519,11 +522,11 @@ module Asterism
           what = { 2 => "app", 3 => "object" }[path.count("/") + 1]
           event(alive ? "join" : "leave", path, what: what) if what
         end)
-        hold(net.session.subscribe(Survey::STATUS_ALL) do |sample|
+        hold(net.zenoh.subscribe(Survey::STATUS_ALL) do |sample|
           got = ::Asterism::Status.parse(sample.key, sample.payload)
           event("status", "#{got[0]}/#{got[1]}", status: got[2]) if got && "#{got[0]}/#{got[1]}" != own
         end)
-        hold(net.session.subscribe(Survey::PROFILES_ALL) do |sample|
+        hold(net.zenoh.subscribe(Survey::PROFILES_ALL) do |sample|
           node = sample.key.split("/")[1]
           pr = ::Asterism::Profile.check(::Asterism::Codec.unpack(sample.payload))
           event("profile", node, profile: pr) if pr && node != net.node_id
@@ -656,12 +659,12 @@ module Asterism
 
     def ping_once(path, chunks, args, ms)
       if @opts[:call]
-        ::Asterism[path, timeout_ms: ms].asterism_call(@opts[:call], *args)
+        @net[path, timeout_ms: ms].asterism_call(@opts[:call], *args)
       elsif chunks.size == 3
-        raw = ::Asterism.meta(path, ms)
+        raw = @net.meta(path, ms)
         raise ::Asterism::Error, "malformed meta from #{path}" unless raw.is_a?(Hash)
       else
-        ::Asterism.profile_async(path, false, nil, ms).raw_value
+        @net.profile_async(path, false, nil, ms).raw_value
       end
     end
 
@@ -677,8 +680,8 @@ module Asterism
       raise ArgumentError, "--kwargs: expected a JSON object or a Ruby Hash" unless kwargs.is_a?(Hash)
       kwargs = kwargs.transform_keys(&:to_sym)
       code = 0
-      connect do |_net, _sv|
-        px = ::Asterism[path, timeout: @opts[:timeout]]
+      connect do |net, _sv|
+        px = net[path, timeout: @opts[:timeout]]
         begin
           v = px.asterism_call(method, *args, **kwargs)
           structured? ? emit_line({ "value" => json_safe(v) }) : @out.puts(v.inspect)

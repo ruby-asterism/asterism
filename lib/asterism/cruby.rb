@@ -66,7 +66,8 @@ module Asterism
   end
 
   # The profile's defaults on CRuby (mrblib/profile.rb): kind "cruby" and
-  # the icon bundled with the gem (replace it with Asterism.profile(icon:)).
+  # the icon bundled with the gem (replace it with net.profile(icon:) or
+  # Asterism.profile_defaults(icon:)).
   ICON_FILE = File.expand_path("../../data/icon.png", __dir__)
 
   def self.default_profile_kind
@@ -103,10 +104,13 @@ module Asterism
     end
   end
 
-  # The calls being answered, per thread: an exposed method runs on the
-  # thread that answers (the receiving thread, or whatever polls), and
-  # Asterism.current_call on another thread is not inside that call.
-  def self.call_stack
-    Thread.current[:asterism_call_stack] ||= []
+  class Connection
+    # The calls being answered, per thread: an exposed method runs on the
+    # thread that answers (the receiving thread, or whatever polls), and
+    # current_call on another thread is not inside that call.
+    def call_stack
+      stacks = (Thread.current[:asterism_call_stacks] ||= {}.compare_by_identity)
+      stacks[self] ||= []
+    end
   end
 end

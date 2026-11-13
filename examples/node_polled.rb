@@ -62,8 +62,9 @@ class Apu
 end
 
 class Info
-  def initialize(node)
-    @node = node
+  def initialize(net)
+    @net = net
+    @node = net.node_id
     @started = now
   end
 
@@ -73,9 +74,9 @@ class Info
       "pool_used" => nil, "up_ms" => ((now - @started) * 1000).to_i }
   end
 
-  # Calls the caller back (Asterism.current_call says who called).
+  # Calls the caller back (current_call says who called).
   def relay(n)
-    st = Asterism["#{Asterism.current_call.from}/demo/info"].status
+    st = @net["#{@net.current_call.from}/demo/info"].status
     [n, st["name"]]
   end
 
@@ -88,27 +89,27 @@ class Info
   end
 end
 
-Asterism.connect(opt[:router], node: opt[:node], app: opt[:app])
-Asterism.expose("apu", Apu.new, methods: { play: 1, stop: 0 })
-Asterism.expose("screen", Screen.new, methods: [:say])
-Asterism.expose("info", Info.new(opt[:node]), methods: { status: 0, relay: 1, boom: 0, echo: 1 })
+net = Asterism.connect(opt[:router], node: opt[:node], app: opt[:app])
+net.expose("apu", Apu.new, methods: { play: 1, stop: 0 })
+net.expose("screen", Screen.new, methods: [:say])
+net.expose("info", Info.new(net), methods: { status: 0, relay: 1, boom: 0, echo: 1 })
 log("#{opt[:node]}/#{opt[:app]} connected to #{opt[:router]}")
 
 peer = opt[:peer]
 t0 = now
 until peer
-  Asterism.poll
-  Asterism.each("*/#{opt[:app]}/screen") do |px|
+  net.poll
+  net.each("*/#{opt[:app]}/screen") do |px|
     n = px.asterism_path.split("/")[0]
     peer ||= n unless n == opt[:node]
   end
   abort "no peer of app #{opt[:app]} within 10 s" if now - t0 > 10
   sleep 0.01
 end
-log("peer: #{peer} (nodes: #{Asterism.nodes.join(' ')})")
+log("peer: #{peer} (nodes: #{net.nodes.join(' ')})")
 
-info = Asterism["#{peer}/#{opt[:app]}/info"]
-screen = Asterism["#{peer}/#{opt[:app]}/screen"]
+info = net["#{peer}/#{opt[:app]}/info"]
+screen = net["#{peer}/#{opt[:app]}/screen"]
 t = now
 st = info.status
 log("#{peer} info.status -> #{st.inspect} (#{ms_since(t)} ms)")
@@ -123,7 +124,7 @@ if opt[:calls] > 0
     t = now
     info.status
     times << ms_since(t)
-    Asterism.poll
+    net.poll
     sleep 0.05
   end
   s = times.sort
@@ -133,8 +134,8 @@ end
 log("serving for #{opt[:serve]} s")
 t = now
 while now - t < opt[:serve]
-  break unless Asterism.poll
+  break unless net.poll
   sleep 0.01
 end
-log(Asterism.connected? ? "done" : "disconnected: #{Asterism.lost_reason}")
-Asterism.close
+log(net.connected? ? "done" : "disconnected: #{net.lost_reason}")
+net.close

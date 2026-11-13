@@ -1,12 +1,13 @@
 # A node's profile: what it runs on, where, a display name and an icon,
 # told by the node itself (0.5.0).
 #
-#   Asterism.profile(name: "Rover", icon: png)   # this node's; returns it
-#   Asterism.profile                             # => {"kind" => "picoruby", "name" => "Rover", ...}
-#   Asterism.profile_of("fmruby-aaaaaa")         # another node's, or nil
+#   Asterism.profile_defaults(kind: :family_mruby, host: "tab5")  # the program's defaults
+#   net.profile(name: "Rover", icon: png)  # this node's (net = Asterism.connect(...)); returns it
+#   net.profile                            # => {"kind" => "picoruby", "name" => "Rover", ...}
+#   net.profile_of("fmruby-aaaaaa")        # another node's, or nil
 #
-# Key: asterism/<node>/@profile (a queryable of every application connected
-# as that node). The reply is a MessagePack Hash:
+# Key: asterism/<node>/@profile (a queryable of every connection made as
+# that node; all of them answer the same profile). The reply is a MessagePack Hash:
 #   "protocol"   the wire protocol the node speaks (Asterism::PROTOCOL, 2);
 #                a node without it speaks protocol 0
 #   "kind"       what Ruby runs the node: "family_mruby", "picoruby",
@@ -163,7 +164,7 @@ module Asterism
       true
     end
 
-    # The checks of Asterism.profile (ArgumentError, with the reason).
+    # The checks of Connection#profile and Asterism.profile_defaults (ArgumentError, with the reason).
     # @api private
     def self.kind!(v)
       s = v.is_a?(Symbol) ? v.to_s : v
@@ -210,93 +211,93 @@ module Asterism
     end
   end
 
-  # This node's profile. With keywords, sets those fields and returns the
-  # profile; without, returns it. The fields: kind: (a Symbol or String;
-  # nil goes back to the default), name:, host: (Strings; nil leaves them
-  # out), icon: (the bytes of a PNG; nil for no icon). The fields not given
-  # stay as they are. Raises ArgumentError for a field it does not accept
-  # (see Asterism::Profile).
+  # The profile of a node is the node's, not one application's: every
+  # connection of this program connected as that node answers the same
+  # profile (docs/protocol.md 7.3). It is kept here, by node, and outlives
+  # the connections (the next connection as that node finds it).
   #
-  # The defaults: kind "picoruby" on mruby / PicoRuby, "cruby" on CRuby; no
-  # host, no name; the icon is the file at Asterism.default_icon_path when
-  # there is one (the boards: /usr/share/asterism/icon.png; CRuby: the gem's
-  # data/icon.png). A board's firmware may set its own defaults with this
-  # same call before the application runs (Family mruby does).
-  #
-  # Kept across connect and close (it belongs to the process, or the VM on
-  # a board). While connected, a change is also put on the profile's key.
-  def self.profile(**fields)
-    return profile_hash(true) if fields.empty?
-    changes = {}
-    fields.each do |k, v|
-      key = k.to_s
-      if key == "kind"
-        changes[key] = v.nil? ? nil : Profile.kind!(v)
-      elsif key == "name"
-        changes[key] = v.nil? ? nil : Profile.text!("name", v, Profile::NAME_MAX)
-      elsif key == "host"
-        changes[key] = v.nil? ? nil : Profile.text!("host", v, Profile::HOST_MAX)
-      elsif key == "icon"
-        changes[key] = v.nil? ? nil : Profile.icon!(v)
-      else
-        raise ArgumentError, "unknown profile field #{key} (kind, name, host, icon)"
+  # The fields of a node's profile are, in order of precedence: those set
+  # on a connection of that node (Connection#profile), those set for the
+  # whole program (Asterism.profile_defaults), the built-in defaults.
+
+  # The fields every node of this program starts with: what a board's
+  # firmware says about the board before the application connects (Family
+  # mruby does). With keywords, sets those fields (kind:, name:, host:,
+  # icon:, as Connection#profile takes them; nil removes one, icon: nil is
+  # no icon) and the others stay; returns the profile they make (a node
+  # that set nothing of its own has it). Without keywords, returns it.
+  # The built-in defaults: kind "picoruby" on mruby / PicoRuby, "cruby" on
+  # CRuby; no host, no name; the icon is the file at
+  # Asterism.default_icon_path when there is one (the boards:
+  # /usr/share/asterism/icon.png; CRuby: the gem's data/icon.png). Every
+  # node connected now puts its changed profile.
+  def self.profile_defaults(**fields)
+    @profile_defaults ||= {}
+    unless fields.empty?
+      changes = Profile.fields!(fields)
+      set = @profile_defaults
+      changes.each do |k, v|
+        if v.nil? && k != "icon"
+          set.delete(k)
+        else
+          set[k] = v # icon: nil stays, so the default file is not used
+        end
       end
+      @profile_icons = nil
+      tell_node_profile(nil)
     end
-    set = (@profile_set ||= {})
-    changes.each do |k, v|
-      if v.nil? && k != "icon"
-        set.delete(k)
-      else
-        set[k] = v # icon: nil stays, so the default file is not used
-      end
-    end
-    @profile_icon = nil if changes.key?("icon")
-    tell_profile
-    profile_hash(true)
+    profile_hash(nil, true)
   end
 
-  # Another node's profile (Asterism::Profile.check has cleaned it), or nil
-  # when it does not answer in time (an older version of Asterism, a ROS 2
-  # node, a node that is gone). icon: false asks for it without the icon
-  # bytes (icon_hash still says which icon it is). timeout: in seconds (or
-  # timeout_ms:), 2.0 by default. Waits like a call (polling, answering
-  # calls meanwhile); raises Disconnected when not connected. This node's
-  # own profile comes without the network.
-  def self.profile_of(node, icon: true, timeout: nil, timeout_ms: nil)
-    f = profile_async(node, icon, timeout, timeout_ms)
-    begin
-      raw = f.raw_value
-    rescue Disconnected
-      raise
-    rescue Error
-      return nil # no answer in time, or not MessagePack
-    end
-    Profile.check(raw)
-  end
-
+  # The fields a connection set for its node: node => {field => value};
+  # a nil value leaves the field out (it hides the program's default).
   # @api private
-  def self.profile_async(node, icon, timeout, timeout_ms)
-    node = check_name("node", node)
-    ms = time_ms("Asterism.profile_of", timeout, timeout_ms, nil, DEFAULT_TIMEOUT_MS)
-    path = "#{node}/#{Profile::KEY}"
-    return Future.answered(path, "profile", Codec.pack(profile_hash(icon))) if @session && node == @node
-    begin
-      g = session!.get("#{ROOT}/#{path}", timeout_ms: ms, params: icon ? nil : "icon=0")
-    rescue Asterism::Zenoh::Error => e
-      lost_if_closed(e.message)
-      raise Disconnected, e.message
-    end
-    Future.new(path, "profile", g, now_ms + ms, ms)
+  def self.node_fields(node)
+    (@node_profiles ||= {})[node] ||= {}
   end
 
-  # The kind when the application did not set one.
+  # Sets fields of a node's profile (Connection#profile) and puts it.
+  # @api private
+  def self.set_node_profile(node, fields)
+    changes = Profile.fields!(fields)
+    set = node_fields(node)
+    changes.each do |k, v|
+      if k == "kind" && v.nil?
+        set.delete(k) # back to the program's default kind
+      else
+        set[k] = v    # name: nil, host: nil, icon: nil leave the field out
+      end
+    end
+    @profile_icons = nil
+    tell_node_profile(node)
+    profile_hash(node, true)
+  end
+
+  # Puts the profile of node (nil: of every node) on its key, once, from
+  # one of its connections.
+  # @api private
+  def self.tell_node_profile(node)
+    told = {}
+    list = connections
+    i = 0
+    while i < list.size
+      c = list[i]
+      i += 1
+      n = c.node_id
+      next if told[n] || (!node.nil? && n != node)
+      told[n] = true
+      c.tell_profile
+    end
+  end
+
+  # The kind when neither the node nor the program set one.
   # @api private
   def self.default_profile_kind
     "picoruby"
   end
 
-  # Where the default icon is read from (when the application gave none);
-  # nil for none. CRuby: the gem's data/icon.png.
+  # Where the default icon is read from (when nobody gave one); nil for
+  # none. CRuby: the gem's data/icon.png.
   def self.default_icon_path
     "/usr/share/asterism/icon.png"
   end
@@ -310,14 +311,18 @@ module Asterism
     nil
   end
 
-  # The profile as sent: String keys, the icon only when with_icon.
+  # The profile of node (nil: the program's defaults alone) as sent:
+  # String keys, the icon only when with_icon.
   # @api private
-  def self.profile_hash(with_icon)
-    set = @profile_set || {}
-    h = { "protocol" => PROTOCOL, "kind" => set["kind"] || default_profile_kind }
-    h["host"] = set["host"] if set["host"]
-    h["name"] = set["name"] if set["name"]
-    icon = profile_icon
+  def self.profile_hash(node, with_icon)
+    d = @profile_defaults || {}
+    n = node.nil? ? {} : node_fields(node)
+    h = { "protocol" => PROTOCOL, "kind" => n["kind"] || d["kind"] || default_profile_kind }
+    host = n.key?("host") ? n["host"] : d["host"]
+    h["host"] = host if host
+    name = n.key?("name") ? n["name"] : d["name"]
+    h["name"] = name if name
+    icon = profile_icon(node)
     if icon
       h["icon"] = icon[0] if with_icon
       h["icon_hash"] = icon[1]
@@ -325,50 +330,149 @@ module Asterism
     h
   end
 
-  # [bytes, icon_hash] of this node's icon, or nil. The default file is
-  # read once, when the profile is first needed.
+  # [bytes, icon_hash] of node's icon, or nil. The default file is read
+  # once, when a profile is first needed.
   # @api private
-  def self.profile_icon
-    if @profile_icon.nil?
-      set = @profile_set || {}
-      bytes = set.key?("icon") ? set["icon"] : nil
-      unless set.key?("icon")
-        path = default_icon_path
-        bytes = path ? read_icon_file(path) : nil
+  def self.profile_icon(node)
+    cache = (@profile_icons ||= {})
+    key = node.nil? ? "" : node
+    got = cache[key]
+    if got.nil?
+      d = @profile_defaults || {}
+      n = node.nil? ? {} : node_fields(node)
+      if n.key?("icon")
+        bytes = n["icon"]
+      elsif d.key?("icon")
+        bytes = d["icon"]
+      else
+        bytes = default_icon_bytes
       end
       info = bytes ? Profile.png_info(bytes) : nil
       # A binary String: it goes as a MessagePack bin.
-      @profile_icon = info ? [Profile.binary(bytes), info[2]] : false
+      got = info ? [Profile.binary(bytes), info[2]] : false
+      cache[key] = got
     end
-    @profile_icon ? @profile_icon : nil
+    got ? got : nil
   end
 
-  # Puts the profile without its icon on its key (while connected).
+  # The bytes of the default icon file (read once), or nil.
   # @api private
-  def self.tell_profile
-    s = @session
-    return unless s
-    s.put("#{ROOT}/#{@node}/#{Profile::KEY}", Codec.pack(profile_hash(false)))
-  rescue Asterism::Zenoh::Error
-    nil # the next poll notices a lost connection
+  def self.default_icon_bytes
+    if @default_icon.nil?
+      path = default_icon_path
+      bytes = path ? read_icon_file(path) : nil
+      @default_icon = bytes ? bytes : false
+    end
+    @default_icon ? @default_icon : nil
   end
 
-  # @api private
-  def self.answer_profile
-    qa = @profile_queryable
-    return unless qa && qa.pending > 0
-    queries = qa.each_pending
-    i = 0
-    while i < queries.size
-      q = queries[i]
-      i += 1
+  module Profile
+    # The fields of Connection#profile / Asterism.profile_defaults, checked:
+    # {field => value or nil}, or ArgumentError with the reason.
+    # @api private
+    def self.fields!(fields)
+      changes = {}
+      fields.each do |k, v|
+        key = k.to_s
+        if key == "kind"
+          changes[key] = v.nil? ? nil : kind!(v)
+        elsif key == "name"
+          changes[key] = v.nil? ? nil : text!("name", v, NAME_MAX)
+        elsif key == "host"
+          changes[key] = v.nil? ? nil : text!("host", v, HOST_MAX)
+        elsif key == "icon"
+          changes[key] = v.nil? ? nil : icon!(v)
+        else
+          raise ArgumentError, "unknown profile field #{key} (kind, name, host, icon)"
+        end
+      end
+      changes
+    end
+  end
+
+  class Connection
+    # This node's profile (the node this connection is). With keywords,
+    # sets those fields and returns the profile; without, returns it. The
+    # fields: kind: (a Symbol or String; nil goes back to the program's
+    # default), name:, host: (Strings; nil leaves them out), icon: (the
+    # bytes of a PNG; nil for no icon). The fields not given stay as they
+    # are. Raises ArgumentError for a field it does not accept (see
+    # Asterism::Profile).
+    #
+    # The profile belongs to the node: every connection of this program
+    # connected as the same node answers it, and a change made on one of
+    # them is theirs too. It is kept after close (a connection opened again
+    # as that node has it). A change is put on the profile's key.
+    def profile(**fields)
+      return ::Asterism.profile_hash(@node_id, true) if fields.empty?
+      ::Asterism.set_node_profile(@node_id, fields)
+    end
+
+    # Another node's profile (Asterism::Profile.check has cleaned it), or nil
+    # when it does not answer in time (an older version of Asterism, a ROS 2
+    # node, a node that is gone). icon: false asks for it without the icon
+    # bytes (icon_hash still says which icon it is). timeout: in seconds (or
+    # timeout_ms:), 2.0 by default. Waits like a call (polling, answering
+    # calls meanwhile); raises Disconnected when not connected. This node's
+    # own profile comes without the network.
+    def profile_of(node, icon: true, timeout: nil, timeout_ms: nil)
+      f = profile_async(node, icon, timeout, timeout_ms)
       begin
-        q.reply("#{ROOT}/#{@node}/#{Profile::KEY}", Codec.pack(profile_hash(Profile.wants_icon?(q.params))))
-      ensure
+        raw = f.raw_value
+      rescue ::Asterism::Disconnected
+        raise
+      rescue ::Asterism::Error
+        return nil # no answer in time, or not MessagePack
+      end
+      ::Asterism::Profile.check(raw)
+    end
+
+    # @api private
+    def profile_async(node, icon, timeout, timeout_ms)
+      node = ::Asterism.check_name("node", node)
+      ms = ::Asterism.time_ms("Connection#profile_of", timeout, timeout_ms, nil, ::Asterism::DEFAULT_TIMEOUT_MS)
+      path = "#{node}/#{::Asterism::Profile::KEY}"
+      if @session && node == @node_id
+        return ::Asterism::Future.answered(path, "profile", ::Asterism::Codec.pack(::Asterism.profile_hash(node, icon)))
+      end
+      begin
+        g = session!.get("#{::Asterism::ROOT}/#{path}", timeout_ms: ms, params: icon ? nil : "icon=0")
+      rescue ::Asterism::Zenoh::Error => e
+        lost_if_closed(e.message)
+        raise ::Asterism::Disconnected, e.message
+      end
+      ::Asterism::Future.new(self, path, "profile", g, ::Asterism.now_ms + ms, ms)
+    end
+
+    # Puts the node's profile without its icon on its key (while connected).
+    # @api private
+    def tell_profile
+      s = @session
+      return unless s
+      s.put("#{::Asterism::ROOT}/#{@node_id}/#{::Asterism::Profile::KEY}",
+            ::Asterism::Codec.pack(::Asterism.profile_hash(@node_id, false)))
+    rescue ::Asterism::Zenoh::Error
+      nil # the next poll notices a lost connection
+    end
+
+    # @api private
+    def answer_profile
+      qa = @profile_queryable
+      return unless qa && qa.pending > 0
+      queries = qa.each_pending
+      i = 0
+      while i < queries.size
+        q = queries[i]
+        i += 1
         begin
-          q.finish
-        rescue Asterism::Zenoh::Error
-          # the session went away meanwhile
+          h = ::Asterism.profile_hash(@node_id, ::Asterism::Profile.wants_icon?(q.params))
+          q.reply("#{::Asterism::ROOT}/#{@node_id}/#{::Asterism::Profile::KEY}", ::Asterism::Codec.pack(h))
+        ensure
+          begin
+            q.finish
+          rescue ::Asterism::Zenoh::Error
+            # the session went away meanwhile
+          end
         end
       end
     end

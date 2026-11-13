@@ -1,5 +1,5 @@
 # The Ruby-like object API (lib/asterism/cruby/objects.rb) between two
-# CRuby processes (Asterism is one connection per process): connect with a
+# CRuby processes (one connection each): connect with a
 # block, a receiving thread answering while the main thread waits for its
 # own calls, run / start / stop, on_join / on_leave, errors, and the thread
 # being gone after.
@@ -21,21 +21,22 @@ class TestApiObjects < Minitest::Test
       def slow(x) = (sleep 0.2; x * 2)
       def who = Thread.current.name.to_s
       # Calls the caller back while answering, from the child's run loop.
-      def relay(node) = Asterism["#{node}/t/back"].name + "!"
-      def relay_who(node) = Asterism["#{node}/t/back"].caller_name
+      def relay(node) = $net["#{node}/t/back"].name + "!"
+      def relay_who(node) = $net["#{node}/t/back"].caller_name
       # A wait that is one too deep: answered as "nesting".
       def nest
         d = Asterism.instance_variable_get(:@depth)
         Asterism.instance_variable_set(:@depth, Asterism::MAX_NESTING)
-        Asterism["parent/t/back"].name
+        $net["parent/t/back"].name
       ensure
         Asterism.instance_variable_set(:@depth, d)
       end
     end
     class Greet
-      def hello(from:) = [from, Asterism.current_call.from, Asterism.current_call.method]
+      def hello(from:) = [from, $net.current_call.from, $net.current_call.method]
     end
     Asterism.connect(opts[0], node: "child", app: "t", **opts[1]) do |net|
+      $net = net
       net.expose("calc", Calc.new, methods: { add: 2, slow: 1, who: 0, relay: 1, relay_who: 1, nest: 0 })
       net.expose("greet", Greet.new, methods: { hello: 0 }, caller: :from)
       Thread.new do
@@ -49,8 +50,9 @@ class TestApiObjects < Minitest::Test
   RUBY
 
   class Back
-    def name = "parent on #{Thread.current.name || 'main'}"
-    def caller_name = Asterism.current_call.from
+    def initialize(net) = @net = net
+    def name = "parent on #{Thread.current.name&.split(' ')&.last || 'main'}"
+    def caller_name = @net.current_call.from
   end
 
   def spawn_child
@@ -78,7 +80,7 @@ class TestApiObjects < Minitest::Test
   end
 
   def teardown
-    Asterism.close
+    Asterism.connections.each(&:close)
     end_child
   end
 
@@ -89,9 +91,11 @@ class TestApiObjects < Minitest::Test
     left = Queue.new
     errors = Queue.new
     loc, opts = connect_opts
+    conn = nil
     value = Asterism.connect(loc, node: "parent", app: "t", **opts) do |net|
-      assert_instance_of Asterism::Net, net
-      net.expose("back", Back.new, methods: [:name, :caller_name])
+      conn = net
+      assert_instance_of Asterism::Connection, net
+      net.expose("back", Back.new(net), methods: [:name, :caller_name])
       net.on_join { |n| joined << n }
       net.on_join { |n| raise "join handler failed for #{n}" }
       net.on_leave { |n| left << n }
@@ -106,7 +110,7 @@ class TestApiObjects < Minitest::Test
       assert_equal "", calc.who                 # answered on the child's main thread (run)
       # The child calls back while answering; this process's receiving
       # thread answers that while the main thread waits.
-      assert_equal "parent on asterism receiver!", calc.relay("parent")
+      assert_equal "parent on receiver!", calc.relay("parent")
       # Calls from several threads at once.
       results = 4.times.map { |i| Thread.new { calc.slow(i) } }.map(&:value)
       assert_equal [0, 2, 4, 6], results
@@ -132,33 +136,35 @@ class TestApiObjects < Minitest::Test
       :ok
     end
     assert_equal :ok, value
-    refute Asterism.connected?
+    refute conn.connected?
+    assert_empty Asterism.connections
     assert wait_for(2) { Thread.list.size <= before }, "no thread left"
   end
 
-  def test_connect_without_block_then_start_from_net
+  def test_connect_without_block_then_start
     spawn_child
     loc, opts = connect_opts
-    assert_equal Asterism, Asterism.connect(loc, node: "parent", app: "t", **opts)
-    Asterism.expose("back", Back.new, methods: [:name])
-    net = Asterism.net
-    assert_same net, Asterism.net
-    assert wait_for { Asterism.poll; Asterism.nodes.include?("child") }
+    net = Asterism.connect(loc, node: "parent", app: "t", **opts)
+    assert_instance_of Asterism::Connection, net
+    assert_equal [net], Asterism.connections
+    net.expose("back", Back.new(net), methods: [:name])
+    assert wait_for { net.poll; net.nodes.include?("child") }
     # Not started: the waiting call polls by itself, as on the boards.
-    assert_equal "parent on main!", Asterism["child/t/calc"].relay("parent")
+    assert_equal "parent on main!", net["child/t/calc"].relay("parent")
     net.start
-    assert_equal "parent on asterism receiver!", Asterism["child/t/calc"].relay("parent")
-    # Asterism.poll from the main thread while the thread runs: serialized.
-    10.times { assert Asterism.poll }
+    assert_equal "parent on receiver!", net["child/t/calc"].relay("parent")
+    # net.poll from the main thread while the thread runs: serialized.
+    10.times { assert net.poll }
     net.stop
     refute net.running?
-    assert_equal 7, Asterism["child/t/calc"].add(3, 4)
+    assert_equal 7, net["child/t/calc"].add(3, 4)
     net.start
-    Asterism.close
+    net.close
     refute net.running?
-    assert_nil Asterism.net
+    refute net.connected?
+    assert_empty Asterism.connections
   end
-
+  
   # config: goes to Session.open (TLS certificates in real use): a Hash
   # whose value shows in the session, and a configuration zenoh refuses.
   def test_connect_passes_config_to_the_session
@@ -171,7 +177,7 @@ class TestApiObjects < Minitest::Test
     assert_raises(ArgumentError) do
       Asterism.connect(loc, node: "parent", app: "t", config: "{ mode: 'nonsense' }", **opts)
     end
-    refute Asterism.connected?
+    assert_empty Asterism.connections
   end
 
   def test_waiting_call_ends_when_the_connection_is_lost

@@ -10,8 +10,10 @@
 #                      repeated and swapped pieces, a connection down, a
 #                      receiver started again, sha256; over a stand-in for
 #                      the calls (no Zenoh)
-#   rake test:objects  the object layer, node profiles, statuses, topics and Asterism::ROS
-#                      between CRuby sessions; needs asterism-zenoh (below)
+#   rake test:objects  the object layer, node profiles, statuses, topics,
+#                      several connections in one program and
+#                      Asterism::ROS between CRuby sessions; needs
+#                      asterism-zenoh (below)
 #   rake test:api      the Ruby-like API of CRuby (lib/asterism/cruby/):
 #                      blocks, receiving threads, Enumerators; needs
 #                      asterism-zenoh too
@@ -21,7 +23,7 @@
 #                      client; skipped without the mcp gem)
 #   rake test:mruby    the shared layer on mruby (MRB_UTF8_STRING, as on the
 #                      boards): node profiles between two mruby processes,
-#                      Asterism.session and on_join / on_leave in one.
+#                      Connection#session and on_join / on_leave in one.
 #                      Builds mruby with picoruby-asterism-zenoh, whose
 #                      checkout (../picoruby-asterism-zenoh or
 #                      PICORUBY_ASTERISM_ZENOH_DIR) provides the pinned mruby
@@ -29,8 +31,10 @@
 #                      Not part of `rake` (it builds a C toolchain's worth)
 #   rake test:cross    topics between an mruby node and a CRuby one, both
 #                      through Asterism: declarations, values both ways
-#                      (seq, time, encoding, lost). Builds mruby as
-#                      test:mruby does; not part of `rake`
+#                      (seq, time, encoding, lost); and several connections
+#                      in one mruby program, through a router of CRuby's
+#                      (test/router.rb). Builds mruby as test:mruby does;
+#                      not part of `rake`
 #   rake test:credentials  a zenohd asking for client certificates (docker)
 #                      and two CRuby nodes connecting with a console's .tar
 #                      each (credentials:). Not part of `rake`
@@ -40,7 +44,7 @@
 #   rake test:protocol_mruby  the same driver against an mruby node (builds
 #                      mruby as test:mruby does; needs asterism-zenoh too).
 #                      Not part of `rake`
-#   rake bench:poll    the time and allocations of one Asterism.poll by the
+#   rake bench:poll    the time and allocations of one Connection#poll by the
 #                      number of nodes and objects (CRuby; prints a table)
 #   rake gem           build pkg/asterism-<version>.gem (publishing is a
 #                      separate, manual step)
@@ -94,6 +98,7 @@ namespace :test do
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_topic.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_meta_apps.rb")
     sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_session.rb")
+    sh RbConfig.ruby, *incs, File.join(ROOT, "test/test_connections.rb")
   end
 
   desc "The Ruby-like API of CRuby (blocks, threads, Enumerators) for Zenoh, objects and ROS 2 (needs asterism-zenoh)"
@@ -183,7 +188,7 @@ def write_credentials_fixture
 end
 
 namespace :test do
-  desc "The shared layer on mruby: profiles, Asterism.session, on_join / on_leave (builds mruby)"
+  desc "The shared layer on mruby: profiles, Connection#session, on_join / on_leave (builds mruby)"
   task mruby: "mruby:build" do
     require "socket"
     require "timeout"
@@ -231,7 +236,8 @@ namespace :test do
 end
 
 namespace :test do
-  desc "Topics between an mruby node and a CRuby one, both through Asterism (builds mruby; needs asterism-zenoh)"
+  desc "Topics between an mruby node and a CRuby one, and several connections in one mruby program " \
+       "(builds mruby; needs asterism-zenoh)"
   task cross: "mruby:build" do
     require "socket"
     require "timeout"
@@ -256,6 +262,20 @@ namespace :test do
         nil
       end
       node.close
+    end
+    # Several connections in one mruby program, through a router (zenoh-pico
+    # sessions of one process cannot be peers of each other).
+    port = TCPServer.new("127.0.0.1", 0).then { |s| s.addr[1].tap { s.close } }
+    loc = "tcp/127.0.0.1:#{port}"
+    router = IO.popen([RbConfig.ruby, *incs, File.join(ROOT, "test", "router.rb"), loc], "r+")
+    begin
+      line = Timeout.timeout(10) { router.gets }
+      abort "test/router.rb did not start: #{line.inspect}" unless line&.start_with?("ready")
+      ok = system(bin, "-r", stub, File.join(ROOT, "host_test", "test_connections.rb"), loc)
+      abort "test:cross failed (connections)" unless ok
+    ensure
+      router.close_write rescue nil
+      router.close rescue nil
     end
   end
 end
@@ -364,7 +384,7 @@ namespace :test do
 end
 
 namespace :bench do
-  desc "How long one Asterism.poll takes, by the nodes and objects alive (CRuby; prints a table)"
+  desc "How long one Connection#poll takes, by the nodes and objects alive (CRuby; prints a table)"
   task :poll do
     lib = asterism_zenoh_lib
     incs = ["-I", File.join(ROOT, "lib")]

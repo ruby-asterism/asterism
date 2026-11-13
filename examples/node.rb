@@ -76,8 +76,9 @@ class Apu
 end
 
 class Info
-  def initialize(node)
-    @node = node
+  def initialize(net)
+    @net = net
+    @node = net.node_id
     @started = Time.now
   end
 
@@ -89,9 +90,9 @@ class Info
 
   # A call that calls back (the board's key m): the caller, from the call.
   def relay(n)
-    from = Asterism.current_call.from
+    from = @net.current_call.from
     t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    name = Asterism["#{from}/demo/info"].status["name"]
+    name = @net["#{from}/demo/info"].status["name"]
     log(format("info.relay from %s #%d (called %s back: %.1f ms)", from, n, name,
                (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t) * 1000))
     [n, name]
@@ -118,7 +119,7 @@ end
 Asterism.connect(opt[:router], node: opt[:node], app: opt[:app], config: tls.empty? ? nil : tls) do |net|
   net.expose("apu", Apu.new, methods: { play: 1, stop: 0 })
   net.expose("screen", Screen.new, methods: [:say])
-  net.expose("info", Info.new(opt[:node]), methods: { status: 0, relay: 1, boom: 0, echo: 1 })
+  net.expose("info", Info.new(net), methods: { status: 0, relay: 1, boom: 0, echo: 1 })
   log("#{opt[:node]}/#{opt[:app]} connected to #{opt[:router]}")
 
   net.on_join { |n| log("joined: #{n}") }

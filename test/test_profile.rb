@@ -78,38 +78,72 @@ class TestProfile < Minitest::Test
     assert_equal({ "kind" => "cruby" }, c.({ "kind" => "cruby", "name" => "n" * 65, "host" => 3 }))
   end
 
-  def test_profile_fields_and_defaults
-    Asterism.instance_variable_set(:@profile_set, nil)
-    Asterism.instance_variable_set(:@profile_icon, nil)
-    p0 = Asterism.profile
+  def reset_profiles
+    %i[@profile_defaults @node_profiles @profile_icons].each { Asterism.instance_variable_set(_1, nil) }
+  end
+  
+  def test_profile_defaults_of_the_program
+    reset_profiles
+    p0 = Asterism.profile_defaults
     assert_equal "cruby", p0["kind"]
     assert_equal ICON, p0["icon"], "CRuby's default icon is the gem's data/icon.png"
     assert_equal Asterism::Profile.png_info(ICON)[2], p0["icon_hash"]
     refute p0.key?("host")
-    p1 = Asterism.profile(name: "Lab PC", host: :lab, kind: :console)
+    p1 = Asterism.profile_defaults(name: "Lab PC", host: :lab, kind: :console)
     assert_equal({ "protocol" => 2, "kind" => "console", "host" => "lab", "name" => "Lab PC" }, p1.except("icon", "icon_hash"))
-    assert_equal "Lab PC", Asterism.profile(kind: nil)["name"], "fields not given stay"
-    assert_equal "cruby", Asterism.profile["kind"], "kind: nil goes back to the default"
-    refute Asterism.profile(icon: nil).key?("icon_hash"), "icon: nil is no icon"
+    assert_equal "Lab PC", Asterism.profile_defaults(kind: nil)["name"], "fields not given stay"
+    assert_equal "cruby", Asterism.profile_defaults["kind"], "kind: nil goes back to the default"
+    refute Asterism.profile_defaults(icon: nil).key?("icon_hash"), "icon: nil is no icon"
     other = self.class.png(16, 16)
-    assert_equal Asterism::Profile.png_info(other)[2], Asterism.profile(icon: other)["icon_hash"]
-    assert_raises(ArgumentError) { Asterism.profile(icon: "not a png") }
-    assert_raises(ArgumentError) { Asterism.profile(icon: self.class.png(32, 32, "z" * 9000)) }
-    assert_raises(ArgumentError) { Asterism.profile(icon: self.class.png(300, 300)) }
-    assert_raises(ArgumentError) { Asterism.profile(kind: "CRuby") }
-    assert_raises(ArgumentError) { Asterism.profile(name: "") }
-    assert_raises(ArgumentError) { Asterism.profile(name: "n" * 65) }
-    assert_raises(ArgumentError) { Asterism.profile(colour: "red") }
-    assert_equal Asterism::Profile.png_info(other)[2], Asterism.profile["icon_hash"], "a refused change changes nothing"
+    assert_equal Asterism::Profile.png_info(other)[2], Asterism.profile_defaults(icon: other)["icon_hash"]
+    assert_raises(ArgumentError) { Asterism.profile_defaults(icon: "not a png") }
+    assert_raises(ArgumentError) { Asterism.profile_defaults(icon: self.class.png(32, 32, "z" * 9000)) }
+    assert_raises(ArgumentError) { Asterism.profile_defaults(icon: self.class.png(300, 300)) }
+    assert_raises(ArgumentError) { Asterism.profile_defaults(kind: "CRuby") }
+    assert_raises(ArgumentError) { Asterism.profile_defaults(name: "") }
+    assert_raises(ArgumentError) { Asterism.profile_defaults(name: "n" * 65) }
+    assert_raises(ArgumentError) { Asterism.profile_defaults(colour: "red") }
+    assert_equal Asterism::Profile.png_info(other)[2], Asterism.profile_defaults["icon_hash"],
+                 "a refused change changes nothing"
     assert Asterism::Profile.wants_icon?(nil)
     assert Asterism::Profile.wants_icon?("x=1")
     refute Asterism::Profile.wants_icon?("icon=0")
     refute Asterism::Profile.wants_icon?("x=1;icon=no")
   ensure
-    Asterism.instance_variable_set(:@profile_set, nil)
-    Asterism.instance_variable_set(:@profile_icon, nil)
+    reset_profiles
   end
-
+  
+  # A node's profile is the node's: every connection made as that node
+  # has the same one, on top of the program's defaults; another node of
+  # the same program has its own. It outlives the connections.
+  def test_node_profiles_on_connections
+    reset_profiles
+    Asterism.profile_defaults(host: "lab", name: "Board")
+    loc = "tcp/127.0.0.1:#{TestHelper.free_port}"
+    a = Asterism.connect(nil, node: "pa", app: "one", mode: :peer, listen: loc, check_timeout: 0.1)
+    b = Asterism.connect(loc, node: "pa", app: "two", mode: :peer, check_timeout: 0.1)
+    c = Asterism.connect(loc, node: "pb", app: "one", mode: :peer, check_timeout: 0.1)
+    assert_equal "Board", a.profile["name"], "the program's default"
+    assert_equal "Rover", a.profile(name: "Rover")["name"]
+    assert_equal a.profile, b.profile, "one profile for the node"
+    assert_equal "Board", c.profile["name"], "another node keeps the default"
+    assert_equal "lab", b.profile(kind: :family_mruby)["host"]
+    assert_equal "family_mruby", a.profile["kind"]
+    refute b.profile(host: nil).key?("host"), "nil leaves a field out, also over a default"
+    assert_equal "lab", c.profile["host"]
+    assert_equal "cruby", a.profile(kind: nil)["kind"], "kind: nil goes back to the default"
+    assert_equal a.profile, a.profile_of("pa"), "the own node's profile without the network"
+    a.close
+    b.close
+    d = Asterism.connect(nil, node: "pa", app: "three", mode: :peer, listen: "tcp/127.0.0.1:#{TestHelper.free_port}",
+                         check_timeout: 0.1)
+    assert_equal "Rover", d.profile["name"], "kept after the node's connections closed"
+    assert_raises(ArgumentError) { d.profile(colour: "red") }
+  ensure
+    [a, b, c, d].each { _1&.close }
+    reset_profiles
+  end
+  
   # ------------------------------------------------------------ two processes
 
   # The other process: node "child" with a profile of its own; a raw
@@ -120,13 +154,13 @@ class TestProfile < Minitest::Test
     require "asterism"
     require "zlib"
     loc = ARGV[0]
-    Asterism.profile(name: "Child", host: "test")
     if ARGV[1] == "router"
-      Asterism.connect(loc, node: "child", app: "t")
+      net = Asterism.connect(loc, node: "child", app: "t")
     else
-      Asterism.connect(nil, node: "child", app: "t", mode: :peer, listen: loc)
+      net = Asterism.connect(nil, node: "child", app: "t", mode: :peer, listen: loc)
     end
-    s = Asterism.instance_variable_get(:@session)
+    net.profile(name: "Child", host: "test")
+    s = net.session
     bad = s.queryable("asterism/*/@profile")
     png = lambda do |w, h, idat|
       chunk = ->(type, body) { [body.bytesize].pack("N") + type + body + [Zlib.crc32(type + body)].pack("N") }
@@ -142,7 +176,7 @@ class TestProfile < Minitest::Test
     STDOUT.puts "ready"
     STDOUT.flush
     loop do
-      Asterism.poll
+      net.poll
       bad.each_pending do |q|
         name = q.key.split("/")[1]
         q.reply(q.key, MessagePack.pack(answers[name])) if answers.key?(name)
@@ -153,12 +187,12 @@ class TestProfile < Minitest::Test
       line = STDIN.gets
       break if line.nil?
       cmd, arg = line.strip.split(" ", 2)
-      Asterism.profile(name: arg) if cmd == "name"
-      Asterism.profile(icon: png.(8, 8, "i")) if cmd == "icon"
+      net.profile(name: arg) if cmd == "name"
+      net.profile(icon: png.(8, 8, "i")) if cmd == "icon"
       STDOUT.puts "done #{cmd}"
       STDOUT.flush
     end
-    Asterism.close
+    net.close
   RUBY
 
   def test_profiles_between_two_processes
@@ -173,68 +207,67 @@ class TestProfile < Minitest::Test
     child = IO.popen([RbConfig.ruby, *lib.flat_map { |l| ["-I", l] }, "-e", CHILD, loc, mode], "r+")
     assert_equal "ready", child.gets&.strip
     if router
-      Asterism.connect(loc, node: "parent", app: "t")
+      @net = Asterism.connect(loc, node: "parent", app: "t")
     else
-      Asterism.connect(loc, node: "parent", app: "t", mode: :peer)
+      @net = Asterism.connect(loc, node: "parent", app: "t", mode: :peer)
     end
-    assert wait_for { Asterism.poll; Asterism.nodes.include?("child") }
+    assert wait_for { @net.poll; @net.nodes.include?("child") }
     # The notices on the profile key (the console follows them).
-    s = Asterism.instance_variable_get(:@session)
+    s = @net.session
     notices = s.subscribe("asterism/*/@profile")
 
-    pr = Asterism.profile_of("child")
+    pr = @net.profile_of("child")
     assert_equal({ "protocol" => 2, "kind" => "cruby", "host" => "test", "name" => "Child" }, pr.except("icon", "icon_hash"))
     assert_equal ICON, pr["icon"]
     assert_equal Asterism::Profile.png_info(ICON)[2], pr["icon_hash"]
     # On the wire the icon is a bin (msgpack-ruby reads a bin as ASCII-8BIT,
     # a str as UTF-8) and the protocol is told.
-    wire = Asterism.profile_async("child", true, nil, nil).raw_value
+    wire = @net.profile_async("child", true, nil, nil).raw_value
     assert_equal Encoding::BINARY, wire["icon"].encoding
     assert_equal Encoding::UTF_8, wire["kind"].encoding
     assert_equal 2, wire["protocol"]
-    without = Asterism.profile_of("child", icon: false, timeout: 1.5)
+    without = @net.profile_of("child", icon: false, timeout: 1.5)
     assert_equal pr.except("icon"), without
 
     # Changes while connected are put on the key, without the icon.
     child.puts "name Renamed"
     assert_equal "done name", child.gets&.strip
     got = nil
-    assert wait_for { Asterism.poll; got ||= notices.each_pending.find { |k, _| k == "asterism/child/@profile" } }
+    assert wait_for { @net.poll; got ||= notices.each_pending.find { |k, _| k == "asterism/child/@profile" } }
     told = Asterism::Profile.check(MessagePack.unpack(got[1]))
     assert_equal "Renamed", told["name"]
     refute told.key?("icon")
     assert_equal pr["icon_hash"], told["icon_hash"]
     child.puts "icon"
     assert_equal "done icon", child.gets&.strip
-    again = Asterism.profile_of("child")
+    again = @net.profile_of("child")
     refute_equal pr["icon_hash"], again["icon_hash"], "a new icon, a new hash"
     assert_equal [8, 8], Asterism::Profile.png_info(again["icon"])[0, 2]
 
     # This node's own profile, without the network.
-    assert_equal Asterism.profile, Asterism.profile_of("parent")
+    assert_equal @net.profile, @net.profile_of("parent")
 
     # Not answered (an older version, a ROS 2 node): nil, at once when
     # nobody answers that key.
     t = Time.now
-    assert_nil Asterism.profile_of("old", timeout: 1.0)
+    assert_nil @net.profile_of("old", timeout: 1.0)
     assert Time.now - t < 1.5
     # Answers that are not acceptable: the icon is dropped, or the whole.
-    assert_equal({ "kind" => "cruby" }, Asterism.profile_of("svg"))
-    assert_equal({ "kind" => "cruby" }, Asterism.profile_of("big"))
-    assert_equal({ "kind" => "cruby" }, Asterism.profile_of("huge"))
-    assert_nil Asterism.profile_of("junk")
-    assert_raises(ArgumentError) { Asterism.profile_of("a/b") }
+    assert_equal({ "kind" => "cruby" }, @net.profile_of("svg"))
+    assert_equal({ "kind" => "cruby" }, @net.profile_of("big"))
+    assert_equal({ "kind" => "cruby" }, @net.profile_of("huge"))
+    assert_nil @net.profile_of("junk")
+    assert_raises(ArgumentError) { @net.profile_of("a/b") }
 
     # The CRuby API: net.profile_of waits for the receiving thread's ticks.
-    net = Asterism.net
+    net = @net
     net.start
     assert_equal "Renamed", net.profile_of("child", icon: false)["name"]
     assert_equal "Lab", net.profile(name: "Lab")["name"]
     net.stop
   ensure
-    Asterism.close
-    Asterism.instance_variable_set(:@profile_set, nil)
-    Asterism.instance_variable_set(:@profile_icon, nil)
+    @net&.close
+    reset_profiles
     if child && !child.closed?
       child.close_write rescue nil
       child.read rescue nil

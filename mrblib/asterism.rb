@@ -1,11 +1,23 @@
 # Asterism: Ruby objects on other machines, called like local ones.
 #
-#   Asterism.connect("tcp/192.0.2.2:7447", node: "fmruby-bbbbbb", app: "demo")
-#   Asterism.expose("apu", apu, methods: [:play, :stop])
-#   p = Asterism["linux/demo/apu"]     # <node>/<app>/<object>
+#   net = Asterism.connect("tcp/192.0.2.2:7447", node: "fmruby-bbbbbb", app: "demo")
+#   net.expose("apu", apu, methods: [:play, :stop])
+#   p = net["linux/demo/apu"]          # <node>/<app>/<object>
 #   p.play("cde")                      # waits for the answer (2 s by default;
-#                                      # Asterism["...", timeout: 5.0])
-#   Asterism.poll                      # call regularly (answers incoming calls)
+#                                      # net["...", timeout: 5.0])
+#   net.poll                           # call regularly (answers incoming calls)
+#
+# A connection (an Asterism::Connection) is one application: its Zenoh
+# session, its liveliness token, its objects, its status, topics and types,
+# its own profile. A program may hold several (one per application it is),
+# also as the same node:
+#
+#   game = Asterism.connect(router, node: "host", app: "game")
+#   spec = Asterism.connect(router, node: "host", app: "spectate")
+#   Asterism.poll_all                  # or game.poll and spec.poll
+#
+# On a board each connection costs a TLS link and a router seat
+# (docs/protocol.md 1.1); one is the usual.
 #
 # Keys and payloads: protocol 2 (docs/protocol.md):
 #   asterism/<node>/<app>/<object>/call/<caller>
@@ -22,28 +34,34 @@
 #                                     status, topics and types (status.rb, topic.rb)
 #   asterism/<node>/<app>/@status     put: the application's status when it changes
 #   asterism/<node>/<app>/@pubs       put: the application's topics when they change
-#   asterism/<node>/<app>/<name>      put: a value of a topic (Asterism.publish)
+#   asterism/<node>/<app>/<name>      put: a value of a topic (Connection#publish)
 #
 # Everything is polled: nothing runs behind the application's back. A call
 # that waits for its answer keeps polling meanwhile and answers the calls
-# that come in, so two machines calling each other do not lock up.
+# that come in (on every connection of the program), so two machines, or
+# two connections of one program, calling each other do not lock up.
 module Asterism
   ROOT = "asterism"
   # The version of the wire protocol this implementation speaks (and the
   # only one: protocol 1 and protocol 0 are not spoken).
   PROTOCOL = 2
-  # The time limit of a call (Asterism[path] without timeout:), in seconds
-  # and in milliseconds.
+  # The time limit of a call (net[path] without timeout:), in seconds and
+  # in milliseconds.
   DEFAULT_TIMEOUT = 2.0
   DEFAULT_TIMEOUT_MS = 2000
   # How long Asterism.connect looks for another copy of the same
   # <node>/<app> (check_timeout:), in seconds.
   CHECK_TIMEOUT = 1.5
   # Waits that may be open inside each other (a call answered while waiting
-  # that itself calls and waits, and so on).
+  # that itself calls and waits, and so on), over all the connections of
+  # the program: they share one stack.
   MAX_NESTING = 4
   # Pause between polls while a call waits (ms).
   WAIT_STEP_MS = 2
+  # The longest doc text (bytes) and the most argument names a method may
+  # tell in its meta (docs/protocol.md 5).
+  DOC_MAX = 2048
+  ARGS_MAX = 16
 
   # Every Asterism error is an Asterism::Error (the Zenoh bindings define
   # it; Asterism::Zenoh::Error and the ROS errors are under it too).
@@ -79,7 +97,7 @@ module Asterism
     end
   end
 
-  # What Asterism.current_call returns while an exposed method runs for a
+  # What Connection#current_call returns while an exposed method runs for a
   # call: who called and what. from is the calling node's ID (a String),
   # verified how far that is checked: :claimed (the caller named itself in
   # the call's key; a router's access control is what makes the name
@@ -205,6 +223,13 @@ module Asterism
     s
   end
 
+  # Whether s can be a node, app or object name (check_name without raising).
+  # @api private
+  def self.valid_name?(s)
+    return false if s.nil? || s.empty? || s.start_with?("@")
+    !(s.include?("/") || s.include?("*") || s.include?("$") || s.include?("?") || s.include?("#"))
+  end
+
   # "node/app/object" -> [node, app, object]
   # @api private
   def self.split_path(path)
@@ -241,197 +266,135 @@ module Asterism
     j == parts.size
   end
 
-  # ------------------------------------------------------------ connection
+  # ------------------------------------------------------------ connections
 
-  # Opens the connection. locator, mode: and listen: go to
-  # Asterism::Zenoh::Session.open (client of a router by default; mode: :peer
-  # with or without listen: for no router), and so do config: (a Hash of
-  # "key/path" => value or a JSON5 String, e.g. TLS certificates; the boards
-  # take the TLS keys only) and connect_timeout: (seconds; CRuby's
-  # asterism-zenoh only, the boards raise ArgumentError) when they are given.
-  # credentials: a .tar from an Asterism console (Asterism::Credentials, a
-  # path or a loaded one): its certificates go to zenoh (mutual TLS), and
-  # locator and node: default to its router and name. node: is this
-  # machine's ID and app: this application's name. check_timeout: how long
-  # to look for another copy of the same <node>/<app> (seconds,
-  # CHECK_TIMEOUT). Raises Disconnected when it cannot connect, and Error
-  # when the same <node>/<app> is already on the network.
+  # Opens a connection: one application on the network, and returns it (an
+  # Asterism::Connection; its methods are the whole API: expose, [],
+  # poll, status, publish, subscribe, close, ...). locator, mode: and
+  # listen: go to Asterism::Zenoh::Session.open (client of a router by
+  # default; mode: :peer with or without listen: for no router), and so do
+  # config: (a Hash of "key/path" => value or a JSON5 String, e.g. TLS
+  # certificates; the boards take the TLS keys only) and connect_timeout:
+  # (seconds; CRuby's asterism-zenoh only, the boards raise ArgumentError)
+  # when they are given. credentials: a .tar from an Asterism console
+  # (Asterism::Credentials, a path or a loaded one): its certificates go to
+  # zenoh (mutual TLS), and locator and node: default to its router and
+  # name. node: is this machine's ID and app: this application's name.
+  # check_timeout: how long to look for another copy of the same
+  # <node>/<app> (seconds, CHECK_TIMEOUT). Raises Disconnected when it
+  # cannot connect, and Error when the same <node>/<app> is already on the
+  # network (or open in this program).
+  #
+  # A program may open several connections, each its own application
+  # (another app:, the same node: or another). Each has its own Zenoh
+  # session: on a board, a TLS link and a router seat each.
   def self.connect(locator = nil, node: nil, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil,
                    check_timeout: nil, credentials: nil)
-    raise Error, "already connected (Asterism.close first)" if connected?
-    if credentials
-      locator, config, creds = Credentials.merge(credentials, locator, config)
-      node ||= creds.name
+    Connection.new(locator, node: node, app: app, mode: mode, listen: listen, config: config,
+                            connect_timeout: connect_timeout, check_timeout: check_timeout,
+                            credentials: credentials)
+  end
+
+  # The connections of this program that are open, or lost with their
+  # on_leave blocks still to be told (in the order they were opened).
+  def self.connections
+    (@connections || []).dup
+  end
+
+  # Polls every connection of this program (Connection#poll each). True
+  # while one of them is connected.
+  def self.poll_all
+    list = connections
+    any = false
+    i = 0
+    while i < list.size
+      any = true if list[i].poll
+      i += 1
     end
-    release
-    node = check_name("node", node)
-    app = check_name("app", app)
-    check_ms = time_ms("Asterism.connect check_timeout:", check_timeout, nil, nil, (CHECK_TIMEOUT * 1000).round)
-    opts = { mode: mode, listen: listen }
-    opts[:config] = config unless config.nil?
-    opts[:connect_timeout] = connect_timeout unless connect_timeout.nil?
-    begin
-      s = Asterism::Zenoh::Session.open(locator, **opts)
-    rescue Asterism::Zenoh::Error => e
-      raise Disconnected, e.message
-    end
-    begin
-      if already_there?(s, node, app, check_ms)
-        s.close
-        raise Error, "#{node}/#{app} is already on the network"
-      end
-      @app_token = s.liveliness("#{ROOT}/#{node}/#{app}")
-      @queryable = s.queryable("#{ROOT}/#{node}/#{app}/**", depth: 32)
-      @watch = s.liveliness_watch("#{ROOT}/**", depth: watch_depth)
-      @profile_queryable = s.queryable("#{ROOT}/#{node}/#{Profile::KEY}", depth: 4)
-    rescue Asterism::Zenoh::Error => e
-      s.close
-      raise Disconnected, e.message
-    end
-    s.extend(SharedSession) # Asterism.session: the application's close does not close it
-    @session = s
-    @node = node
-    @app = app
-    @objects = {}  # name => [object, {method name => arity}, token, caller keyword or nil,
-                   #          {method name => meta fields}, the object's doc or nil]
-    @alive = {}    # "node/app/object" => node (from liveliness)
-    @apps = {}     # "node/app" => node (from liveliness)
-    @proxies = {}
-    @depth = 0
-    @lost = nil
-    @known = []    # the other nodes told to on_join so far
-    @known_set = {} # the same, as node => true
-    @known_apps = {} # "node/app" => true: the other applications told to on_app_join
-    @node_list = [node] # what nodes returns (this node first), rebuilt on a change
-    @nodes_changed = false # liveliness changed since tell_nodes last compared
-    @was_reconnecting = false
-    @status_put = nil
-    @topics = {}
-    @subscriptions = []
-    @pubs_put = nil
-    tell_profile   # for those who follow the profiles (the reply is the queryable's)
-    tell_status(true) # a status set before connecting (status.rb)
-    app_queryable(s) if @types && !@types.empty? # types defined before connecting (topic.rb)
-    self
-  end
-
-  # Whether node/app is alive already (its application token or an object:
-  # a second copy of the same application). Waits for the answer (a router answers at once), at
-  # most check_ms. @api private
-  def self.already_there?(s, node, app, check_ms = 1500)
-    get_ms = check_ms > 1000 ? check_ms - 500 : check_ms
-    g = s.liveliness_get("#{ROOT}/#{node}/#{app}/**", timeout_ms: get_ms)
-    t0 = now_ms
-    found = false
-    while true
-      s.poll
-      ended = g.done? # before taking the replies (see Future#collect)
-      found = true if g.each_reply.size > 0
-      break if found || ended || now_ms - t0 > check_ms
-      pause(WAIT_STEP_MS)
-    end
-    found
-  end
-
-  def self.connected?
-    return false if @session.nil?
-    if @session.closed?
-      lost("the connection was lost")
-      return false
-    end
-    true
-  end
-
-  # True while the connection is lost and the Zenoh binding opens it again
-  # by itself (a client of a router: zenoh-pico built with reconnection on
-  # the boards, zenoh-c on CRuby). connected? stays true meanwhile, and once
-  # the router is back everything declared before is there again: the
-  # application token, the exposed objects, the liveliness watch, and what
-  # the application declared on Asterism.session. Meanwhile the other nodes
-  # leave (on_leave) and join again after it, calls raise Disconnected or
-  # time out, and puts reach nobody.
-  def self.reconnecting?
-    s = @session
-    return false if s.nil?
-    s.respond_to?(:reconnecting?) ? s.reconnecting? : false
-  end
-
-  def self.node_id
-    @node
-  end
-
-  def self.app
-    @app
-  end
-
-  # Why the connection went away (nil while connected or after close).
-  def self.lost_reason
-    @lost
-  end
-
-  # Closes the connection (and with it every exposed object), and forgets
-  # the on_join / on_leave blocks. Idempotent.
-  def self.close
-    release
-    @known = nil
-    @known_apps = nil
-    @on_join = nil
-    @on_leave = nil
-    @on_app_join = nil
-    @on_app_leave = nil
-    nil
+    any
   end
 
   # @api private
-  def self.release
-    s = @session
-    @session = nil
-    @objects = {}
-    @alive = {}
-    @apps = {}
-    @node_list = nil
-    @nodes_changed = true
-    @proxies = {}
-    if s
-      @releasing = s
-      begin
-        s.close
-      ensure
-        @releasing = nil
+  def self.register(conn)
+    (@connections ||= []) << conn
+  end
+
+  # @api private
+  def self.unregister(conn)
+    list = @connections
+    return unless list
+    i = 0
+    while i < list.size
+      if list[i].equal?(conn)
+        list.delete_at(i)
+      else
+        i += 1
       end
     end
-    @app_token = nil
-    @queryable = nil
-    @watch = nil
-    @profile_queryable = nil
-    @app_queryable = nil
-    @status_put = nil
-    release_data
   end
 
-  # The Zenoh session of the connection (an Asterism::Zenoh::Session), for
-  # what the object layer does not do: put and subscribe, a ROS 2 node
-  # (Asterism::ROS::Node.new(Asterism.session, ...)), anything of the
-  # Zenoh API. One connection for everything: on a router that lets each
-  # pass in once, a second session would not get in, and a ROS 2 node on
-  # this session is part of this node (the same Zenoh ID).
-  #
-  # The session stays Asterism's: its close does nothing (it warns once);
-  # Asterism.close closes it, and with it everything declared on it (the
-  # application's subscribers, publishers, ROS 2 nodes). After a lost
-  # connection and a new Asterism.connect, take Asterism.session again and
-  # declare those again. Polling it (session.poll, node.poll) is fine:
-  # Asterism.poll polls it too, each entity keeps what came for it.
-  # Raises Disconnected when not connected (as the calls do).
-  def self.session
-    raise Disconnected, (@lost || "not connected") unless connected?
-    @session
+  # The connected connection of node/app in this program, or nil.
+  # @api private
+  def self.connection_of(node, app)
+    list = @connections || []
+    i = 0
+    while i < list.size
+      c = list[i]
+      return c if c.node_id == node && c.app == app && c.connected?
+      i += 1
+    end
+    nil
   end
 
-  # @api private (the name before 0.6.0; Asterism.session is the same)
-  def self.session!
-    raise Disconnected, (@lost || "not connected") unless @session
-    @session
+  # While a call waits on one connection, the others answer their calls
+  # (another connection of this program may be the one called).
+  # @api private
+  def self.pump_others(conn)
+    list = @connections
+    return if list.nil? || list.size < 2
+    list = list.dup
+    i = 0
+    while i < list.size
+      c = list[i]
+      i += 1
+      c.pump unless c.equal?(conn)
+    end
+  end
+
+  # The waits open inside each other (all connections: one stack).
+  # @api private
+  def self.depth
+    @depth || 0
+  end
+
+  # @api private
+  def self.enter_wait
+    if depth >= MAX_NESTING
+      # Kept, so that a method that lets it out is answered as "nesting".
+      @nesting_error = Error.new("calls nested too deep (max #{MAX_NESTING})")
+      raise @nesting_error
+    end
+    @depth = depth + 1
+  end
+
+  # @api private
+  def self.leave_wait
+    @depth = depth - 1
+  end
+
+  # @api private
+  def self.nesting_error?(e)
+    !@nesting_error.nil? && e.equal?(@nesting_error)
+  end
+
+  # The depth of the liveliness watch behind each / nodes. The tokens alive
+  # when it is declared (every node and object on the network) come in one
+  # burst: 64 on the boards (the ring comes from the VM's pool), the
+  # binding's deeper default where it has one (CRuby: 1024).
+  # @api private
+  def self.watch_depth
+    d = Asterism::Zenoh::DEFAULT_WATCH_DEPTH
+    d > 64 ? d : 64
   end
 
   # Whether Asterism itself is closing s (SharedSession#close).
@@ -440,87 +403,31 @@ module Asterism
     !@releasing.nil? && @releasing.equal?(s)
   end
 
-  # Extended onto the session of Asterism.connect: the session belongs to
-  # Asterism, so a close from anyone else (the application, a library that
-  # was handed Asterism.session) does nothing. Asterism.close and a lost
-  # connection close it.
+  # Closes s for a connection (the one close SharedSession lets through).
+  # @api private
+  def self.close_session(s)
+    @releasing = s
+    begin
+      s.close
+    ensure
+      @releasing = nil
+    end
+  end
+
+  # Extended onto the session of each connection: the session belongs to
+  # the connection, so a close from anyone else (the application, a library
+  # that was handed connection.session) does nothing. Connection#close and
+  # a lost connection close it.
   module SharedSession
     def close
       return super if ::Asterism.releasing?(self)
-      ::Asterism.warn_once(self, "asterism: Asterism.session belongs to Asterism; its close is ignored " \
-                                 "(Asterism.close closes it)")
+      ::Asterism.warn_once(self, "asterism: a connection's session belongs to it; its close is ignored " \
+                                 "(Connection#close closes it)")
       nil
     end
   end
 
-  # The connection went away: closed, but the next Asterism.poll still tells
-  # on_leave about every node known until then.
-  # @api private
-  def self.lost(reason)
-    @lost = reason
-    release
-  end
-
-  # ------------------------------------------------------------ exposing
-
-  # Makes obj callable from other machines as <node>/<app>/<name>. Only the
-  # listed methods can be called. methods: is an Array of names, or a Hash
-  # name => number of arguments (checked before calling; -1 for any), or
-  # name => {args: [names], doc: "text"} (docs/protocol.md 5): the
-  # arguments' names (their number is the number checked, unless arity:
-  # says otherwise) and what the method does, both told in the meta for
-  # the readers that show them (asterism mcp, the command line). doc: a
-  # text about the object itself, also in the meta.
-  # caller: a keyword name (caller: :from): each call passes the calling
-  # node's ID (Asterism.current_call.from) to the method as that keyword,
-  # and a call that brings the keyword itself is refused (an "arguments"
-  # error), so the value is always the one Asterism took from the call.
-  def self.expose(name, obj, methods:, caller: nil, doc: nil)
-    s = session!
-    name = check_name("object", name)
-    table = {}
-    info = {}
-    if methods.is_a?(Hash)
-      methods.each do |m, n|
-        if n.is_a?(Hash)
-          d = method_doc(m, n)
-          table[m.to_s] = d[0]
-          info[m.to_s] = d[1]
-        else
-          table[m.to_s] = n.to_i
-        end
-      end
-    else
-      methods.each { |m| table[m.to_s] = -1 }
-    end
-    raise ArgumentError, "no method to expose" if table.empty?
-    unless doc.nil?
-      raise ArgumentError, "doc: expects a String, got #{doc.class}" unless doc.is_a?(String)
-      raise ArgumentError, "doc: at most #{DOC_MAX} bytes" if doc.bytesize > DOC_MAX
-    end
-    table.each_key do |m|
-      raise ArgumentError, "#{obj.class} has no public method #{m}" unless obj.respond_to?(m)
-    end
-    kw = nil
-    unless caller.nil?
-      unless caller.is_a?(Symbol) || caller.is_a?(String)
-        raise ArgumentError, "caller: expects a keyword name (caller: :from), got #{caller.inspect}"
-      end
-      kw = caller.to_s
-      raise ArgumentError, "caller: expects a keyword name (caller: :from), got #{caller.inspect}" if kw.empty?
-    end
-    unexpose(name)
-    token = s.liveliness("#{ROOT}/#{@node}/#{@app}/#{name}")
-    @objects[name] = [obj, table, token, kw, info, doc]
-    "#{@node}/#{@app}/#{name}"
-  rescue Asterism::Zenoh::Error => e
-    raise Disconnected, e.message
-  end
-
-  # The longest doc text (bytes) and the most argument names a method may
-  # tell in its meta (docs/protocol.md 5).
-  DOC_MAX = 2048
-  ARGS_MAX = 16
+  # ------------------------------------------------------------ calls (shared)
 
   # A method's {args:, doc:, arity:} at expose: [the number of arguments
   # checked, its meta fields {"args", "doc"}].
@@ -565,434 +472,6 @@ module Asterism
     [n, out]
   end
 
-  def self.unexpose(name)
-    entry = @objects ? @objects.delete(name.to_s) : nil
-    entry[2].close if entry
-    !entry.nil?
-  end
-
-  def self.exposed
-    @objects ? @objects.keys : []
-  end
-
-  # ------------------------------------------------------------ polling
-
-  # Call from the application's update loop. Answers the calls that came
-  # in, follows who is alive, calls the on_join / on_leave blocks and hands
-  # the values that came to the subscriptions' blocks (Asterism.subscribe).
-  # false once the connection is closed.
-  #
-  # Cheap when nothing came: each queue is looked at by its count first,
-  # and the list of nodes (and the comparison behind on_join / on_leave)
-  # is made again only after a liveliness change.
-  def self.poll
-    ok = @session ? pump : false
-    tell_nodes
-    deliver_samples if @session
-    ok
-  end
-
-  # ------------------------------------------------------------ nodes coming and going
-
-  # on_join { |node| }: another node appeared (one of its applications or
-  # objects). The nodes there already join on the first polls after
-  # connecting. on_leave { |node| }: a node is gone (no token and no object
-  # left); when the connection is lost, every node known until then leaves.
-  #
-  # The blocks run from Asterism.poll only, never from the polling inside a
-  # waiting call. What a block raises comes out of Asterism.poll (on CRuby
-  # with a receiving thread: to on_error). Asterism.close forgets them.
-  def self.on_join(&blk)
-    raise ArgumentError, "on_join needs a block" unless blk
-    (@on_join ||= []) << blk
-    self
-  end
-
-  def self.on_leave(&blk)
-    raise ArgumentError, "on_leave needs a block" unless blk
-    (@on_leave ||= []) << blk
-    self
-  end
-
-  # Removes a block given to on_join / on_leave (keep the Proc to remove
-  # it: h = proc { |n| ... }; Asterism.on_join(&h); Asterism.off_join(h)).
-  # on_* adds a block; on_error (CRuby) is the only one that replaces.
-  def self.off_join(blk)
-    @on_join.delete(blk) if @on_join
-    self
-  end
-
-  def self.off_leave(blk)
-    @on_leave.delete(blk) if @on_leave
-    self
-  end
-
-  # on_app_join { |node, app| }: an application of another node appeared
-  # (its token asterism/<node>/<app>); on_app_leave { |node, app| }: it is
-  # gone. A node may run several applications: each comes and goes on its
-  # own, and the node stays (on_join / on_leave) while one of them or an
-  # object is there. The applications there already join on the first
-  # polls after connecting; when the connection is lost, every application
-  # known until then leaves. Called from Asterism.poll, as on_join;
-  # Asterism.close forgets them.
-  def self.on_app_join(&blk)
-    raise ArgumentError, "on_app_join needs a block" unless blk
-    (@on_app_join ||= []) << blk
-    self
-  end
-
-  def self.on_app_leave(&blk)
-    raise ArgumentError, "on_app_leave needs a block" unless blk
-    (@on_app_leave ||= []) << blk
-    self
-  end
-
-  def self.off_app_join(blk)
-    @on_app_join.delete(blk) if @on_app_join
-    self
-  end
-
-  def self.off_app_leave(blk)
-    @on_app_leave.delete(blk) if @on_app_leave
-    self
-  end
-
-  # Compares the applications alive now with those told before and calls
-  # the on_app_* blocks for the difference (this application left out).
-  # @api private
-  def self.tell_apps
-    known = @known_apps
-    return if known.nil?
-    now = {}
-    if @session
-      own = "#{@node}/#{@app}"
-      keys = @apps.keys
-      i = 0
-      while i < keys.size
-        now[keys[i]] = true unless keys[i] == own
-        i += 1
-      end
-    end
-    joined = []
-    left = []
-    keys = now.keys
-    i = 0
-    while i < keys.size
-      joined << keys[i] unless known[keys[i]]
-      i += 1
-    end
-    keys = known.keys
-    i = 0
-    while i < keys.size
-      left << keys[i] unless now[keys[i]]
-      i += 1
-    end
-    @known_apps = @session ? now : nil
-    tell_apps_each("on_app_join", @on_app_join, joined)
-    tell_apps_each("on_app_leave", @on_app_leave, left)
-  end
-
-  # @api private
-  def self.tell_apps_each(where, blocks, names)
-    return if blocks.nil? || names.empty?
-    i = 0
-    while i < names.size
-      cut = names[i].index("/")
-      node = names[i][0, cut]
-      app = names[i][cut + 1, names[i].size]
-      j = 0
-      while j < blocks.size
-        tell(where, blocks[j], node, app)
-        j += 1
-      end
-      i += 1
-    end
-  end
-
-  # Compares the nodes alive now with those told before and calls the
-  # blocks for the difference.
-  # @api private
-  def self.tell_nodes
-    known = @known
-    return if known.nil?
-    # Nothing came on the liveliness watch since the last comparison (and
-    # the connection is neither new nor lost): nothing can have changed.
-    return unless @nodes_changed
-    @nodes_changed = false
-    tell_apps
-    now = []
-    now_set = {}
-    if @session
-      list = node_list
-      i = 1 # list[0] is this node
-      while i < list.size
-        n = list[i]
-        now << n
-        now_set[n] = true
-        i += 1
-      end
-    end
-    known_set = @known_set || {}
-    joined = []
-    left = []
-    i = 0
-    while i < now.size
-      joined << now[i] unless known_set[now[i]]
-      i += 1
-    end
-    i = 0
-    while i < known.size
-      left << known[i] unless now_set[known[i]]
-      i += 1
-    end
-    # After a loss, everything has been told: nothing more to compare.
-    if @session
-      @known = now
-      @known_set = now_set
-    else
-      @known = nil
-      @known_set = nil
-    end
-    tell_each("on_join", @on_join, joined)
-    tell_each("on_leave", @on_leave, left)
-  end
-
-  # While loops, not each with a block: the blocks are the application's,
-  # and nothing else stands between them and the update loop on the stack.
-  # @api private
-  def self.tell_each(where, blocks, names)
-    return if blocks.nil? || names.empty?
-    i = 0
-    while i < names.size
-      j = 0
-      while j < blocks.size
-        tell(where, blocks[j], names[i])
-        j += 1
-      end
-      i += 1
-    end
-  end
-
-  # One block for one node, or one application (CRuby routes what it
-  # raises to on_error).
-  # @api private
-  def self.tell(_where, blk, node, app = nil)
-    if app.nil?
-      blk.call(node)
-    else
-      blk.call(node, app)
-    end
-  end
-
-  # @api private
-  def self.pump
-    s = @session
-    return false unless s
-    unless s.poll
-      lost("the connection was lost")
-      return false
-    end
-    back_again(s)
-    answer_calls
-    answer_profile
-    answer_app_profile
-    follow_liveliness
-    !@session.nil?
-  rescue Asterism::Zenoh::Error => e
-    lost_if_closed(e.message)
-    !@session.nil?
-  end
-
-  # After the binding opened a lost connection again: tell the profile, the
-  # status and the topics again (a put made while the router was away
-  # reached nobody).
-  # @api private
-  def self.back_again(s)
-    now = s.respond_to?(:reconnecting?) && s.reconnecting?
-    was = @was_reconnecting
-    @was_reconnecting = now
-    return unless was && !now
-    tell_profile
-    tell_status(true)
-    tell_pubs(true)
-  end
-
-  # A Zenoh error during a call or a poll: the connection is gone only when
-  # the session says it is closed. While the binding reconnects, the
-  # session (and everything declared on it) stays.
-  # @api private
-  def self.lost_if_closed(reason)
-    s = @session
-    lost(reason) if s.nil? || s.closed?
-  end
-
-  # Polls until the block is true. Answers incoming calls meanwhile.
-  # @api private
-  def self.wait_until
-    if (@depth || 0) >= MAX_NESTING
-      # Kept, so that a method that lets it out is answered as "nesting".
-      @nesting_error = Error.new("calls nested too deep (max #{MAX_NESTING})")
-      raise @nesting_error
-    end
-    @depth = (@depth || 0) + 1
-    begin
-      until yield
-        break unless pump
-        break if yield
-        pause(WAIT_STEP_MS)
-      end
-    ensure
-      @depth -= 1
-    end
-  end
-
-  # @api private
-  def self.depth
-    (@depth || 0)
-  end
-
-  # The depth of the liveliness watch behind each / nodes. The tokens alive
-  # when it is declared (every node and object on the network) come in one
-  # burst: 64 on the boards (the ring comes from the VM's pool), the
-  # binding's deeper default where it has one (CRuby: 1024).
-  # @api private
-  def self.watch_depth
-    d = Asterism::Zenoh::DEFAULT_WATCH_DEPTH
-    d > 64 ? d : 64
-  end
-
-  # @api private
-  def self.follow_liveliness
-    w = @watch
-    return unless w && w.pending > 0
-    # Array forms instead of blocks called from C (see Future#collect).
-    events = w.each_pending
-    @nodes_changed = true if events.size > 0
-    if events.size > 0 && w.dropped > 0
-      warn_once(w, "asterism: #{w.dropped} liveliness changes dropped (more than #{watch_depth} at once); " \
-                   "Asterism.each and Asterism.nodes may miss some objects")
-    end
-    i = 0
-    while i < events.size
-      key = events[i][0]
-      alive = events[i][1]
-      i += 1
-      rest = key[ROOT.length + 1, key.length].to_s
-      parts = rest.split("/")
-      if parts.size == 2 # an application: asterism/<node>/<app>
-        if alive
-          @apps[rest] = parts[0]
-        else
-          @apps.delete(rest)
-        end
-      elsif parts.size == 3 # an object: asterism/<node>/<app>/<object>
-        if alive
-          @alive[rest] = parts[0]
-        else
-          @alive.delete(rest)
-        end
-      end
-    end
-    @node_list = nil
-  end
-
-  # The node IDs alive now, this one first.
-  def self.nodes
-    return [] unless @session
-    node_list.dup
-  end
-
-  # The list behind nodes, made again only after a liveliness change (the
-  # caller must not change it). @api private
-  def self.node_list
-    list = @node_list
-    return list if list
-    list = [@node]
-    seen = { @node => true }
-    names = @apps.values
-    i = 0
-    while i < names.size
-      n = names[i]
-      unless seen[n]
-        seen[n] = true
-        list << n
-      end
-      i += 1
-    end
-    owners = @alive.values
-    i = 0
-    while i < owners.size
-      n = owners[i]
-      unless seen[n]
-        seen[n] = true
-        list << n
-      end
-      i += 1
-    end
-    @node_list = list
-  end
-
-  # The exposed objects alive now whose <node>/<app>/<object> matches the
-  # pattern (* is one chunk, ** any number), this application's own
-  # included. With a block, yields a proxy for each and returns their
-  # number (1.0 will return the proxies instead, as Ruby's each returns
-  # its receiver; use the Array form for the count); else returns them.
-  def self.each(pattern = "**")
-    paths = []
-    if @session
-      seen = {}
-      @objects.each_key do |name|
-        path = "#{@node}/#{@app}/#{name}"
-        if glob?(pattern, path)
-          paths << path
-          seen[path] = true
-        end
-      end
-      @alive.each_key { |path| paths << path if !seen[path] && glob?(pattern, path) }
-    end
-    proxies = paths.map { |path| self[path] }
-    return proxies unless block_given?
-    proxies.each { |px| yield px }
-    proxies.size
-  end
-
-  # A proxy for <node>/<app>/<object>. Nothing is sent until a method is
-  # called on it. timeout: the time limit of its calls in seconds (2.0), or
-  # timeout_ms:. (Asterism[path, ms], the time as a positional argument, is
-  # deprecated.)
-  def self.[](path, *args, timeout: nil, timeout_ms: nil)
-    raise ArgumentError, "Asterism[]: wrong number of arguments (given #{args.size + 1}, expected 1)" if args.size > 1
-    timeout_ms = time_ms("Asterism[]", timeout, timeout_ms, args[0], DEFAULT_TIMEOUT_MS)
-    split_path(path)
-    @proxies ||= {}
-    key = "#{path}|#{timeout_ms}"
-    @proxies[key] ||= Proxy.new(path.to_s, timeout_ms)
-  end
-
-  # ------------------------------------------------------------ calling
-
-  # Starts a call; returns a Future. Raises EncodeError (before sending)
-  # and Disconnected.
-  # @api private
-  def self.call_async(path, method, args, kwargs, timeout_ms)
-    parts = split_path(path)
-    payload = Codec.pack(request(method, args, kwargs))
-    if parts[0] == @node && parts[1] == @app && @session
-      # This application's own object: no network (a session does not see
-      # its own queryable), same encoding and checks as a remote call.
-      return Future.answered(path, method, dispatch(parts[2], payload, @node, :local))
-    end
-    begin
-      s = session!
-      # The caller's node ID is the key's last chunk (docs/protocol.md 4.1).
-      g = s.get("#{ROOT}/#{path}/call/#{@node}", timeout_ms: timeout_ms, payload: payload)
-    rescue Asterism::Zenoh::Error => e
-      lost_if_closed(e.message)
-      raise Disconnected, e.message
-    end
-    Future.new(path, method, g, now_ms + timeout_ms, timeout_ms)
-  end
-
   # The request of a call: a map with the method's name, and the arguments
   # and keyword arguments when there are any (absent means none).
   # @api private
@@ -1003,172 +482,7 @@ module Asterism
     req
   end
 
-  # @api private
-  def self.call(path, method, args, kwargs, timeout_ms)
-    call_async(path, method, args, kwargs, timeout_ms).value
-  end
-
-  # The meta reply of path: {"methods" => [{"name" => n, "arity" => a}, ...]}.
-  # @api private
-  def self.meta(path, timeout_ms = DEFAULT_TIMEOUT_MS)
-    parts = split_path(path)
-    if parts[0] == @node && parts[1] == @app && @session
-      m = meta_of(parts[2])
-      raise RemoteError.new("NameError", "no object #{parts[2]} exposed by #{@node}/#{@app}", "no_object") unless m
-      return m
-    end
-    begin
-      g = session!.get("#{ROOT}/#{path}/meta", timeout_ms: timeout_ms)
-    rescue Asterism::Zenoh::Error => e
-      lost_if_closed(e.message)
-      raise Disconnected, e.message
-    end
-    f = Future.new(path, "meta", g, now_ms + timeout_ms, timeout_ms)
-    f.raw_value
-  end
-
-  # ------------------------------------------------------------ answering
-
-  # The call being answered now (an Asterism::CurrentCall: who called,
-  # which object and method), while an exposed method runs for a call; nil
-  # outside one. Calls answered while that method waits for its own call
-  # are on top of it until they end.
-  def self.current_call
-    stack = call_stack
-    stack.empty? ? nil : stack[stack.size - 1]
-  end
-
-  # The calls being answered, innermost last (CRuby: per thread).
-  # @api private
-  def self.call_stack
-    @call_stack ||= []
-  end
-
-  # @api private
-  def self.answer_calls
-    qa = @queryable
-    return unless qa && qa.pending > 0
-    # Without a block, so that a handler that waits (and so polls) does not
-    # re-enter the queryable's iteration.
-    queries = qa.each_pending
-    i = 0
-    while i < queries.size
-      q = queries[i]
-      i += 1
-      begin
-        answer(q)
-      ensure
-        begin
-          q.finish
-        rescue Asterism::Zenoh::Error
-          # the session went away meanwhile
-        end
-      end
-    end
-  end
-
-  # asterism/<node>/<app>/<object>/call/<caller> and
-  # asterism/<node>/<app>/<object>/meta; the node and app may come as
-  # wildcards (the query matched this application's queryable).
-  # @api private
-  def self.answer(q)
-    parts = q.key.split("/")
-    n = parts.size
-    return unless n == 5 || n == 6
-    obj = parts[3]
-    kind = parts[4]
-    prefix = "#{ROOT}/#{@node}/#{@app}/"
-    if kind == "meta"
-      return unless n == 5
-      names = obj == "*" ? @objects.keys : [obj]
-      names.each do |nm|
-        m = meta_of(nm)
-        q.reply("#{prefix}#{nm}/meta", Codec.pack(m)) if m
-      end
-    elsif kind == "call" && valid_name?(obj)
-      if n == 5
-        # A protocol 0 call (no caller chunk): refused, so that its sender
-        # learns why at once instead of waiting.
-        q.reply("#{prefix}#{obj}/call",
-                error_reply("protocol", "Asterism::Error",
-                            "#{@node}/#{@app} speaks Asterism protocol #{PROTOCOL}: call " \
-                            "asterism/<node>/<app>/<object>/call/<caller> with a map " \
-                            "{\"method\", \"args\", \"kwargs\"} (asterism 0.7.0 and later)"))
-      elsif valid_name?(parts[5])
-        q.reply("#{prefix}#{obj}/call/#{parts[5]}", dispatch(obj, q.payload, parts[5], :claimed))
-      end
-    end
-  end
-
-  # Whether s can be a node, app or object name (check_name without raising).
-  # @api private
-  def self.valid_name?(s)
-    return false if s.nil? || s.empty? || s.start_with?("@")
-    !(s.include?("/") || s.include?("*") || s.include?("$") || s.include?("?") || s.include?("#"))
-  end
-
-  # @api private
-  def self.meta_of(name)
-    entry = @objects[name]
-    return nil unless entry
-    list = []
-    info = entry[4] || {}
-    entry[1].each do |m, n|
-      e = { "name" => m, "arity" => n }
-      extra = info[m]
-      extra.each { |k, v| e[k] = v } if extra
-      list << e
-    end
-    out = { "methods" => list }
-    out["doc"] = entry[5] if entry[5]
-    out
-  end
-
   MALFORMED = "malformed call (expected a map {\"method\" => name, \"args\" => [...], \"kwargs\" => {...}})"
-
-  # Runs a call on an exposed object; returns the packed reply. from is
-  # the caller's node ID, verified how it is known (CurrentCall).
-  # @api private
-  def self.dispatch(obj_name, payload, from, verified)
-    req = parse_request(Codec.unpack(payload))
-    return error_reply("malformed", "ArgumentError", MALFORMED) unless req
-    entry = @objects[obj_name]
-    return error_reply("no_object", "NameError", "no object #{obj_name} exposed by #{@node}/#{@app}") unless entry
-    name = req[0]
-    args = req[1]
-    kw = req[2]
-    arity = entry[1][name]
-    if arity.nil?
-      return error_reply("not_exposed", "NoMethodError",
-                         "undefined method '#{name}' for #{@node}/#{@app}/#{obj_name} (not exposed)")
-    end
-    if arity >= 0 && args.size != arity
-      return error_reply("arguments", "ArgumentError", "wrong number of arguments (given #{args.size}, expected #{arity})")
-    end
-    ckw = entry[3]
-    if ckw
-      if kw.key?(ckw)
-        return error_reply("arguments", "ArgumentError",
-                           "#{ckw}: is given by Asterism, not by the caller " \
-                           "(#{@node}/#{@app}/#{obj_name} is exposed with caller: :#{ckw})")
-      end
-      kw[ckw] = from
-    end
-    stack = call_stack
-    stack << CurrentCall.new(from, verified, obj_name, name)
-    begin
-      value = invoke(entry[0], name, args, kw)
-    rescue => e
-      return error_reply(e.equal?(@nesting_error) ? "nesting" : "raised", e.class.to_s, e.message)
-    ensure
-      stack.pop
-    end
-    begin
-      Codec.pack({ "value" => value })
-    rescue EncodeError => e
-      error_reply("unsendable", "Asterism::EncodeError", "the return value: #{e.message}")
-    end
-  end
 
   # [method, args, kwargs] of a decoded request, or nil when it is not one:
   # a map with "method" (a non-empty str), "args" (an array, absent: none)
@@ -1207,5 +521,846 @@ module Asterism
   # @api private
   def self.error_reply(kind, klass, message)
     ::MessagePack.pack({ "error" => { "kind" => kind, "class" => Codec.text(klass), "message" => Codec.text(message) } })
+  end
+
+  # ------------------------------------------------------------ the connection
+
+  # One application on the network (Asterism.connect). Holds everything of
+  # it: the Zenoh session, the liveliness token and watch, the exposed
+  # objects, the calls waiting, the status, topics, types and
+  # subscriptions, the on_join / on_leave blocks. Its methods are the
+  # Asterism API; close ends it (and with it everything declared on it).
+  class Connection
+    attr_reader :node_id, :app
+
+    # Asterism.connect. @api private
+    def initialize(locator, node:, app:, mode:, listen:, config:, connect_timeout:, check_timeout:, credentials:)
+      if credentials
+        locator, config, creds = ::Asterism::Credentials.merge(credentials, locator, config)
+        node ||= creds.name
+      end
+      node = ::Asterism.check_name("node", node)
+      app = ::Asterism.check_name("app", app)
+      if ::Asterism.connection_of(node, app)
+        raise ::Asterism::Error, "#{node}/#{app} is already connected in this program"
+      end
+      check_ms = ::Asterism.time_ms("Asterism.connect check_timeout:", check_timeout, nil, nil,
+                                    (::Asterism::CHECK_TIMEOUT * 1000).round)
+      opts = { mode: mode, listen: listen }
+      opts[:config] = config unless config.nil?
+      opts[:connect_timeout] = connect_timeout unless connect_timeout.nil?
+      begin
+        s = ::Asterism::Zenoh::Session.open(locator, **opts)
+      rescue ::Asterism::Zenoh::Error => e
+        raise ::Asterism::Disconnected, e.message
+      end
+      root = ::Asterism::ROOT
+      begin
+        if already_there?(s, node, app, check_ms)
+          s.close
+          raise ::Asterism::Error, "#{node}/#{app} is already on the network"
+        end
+        @app_token = s.liveliness("#{root}/#{node}/#{app}")
+        @queryable = s.queryable("#{root}/#{node}/#{app}/**", depth: 32)
+        @watch = s.liveliness_watch("#{root}/**", depth: ::Asterism.watch_depth)
+        @profile_queryable = s.queryable("#{root}/#{node}/#{::Asterism::Profile::KEY}", depth: 4)
+      rescue ::Asterism::Zenoh::Error => e
+        s.close
+        raise ::Asterism::Disconnected, e.message
+      end
+      s.extend(::Asterism::SharedSession) # connection.session: only the connection closes it
+      @session = s
+      @node_id = node
+      @app = app
+      @objects = {}  # name => [object, {method name => arity}, token, caller keyword or nil,
+                     #          {method name => meta fields}, the object's doc or nil]
+      @alive = {}    # "node/app/object" => node (from liveliness)
+      @apps = {}     # "node/app" => node (from liveliness)
+      @proxies = {}
+      @lost = nil
+      @known = []    # the other nodes told to on_join so far
+      @known_set = {} # the same, as node => true
+      @known_apps = {} # "node/app" => true: the other applications told to on_app_join
+      @node_list = [node] # what nodes returns (this node first), rebuilt on a change
+      @nodes_changed = false # liveliness changed since tell_nodes last compared
+      @was_reconnecting = false
+      @status = nil
+      @status_put = nil
+      @types = {}
+      @topics = {}
+      @subscriptions = []
+      @pubs_put = nil
+      @app_queryable = nil
+      ::Asterism.register(self)
+      tell_profile # for those who follow the profiles (the reply is the queryable's)
+    end
+
+    # Whether node/app is alive already (its application token or an object:
+    # a second copy of the same application). Waits for the answer (a router
+    # answers at once), at most check_ms. @api private
+    def already_there?(s, node, app, check_ms = 1500)
+      get_ms = check_ms > 1000 ? check_ms - 500 : check_ms
+      g = s.liveliness_get("#{::Asterism::ROOT}/#{node}/#{app}/**", timeout_ms: get_ms)
+      t0 = ::Asterism.now_ms
+      found = false
+      while true
+        s.poll
+        ended = g.done? # before taking the replies (see Future#collect)
+        found = true if g.each_reply.size > 0
+        break if found || ended || ::Asterism.now_ms - t0 > check_ms
+        ::Asterism.pause(::Asterism::WAIT_STEP_MS)
+      end
+      found
+    end
+
+    def connected?
+      return false if @session.nil?
+      if @session.closed?
+        lost("the connection was lost")
+        return false
+      end
+      true
+    end
+
+    # True while the connection is lost and the Zenoh binding opens it again
+    # by itself (a client of a router: zenoh-pico built with reconnection on
+    # the boards, zenoh-c on CRuby). connected? stays true meanwhile, and once
+    # the router is back everything declared before is there again: the
+    # application token, the exposed objects, the liveliness watch, the
+    # topics, and what the application declared on its session. Meanwhile
+    # the other nodes leave (on_leave) and join again after it, calls raise
+    # Disconnected or time out, and puts reach nobody.
+    def reconnecting?
+      s = @session
+      return false if s.nil?
+      s.respond_to?(:reconnecting?) ? s.reconnecting? : false
+    end
+
+    # "<node>/<app>": this application's path.
+    def path
+      "#{@node_id}/#{@app}"
+    end
+
+    # Why the connection went away (nil while connected or after close).
+    def lost_reason
+      @lost
+    end
+
+    # Closes the connection (and with it every exposed object, topic and
+    # subscription), and forgets the on_join / on_leave blocks. Idempotent.
+    # A closed connection is not opened again: Asterism.connect makes a new
+    # one.
+    def close
+      release
+      @known = nil
+      @known_apps = nil
+      @on_join = nil
+      @on_leave = nil
+      @on_app_join = nil
+      @on_app_leave = nil
+      ::Asterism.unregister(self)
+      nil
+    end
+
+    # @api private
+    def release
+      s = @session
+      @session = nil
+      @objects = {}
+      @alive = {}
+      @apps = {}
+      @node_list = nil
+      @nodes_changed = true
+      @proxies = {}
+      ::Asterism.close_session(s) if s
+      @app_token = nil
+      @queryable = nil
+      @watch = nil
+      @profile_queryable = nil
+      @app_queryable = nil
+      @status_put = nil
+      release_data
+    end
+
+    # The Zenoh session of the connection (an Asterism::Zenoh::Session), for
+    # what the object layer does not do: put and subscribe, a ROS 2 node
+    # (Asterism::ROS::Node.new(net.session, ...)), anything of the Zenoh
+    # API. A ROS 2 node on this session is part of this application's node
+    # (the same Zenoh ID).
+    #
+    # The session stays the connection's: its close does nothing (it warns
+    # once); Connection#close closes it, and with it everything declared on
+    # it (the application's subscribers, publishers, ROS 2 nodes). Polling
+    # it (session.poll, node.poll) is fine: Connection#poll polls it too,
+    # each entity keeps what came for it. Raises Disconnected when not
+    # connected (as the calls do).
+    def session
+      raise ::Asterism::Disconnected, (@lost || "not connected") unless connected?
+      @session
+    end
+
+    # @api private: the session without the check of a lost connection.
+    def session!
+      raise ::Asterism::Disconnected, (@lost || "not connected") unless @session
+      @session
+    end
+
+    # The connection went away: closed, but the next poll still tells
+    # on_leave about every node known until then.
+    # @api private
+    def lost(reason)
+      @lost = reason
+      release
+    end
+
+    def inspect
+      state = if @session then ""
+              elsif @lost then " lost"
+              else " closed"
+              end
+      "#<Asterism::Connection #{@node_id}/#{@app}#{state}>"
+    end
+
+    def to_s
+      inspect
+    end
+
+    # ---------------------------------------------------------- exposing
+
+    # Makes obj callable from other machines as <node>/<app>/<name>. Only the
+    # listed methods can be called. methods: is an Array of names, or a Hash
+    # name => number of arguments (checked before calling; -1 for any), or
+    # name => {args: [names], doc: "text"} (docs/protocol.md 5): the
+    # arguments' names (their number is the number checked, unless arity:
+    # says otherwise) and what the method does, both told in the meta for
+    # the readers that show them (asterism mcp, the command line). doc: a
+    # text about the object itself, also in the meta.
+    # caller: a keyword name (caller: :from): each call passes the calling
+    # node's ID (current_call.from) to the method as that keyword, and a
+    # call that brings the keyword itself is refused (an "arguments"
+    # error), so the value is always the one Asterism took from the call.
+    def expose(name, obj, methods:, caller: nil, doc: nil)
+      s = session!
+      name = ::Asterism.check_name("object", name)
+      table = {}
+      info = {}
+      if methods.is_a?(Hash)
+        methods.each do |m, n|
+          if n.is_a?(Hash)
+            d = ::Asterism.method_doc(m, n)
+            table[m.to_s] = d[0]
+            info[m.to_s] = d[1]
+          else
+            table[m.to_s] = n.to_i
+          end
+        end
+      else
+        methods.each { |m| table[m.to_s] = -1 }
+      end
+      raise ArgumentError, "no method to expose" if table.empty?
+      unless doc.nil?
+        raise ArgumentError, "doc: expects a String, got #{doc.class}" unless doc.is_a?(String)
+        raise ArgumentError, "doc: at most #{::Asterism::DOC_MAX} bytes" if doc.bytesize > ::Asterism::DOC_MAX
+      end
+      table.each_key do |m|
+        raise ArgumentError, "#{obj.class} has no public method #{m}" unless obj.respond_to?(m)
+      end
+      kw = nil
+      unless caller.nil?
+        unless caller.is_a?(Symbol) || caller.is_a?(String)
+          raise ArgumentError, "caller: expects a keyword name (caller: :from), got #{caller.inspect}"
+        end
+        kw = caller.to_s
+        raise ArgumentError, "caller: expects a keyword name (caller: :from), got #{caller.inspect}" if kw.empty?
+      end
+      unexpose(name)
+      token = s.liveliness("#{::Asterism::ROOT}/#{@node_id}/#{@app}/#{name}")
+      @objects[name] = [obj, table, token, kw, info, doc]
+      "#{@node_id}/#{@app}/#{name}"
+    rescue ::Asterism::Zenoh::Error => e
+      raise ::Asterism::Disconnected, e.message
+    end
+
+    def unexpose(name)
+      entry = @objects ? @objects.delete(name.to_s) : nil
+      entry[2].close if entry
+      !entry.nil?
+    end
+
+    def exposed
+      @objects ? @objects.keys : []
+    end
+
+    # ---------------------------------------------------------- polling
+
+    # Call from the application's update loop. Answers the calls that came
+    # in, follows who is alive, calls the on_join / on_leave blocks and hands
+    # the values that came to the subscriptions' blocks (subscribe).
+    # false once the connection is closed. (Asterism.poll_all polls every
+    # connection of the program.)
+    #
+    # Cheap when nothing came: each queue is looked at by its count first,
+    # and the list of nodes (and the comparison behind on_join / on_leave)
+    # is made again only after a liveliness change.
+    def poll
+      ok = @session ? pump : false
+      tell_nodes
+      deliver_samples if @session
+      # A lost connection leaves the program once on_leave told everything.
+      ::Asterism.unregister(self) if @session.nil? && @known.nil?
+      ok
+    end
+
+    # ---------------------------------------------------------- nodes coming and going
+
+    # on_join { |node| }: another node appeared (one of its applications or
+    # objects). The nodes there already join on the first polls after
+    # connecting. on_leave { |node| }: a node is gone (no token and no object
+    # left); when the connection is lost, every node known until then leaves.
+    #
+    # The blocks run from poll only, never from the polling inside a
+    # waiting call. What a block raises comes out of poll (on CRuby with a
+    # receiving thread: to on_error). close forgets them.
+    def on_join(&blk)
+      raise ArgumentError, "on_join needs a block" unless blk
+      (@on_join ||= []) << blk
+      self
+    end
+
+    def on_leave(&blk)
+      raise ArgumentError, "on_leave needs a block" unless blk
+      (@on_leave ||= []) << blk
+      self
+    end
+
+    # Removes a block given to on_join / on_leave (keep the Proc to remove
+    # it: h = proc { |n| ... }; net.on_join(&h); net.off_join(h)).
+    # on_* adds a block; on_error (CRuby) is the only one that replaces.
+    def off_join(blk)
+      @on_join.delete(blk) if @on_join
+      self
+    end
+
+    def off_leave(blk)
+      @on_leave.delete(blk) if @on_leave
+      self
+    end
+
+    # on_app_join { |node, app| }: an application of another node appeared
+    # (its token asterism/<node>/<app>); on_app_leave { |node, app| }: it is
+    # gone. A node may run several applications (and one program may be
+    # several of them): each comes and goes on its own, and the node stays
+    # (on_join / on_leave) while one of them or an object is there. The
+    # applications there already join on the first polls after connecting;
+    # when the connection is lost, every application known until then
+    # leaves. Called from poll, as on_join; close forgets them.
+    def on_app_join(&blk)
+      raise ArgumentError, "on_app_join needs a block" unless blk
+      (@on_app_join ||= []) << blk
+      self
+    end
+
+    def on_app_leave(&blk)
+      raise ArgumentError, "on_app_leave needs a block" unless blk
+      (@on_app_leave ||= []) << blk
+      self
+    end
+
+    def off_app_join(blk)
+      @on_app_join.delete(blk) if @on_app_join
+      self
+    end
+
+    def off_app_leave(blk)
+      @on_app_leave.delete(blk) if @on_app_leave
+      self
+    end
+
+    # Compares the applications alive now with those told before and calls
+    # the on_app_* blocks for the difference (this application left out).
+    # @api private
+    def tell_apps
+      known = @known_apps
+      return if known.nil?
+      now = {}
+      if @session
+        own = "#{@node_id}/#{@app}"
+        keys = @apps.keys
+        i = 0
+        while i < keys.size
+          now[keys[i]] = true unless keys[i] == own
+          i += 1
+        end
+      end
+      joined = []
+      left = []
+      keys = now.keys
+      i = 0
+      while i < keys.size
+        joined << keys[i] unless known[keys[i]]
+        i += 1
+      end
+      keys = known.keys
+      i = 0
+      while i < keys.size
+        left << keys[i] unless now[keys[i]]
+        i += 1
+      end
+      @known_apps = @session ? now : nil
+      tell_apps_each("on_app_join", @on_app_join, joined)
+      tell_apps_each("on_app_leave", @on_app_leave, left)
+    end
+
+    # @api private
+    def tell_apps_each(where, blocks, names)
+      return if blocks.nil? || names.empty?
+      i = 0
+      while i < names.size
+        cut = names[i].index("/")
+        node = names[i][0, cut]
+        app = names[i][cut + 1, names[i].size]
+        j = 0
+        while j < blocks.size
+          tell(where, blocks[j], node, app)
+          j += 1
+        end
+        i += 1
+      end
+    end
+
+    # Compares the nodes alive now with those told before and calls the
+    # blocks for the difference.
+    # @api private
+    def tell_nodes
+      known = @known
+      return if known.nil?
+      # Nothing came on the liveliness watch since the last comparison (and
+      # the connection is neither new nor lost): nothing can have changed.
+      return unless @nodes_changed
+      @nodes_changed = false
+      tell_apps
+      now = []
+      now_set = {}
+      if @session
+        list = node_list
+        i = 1 # list[0] is this node
+        while i < list.size
+          n = list[i]
+          now << n
+          now_set[n] = true
+          i += 1
+        end
+      end
+      known_set = @known_set || {}
+      joined = []
+      left = []
+      i = 0
+      while i < now.size
+        joined << now[i] unless known_set[now[i]]
+        i += 1
+      end
+      i = 0
+      while i < known.size
+        left << known[i] unless now_set[known[i]]
+        i += 1
+      end
+      # After a loss, everything has been told: nothing more to compare.
+      if @session
+        @known = now
+        @known_set = now_set
+      else
+        @known = nil
+        @known_set = nil
+      end
+      tell_each("on_join", @on_join, joined)
+      tell_each("on_leave", @on_leave, left)
+    end
+
+    # While loops, not each with a block: the blocks are the application's,
+    # and nothing else stands between them and the update loop on the stack.
+    # @api private
+    def tell_each(where, blocks, names)
+      return if blocks.nil? || names.empty?
+      i = 0
+      while i < names.size
+        j = 0
+        while j < blocks.size
+          tell(where, blocks[j], names[i])
+          j += 1
+        end
+        i += 1
+      end
+    end
+
+    # One block for one node, or one application (CRuby routes what it
+    # raises to on_error).
+    # @api private
+    def tell(_where, blk, node, app = nil)
+      if app.nil?
+        blk.call(node)
+      else
+        blk.call(node, app)
+      end
+    end
+
+    # Answers what came (calls, profiles) and follows liveliness; false
+    # once the connection is gone. @api private
+    def pump
+      s = @session
+      return false unless s
+      unless s.poll
+        lost("the connection was lost")
+        return false
+      end
+      back_again(s)
+      answer_calls
+      answer_profile
+      answer_app_profile
+      follow_liveliness
+      !@session.nil?
+    rescue ::Asterism::Zenoh::Error => e
+      lost_if_closed(e.message)
+      !@session.nil?
+    end
+
+    # After the binding opened a lost connection again: tell the profile, the
+    # status and the topics again (a put made while the router was away
+    # reached nobody).
+    # @api private
+    def back_again(s)
+      now = s.respond_to?(:reconnecting?) && s.reconnecting?
+      was = @was_reconnecting
+      @was_reconnecting = now
+      return unless was && !now
+      tell_profile
+      tell_status(true)
+      tell_pubs(true)
+    end
+
+    # A Zenoh error during a call or a poll: the connection is gone only when
+    # the session says it is closed. While the binding reconnects, the
+    # session (and everything declared on it) stays.
+    # @api private
+    def lost_if_closed(reason)
+      s = @session
+      lost(reason) if s.nil? || s.closed?
+    end
+
+    # Polls until the block is true. Answers incoming calls meanwhile, on
+    # this connection and on the program's others.
+    # @api private
+    def wait_until
+      ::Asterism.enter_wait
+      begin
+        until yield
+          break unless pump
+          ::Asterism.pump_others(self)
+          break if yield
+          ::Asterism.pause(::Asterism::WAIT_STEP_MS)
+        end
+      ensure
+        ::Asterism.leave_wait
+      end
+    end
+
+    # @api private
+    def follow_liveliness
+      w = @watch
+      return unless w && w.pending > 0
+      # Array forms instead of blocks called from C (see Future#collect).
+      events = w.each_pending
+      @nodes_changed = true if events.size > 0
+      if events.size > 0 && w.dropped > 0
+        ::Asterism.warn_once(w, "asterism: #{w.dropped} liveliness changes dropped (more than " \
+                                "#{::Asterism.watch_depth} at once); each and nodes may miss some objects")
+      end
+      cut = ::Asterism::ROOT.length + 1
+      i = 0
+      while i < events.size
+        key = events[i][0]
+        alive = events[i][1]
+        i += 1
+        rest = key[cut, key.length].to_s
+        parts = rest.split("/")
+        if parts.size == 2 # an application: asterism/<node>/<app>
+          if alive
+            @apps[rest] = parts[0]
+          else
+            @apps.delete(rest)
+          end
+        elsif parts.size == 3 # an object: asterism/<node>/<app>/<object>
+          if alive
+            @alive[rest] = parts[0]
+          else
+            @alive.delete(rest)
+          end
+        end
+      end
+      @node_list = nil
+    end
+
+    # The node IDs alive now, this one first.
+    def nodes
+      return [] unless @session
+      node_list.dup
+    end
+
+    # The list behind nodes, made again only after a liveliness change (the
+    # caller must not change it). @api private
+    def node_list
+      list = @node_list
+      return list if list
+      list = [@node_id]
+      seen = { @node_id => true }
+      names = @apps.values
+      i = 0
+      while i < names.size
+        n = names[i]
+        unless seen[n]
+          seen[n] = true
+          list << n
+        end
+        i += 1
+      end
+      owners = @alive.values
+      i = 0
+      while i < owners.size
+        n = owners[i]
+        unless seen[n]
+          seen[n] = true
+          list << n
+        end
+        i += 1
+      end
+      @node_list = list
+    end
+
+    # The exposed objects alive now whose <node>/<app>/<object> matches the
+    # pattern (* is one chunk, ** any number), this application's own
+    # included. With a block, yields a proxy for each and returns their
+    # number (1.0 will return the connection instead, as Ruby's each
+    # returns its receiver; use the Array form for the count); else returns
+    # them (an Array).
+    def each(pattern = "**")
+      paths = []
+      if @session
+        seen = {}
+        @objects.each_key do |name|
+          path = "#{@node_id}/#{@app}/#{name}"
+          if ::Asterism.glob?(pattern, path)
+            paths << path
+            seen[path] = true
+          end
+        end
+        @alive.each_key { |path| paths << path if !seen[path] && ::Asterism.glob?(pattern, path) }
+      end
+      proxies = paths.map { |path| self[path] }
+      return proxies unless block_given?
+      proxies.each { |px| yield px }
+      proxies.size
+    end
+
+    # A proxy for <node>/<app>/<object> (calls go out on this connection).
+    # Nothing is sent until a method is called on it. timeout: the time
+    # limit of its calls in seconds (2.0), or timeout_ms:. (net[path, ms],
+    # the time as a positional argument, is deprecated.)
+    def [](path, *args, timeout: nil, timeout_ms: nil)
+      if args.size > 1
+        raise ArgumentError, "Connection#[]: wrong number of arguments (given #{args.size + 1}, expected 1)"
+      end
+      timeout_ms = ::Asterism.time_ms("Connection#[]", timeout, timeout_ms, args[0], ::Asterism::DEFAULT_TIMEOUT_MS)
+      ::Asterism.split_path(path)
+      @proxies ||= {}
+      key = "#{path}|#{timeout_ms}"
+      @proxies[key] ||= ::Asterism::Proxy.new(self, path.to_s, timeout_ms)
+    end
+
+    # ---------------------------------------------------------- calling
+
+    # Starts a call; returns a Future. Raises EncodeError (before sending)
+    # and Disconnected.
+    # @api private
+    def call_async(path, method, args, kwargs, timeout_ms)
+      parts = ::Asterism.split_path(path)
+      payload = ::Asterism::Codec.pack(::Asterism.request(method, args, kwargs))
+      if parts[0] == @node_id && parts[1] == @app && @session
+        # This application's own object: no network (a session does not see
+        # its own queryable), same encoding and checks as a remote call.
+        return ::Asterism::Future.answered(path, method, dispatch(parts[2], payload, @node_id, :local))
+      end
+      begin
+        s = session!
+        # The caller's node ID is the key's last chunk (docs/protocol.md 4.1).
+        g = s.get("#{::Asterism::ROOT}/#{path}/call/#{@node_id}", timeout_ms: timeout_ms, payload: payload)
+      rescue ::Asterism::Zenoh::Error => e
+        lost_if_closed(e.message)
+        raise ::Asterism::Disconnected, e.message
+      end
+      ::Asterism::Future.new(self, path, method, g, ::Asterism.now_ms + timeout_ms, timeout_ms)
+    end
+
+    # @api private
+    def call(path, method, args, kwargs, timeout_ms)
+      call_async(path, method, args, kwargs, timeout_ms).value
+    end
+
+    # The meta reply of path: {"methods" => [{"name" => n, "arity" => a}, ...]}.
+    # @api private
+    def meta(path, timeout_ms = ::Asterism::DEFAULT_TIMEOUT_MS)
+      parts = ::Asterism.split_path(path)
+      if parts[0] == @node_id && parts[1] == @app && @session
+        m = meta_of(parts[2])
+        unless m
+          raise ::Asterism::RemoteError.new("NameError", "no object #{parts[2]} exposed by #{@node_id}/#{@app}",
+                                            "no_object")
+        end
+        return m
+      end
+      begin
+        g = session!.get("#{::Asterism::ROOT}/#{path}/meta", timeout_ms: timeout_ms)
+      rescue ::Asterism::Zenoh::Error => e
+        lost_if_closed(e.message)
+        raise ::Asterism::Disconnected, e.message
+      end
+      f = ::Asterism::Future.new(self, path, "meta", g, ::Asterism.now_ms + timeout_ms, timeout_ms)
+      f.raw_value
+    end
+
+    # ---------------------------------------------------------- answering
+
+    # The call being answered now on this connection (an
+    # Asterism::CurrentCall: who called, which object and method), while an
+    # exposed method runs for a call; nil outside one. Calls answered while
+    # that method waits for its own call are on top of it until they end.
+    def current_call
+      stack = call_stack
+      stack.empty? ? nil : stack[stack.size - 1]
+    end
+
+    # The calls being answered, innermost last (CRuby: per thread).
+    # @api private
+    def call_stack
+      @call_stack ||= []
+    end
+
+    # @api private
+    def answer_calls
+      qa = @queryable
+      return unless qa && qa.pending > 0
+      # Without a block, so that a handler that waits (and so polls) does not
+      # re-enter the queryable's iteration.
+      queries = qa.each_pending
+      i = 0
+      while i < queries.size
+        q = queries[i]
+        i += 1
+        begin
+          answer(q)
+        ensure
+          begin
+            q.finish
+          rescue ::Asterism::Zenoh::Error
+            # the session went away meanwhile
+          end
+        end
+      end
+    end
+
+    # asterism/<node>/<app>/<object>/call/<caller> and
+    # asterism/<node>/<app>/<object>/meta; the node and app may come as
+    # wildcards (the query matched this application's queryable).
+    # @api private
+    def answer(q)
+      parts = q.key.split("/")
+      n = parts.size
+      return unless n == 5 || n == 6
+      obj = parts[3]
+      kind = parts[4]
+      prefix = "#{::Asterism::ROOT}/#{@node_id}/#{@app}/"
+      if kind == "meta"
+        return unless n == 5
+        names = obj == "*" ? @objects.keys : [obj]
+        names.each do |nm|
+          m = meta_of(nm)
+          q.reply("#{prefix}#{nm}/meta", ::Asterism::Codec.pack(m)) if m
+        end
+      elsif kind == "call" && ::Asterism.valid_name?(obj)
+        if n == 5
+          # A protocol 0 call (no caller chunk): refused, so that its sender
+          # learns why at once instead of waiting.
+          q.reply("#{prefix}#{obj}/call",
+                  ::Asterism.error_reply("protocol", "Asterism::Error",
+                                         "#{@node_id}/#{@app} speaks Asterism protocol #{::Asterism::PROTOCOL}: call " \
+                                         "asterism/<node>/<app>/<object>/call/<caller> with a map " \
+                                         "{\"method\", \"args\", \"kwargs\"} (asterism 0.7.0 and later)"))
+        elsif ::Asterism.valid_name?(parts[5])
+          q.reply("#{prefix}#{obj}/call/#{parts[5]}", dispatch(obj, q.payload, parts[5], :claimed))
+        end
+      end
+    end
+
+    # @api private
+    def meta_of(name)
+      entry = @objects[name]
+      return nil unless entry
+      list = []
+      info = entry[4] || {}
+      entry[1].each do |m, n|
+        e = { "name" => m, "arity" => n }
+        extra = info[m]
+        extra.each { |k, v| e[k] = v } if extra
+        list << e
+      end
+      out = { "methods" => list }
+      out["doc"] = entry[5] if entry[5]
+      out
+    end
+
+    # Runs a call on an exposed object; returns the packed reply. from is
+    # the caller's node ID, verified how it is known (CurrentCall).
+    # @api private
+    def dispatch(obj_name, payload, from, verified)
+      req = ::Asterism.parse_request(::Asterism::Codec.unpack(payload))
+      return ::Asterism.error_reply("malformed", "ArgumentError", ::Asterism::MALFORMED) unless req
+      entry = @objects[obj_name]
+      unless entry
+        return ::Asterism.error_reply("no_object", "NameError", "no object #{obj_name} exposed by #{@node_id}/#{@app}")
+      end
+      name = req[0]
+      args = req[1]
+      kw = req[2]
+      arity = entry[1][name]
+      if arity.nil?
+        return ::Asterism.error_reply("not_exposed", "NoMethodError",
+                                      "undefined method '#{name}' for #{@node_id}/#{@app}/#{obj_name} (not exposed)")
+      end
+      if arity >= 0 && args.size != arity
+        return ::Asterism.error_reply("arguments", "ArgumentError",
+                                      "wrong number of arguments (given #{args.size}, expected #{arity})")
+      end
+      ckw = entry[3]
+      if ckw
+        if kw.key?(ckw)
+          return ::Asterism.error_reply("arguments", "ArgumentError",
+                                        "#{ckw}: is given by Asterism, not by the caller " \
+                                        "(#{@node_id}/#{@app}/#{obj_name} is exposed with caller: :#{ckw})")
+        end
+        kw[ckw] = from
+      end
+      stack = call_stack
+      stack << ::Asterism::CurrentCall.new(from, verified, obj_name, name)
+      begin
+        value = ::Asterism.invoke(entry[0], name, args, kw)
+      rescue => e
+        return ::Asterism.error_reply(::Asterism.nesting_error?(e) ? "nesting" : "raised", e.class.to_s, e.message)
+      ensure
+        stack.pop
+      end
+      begin
+        ::Asterism::Codec.pack({ "value" => value })
+      rescue ::Asterism::EncodeError => e
+        ::Asterism.error_reply("unsendable", "Asterism::EncodeError", "the return value: #{e.message}")
+      end
+    end
   end
 end

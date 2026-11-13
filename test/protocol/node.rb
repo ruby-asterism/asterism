@@ -42,9 +42,9 @@ class Subject
     Object.new
   end
 
-  # Who called: [from, verified, object, method] (Asterism.current_call).
+  # Who called: [from, verified, object, method] (Connection#current_call).
   def whoami
-    c = Asterism.current_call
+    c = $net.current_call
     [c.from, c.verified.to_s, c.object, c.method]
   end
 
@@ -72,34 +72,36 @@ rescue Asterism::Error => e
   ["failed", e.message]
 end
 
-Asterism.profile(name: "iut", icon: icon)
-Asterism.status({ "st" => "wait", "n" => 1 })
-Asterism.define_type("conf/stroke", [["pts", "int[]"], ["color", "str"], ["at", 2], ["path", "vector3[]"],
-                                     ["pose", "pose"], ["grid", "int[][]"], ["extra", "any"]], desc: "one stroke")
+# The profile of the program's nodes before connecting: the one put at
+# connect has it already.
+Asterism.profile_defaults(name: "iut", icon: icon)
 if mode == "peer"
-  Asterism.connect(locator, node: "iut", app: "conf", mode: :peer)
+  $net = Asterism.connect(locator, node: "iut", app: "conf", mode: :peer)
 else
-  Asterism.connect(locator, node: "iut", app: "conf")
+  $net = Asterism.connect(locator, node: "iut", app: "conf")
 end
-imu = Asterism.publish("imu", type: :vector3, unit: "m/s2", desc: "acceleration", ts: true)
-strokes = Asterism.publish("board1/strokes", type: "conf/stroke")
-cam = Asterism.publish("camera", type: :image, encoding: "image/jpeg")
+$net.status({ "st" => "wait", "n" => 1 })
+$net.define_type("conf/stroke", [["pts", "int[]"], ["color", "str"], ["at", 2], ["path", "vector3[]"],
+                                 ["pose", "pose"], ["grid", "int[][]"], ["extra", "any"]], desc: "one stroke")
+imu = $net.publish("imu", type: :vector3, unit: "m/s2", desc: "acceleration", ts: true)
+strokes = $net.publish("board1/strokes", type: "conf/stroke")
+cam = $net.publish("camera", type: :image, encoding: "image/jpeg")
 # What the subscription got: [path, value, seq, time, encoding, lost,
 # restarted] (the bytes of a value with an encoding as a bin).
 got = []
-Asterism.subscribe("drv/conf/**") do |v, info|
+$net.subscribe("drv/conf/**") do |v, info|
   v = Asterism::Profile.binary(v) unless info.encoding == "msgpack"
   got << [info.path, v, info.seq, info.time, info.encoding, info.lost, info.restarted?]
 end
-Asterism.expose("subject", Subject.new,
+$net.expose("subject", Subject.new,
                 methods: { echo: 1, kw: 1, add: 2, boom: 0, any: -1, "ok?" => 0, unsendable: 0, whoami: 0 })
-Asterism.expose("other", Other.new, methods: { ping: { args: [], doc: "Answers pong." } }, doc: "Another object.")
+$net.expose("other", Other.new, methods: { ping: { args: [], doc: "Answers pong." } }, doc: "Another object.")
 puts "ready"
 
 # The driver declares its object rec once it has sent its own calls.
 t0 = Asterism.now_ms
-while Asterism.each("drv/conf/rec").size == 0
-  Asterism.poll
+while $net.each("drv/conf/rec").size == 0
+  $net.poll
   if Asterism.now_ms - t0 > 60_000
     puts "FAIL: the driver's rec never appeared"
     exit 1
@@ -107,7 +109,7 @@ while Asterism.each("drv/conf/rec").size == 0
   Asterism.pause(2)
 end
 
-rec = Asterism["drv/conf/rec", timeout: 1.5]
+rec = $net["drv/conf/rec", timeout: 1.5]
 steps = [
   ["plain", -> { rec.plain }],
   ["arguments", -> { rec.args(1, "two", 3.0, nil, true, false) }],
@@ -128,23 +130,23 @@ steps = [
   ["no answer", -> { rec.silent }],
   ["two answers, the first wins", -> { rec.twice }],
   ["meta", -> { [rec.respond_to?(:plain), rec.respond_to?(:x?), rec.respond_to?(:nope)] }],
-  ["profile without the icon", -> { Asterism.profile_of("drv", icon: false, timeout: 1.5) }],
-  ["profile with the icon", -> { Asterism.profile_of("drv", timeout: 1.5) }],
-  ["profile without a protocol", -> { Asterism.profile_of("drv", icon: false, timeout: 1.5) }],
-  ["profile that is not one", -> { Asterism.profile_of("drv", icon: false, timeout: 1.5) }],
-  ["change the profile", -> { Asterism.profile(name: "iut 2"); nil }],
-  ["status of another app", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
-  ["status that is not one", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
-  ["status too large", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
-  ["status left out", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
-  ["app profile that is not a map", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
-  ["no status", -> { Asterism.status_of("drv", "conf", timeout: 1.5) }],
-  ["topics of another app", -> { Asterism.pubs_of("drv", "conf", timeout: 1.5) }],
-  ["no topics", -> { Asterism.pubs_of("drv", "conf", timeout: 1.5) }],
-  ["topics of nobody", -> { Asterism.pubs_of("drv", "conf", timeout: 1.5) }],
-  ["types of another app", -> { Asterism.types_of("drv", "conf", timeout: 1.5) }],
-  ["change the status", -> { Asterism.status({ "st" => "play", "n" => 1 }); nil }],
-  ["the same status again", -> { Asterism.status({ "st" => "play", "n" => 1 }); nil }],
+  ["profile without the icon", -> { $net.profile_of("drv", icon: false, timeout: 1.5) }],
+  ["profile with the icon", -> { $net.profile_of("drv", timeout: 1.5) }],
+  ["profile without a protocol", -> { $net.profile_of("drv", icon: false, timeout: 1.5) }],
+  ["profile that is not one", -> { $net.profile_of("drv", icon: false, timeout: 1.5) }],
+  ["change the profile", -> { $net.profile(name: "iut 2"); nil }],
+  ["status of another app", -> { $net.status_of("drv", "conf", timeout: 1.5) }],
+  ["status that is not one", -> { $net.status_of("drv", "conf", timeout: 1.5) }],
+  ["status too large", -> { $net.status_of("drv", "conf", timeout: 1.5) }],
+  ["status left out", -> { $net.status_of("drv", "conf", timeout: 1.5) }],
+  ["app profile that is not a map", -> { $net.status_of("drv", "conf", timeout: 1.5) }],
+  ["no status", -> { $net.status_of("drv", "conf", timeout: 1.5) }],
+  ["topics of another app", -> { $net.pubs_of("drv", "conf", timeout: 1.5) }],
+  ["no topics", -> { $net.pubs_of("drv", "conf", timeout: 1.5) }],
+  ["topics of nobody", -> { $net.pubs_of("drv", "conf", timeout: 1.5) }],
+  ["types of another app", -> { $net.types_of("drv", "conf", timeout: 1.5) }],
+  ["change the status", -> { $net.status({ "st" => "play", "n" => 1 }); nil }],
+  ["the same status again", -> { $net.status({ "st" => "play", "n" => 1 }); nil }],
   ["put values", lambda do
     imu.put([1.5, -2, 9.8])
     cam.put("\xff\xd8\xff\xe0JFIF\xff\xd9".b)
@@ -157,7 +159,7 @@ steps = [
     rec.feed
     t0 = Asterism.now_ms
     while got.size < 10 && Asterism.now_ms - t0 < 3000
-      Asterism.poll
+      $net.poll
       Asterism.pause(2)
     end
     got
@@ -185,9 +187,9 @@ end
 # A moment for the last answers to go out before the tokens are withdrawn.
 t0 = Asterism.now_ms
 while Asterism.now_ms - t0 < 300
-  Asterism.poll
+  $net.poll
   Asterism.pause(2)
 end
-Asterism.close
+$net.close
 puts "done"
 exit(fails == 0 ? 0 : 1)

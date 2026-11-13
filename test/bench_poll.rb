@@ -1,7 +1,7 @@
-# How heavy one Asterism.poll is, by the number of nodes and objects on the
+# How heavy one Connection#poll is, by the number of nodes and objects on the
 # network (rake bench:poll; not a test: it prints a table). The other nodes
 # and objects are liveliness tokens declared by a second session of this
-# process, which is all Asterism.poll sees of them.
+# process, which is all Connection#poll sees of them.
 #
 #   ruby -I lib -I ../asterism-zenoh/lib test/bench_poll.rb [polls]
 #
@@ -30,7 +30,7 @@ def wait_until(limit = 5.0)
   t = Time.now
   until yield
     raise "timed out" if Time.now - t > limit
-    Asterism.poll
+    $net.poll
     sleep 0.002
   end
 end
@@ -38,19 +38,19 @@ end
 puts format("%-6s %-8s %12s %12s %14s %12s", "nodes", "objects", "idle us", "idle allocs", "change us", "change allocs")
 SIZES.each do |nodes, objects|
   loc = "tcp/127.0.0.1:#{free_port}"
-  Asterism.connect(nil, node: "bench", app: "b", mode: :peer, listen: loc)
+  $net = Asterism.connect(nil, node: "bench", app: "b", mode: :peer, listen: loc)
   joined = 0
-  Asterism.on_join { |_n| joined += 1 }
+  $net.on_join { |_n| joined += 1 }
   other = Asterism::Zenoh::Session.open(loc, mode: :peer)
   tokens = []
   nodes.times { |i| tokens << other.liveliness("asterism/n#{i}/main") }
   objects.times { |i| tokens << other.liveliness("asterism/n#{i % [nodes, 1].max}/app/o#{i}") }
-  wait_until { Asterism.nodes.size == nodes + 1 && Asterism.each("*/app/*").size == objects && joined == nodes }
+  wait_until { $net.nodes.size == nodes + 1 && $net.each("*/app/*").size == objects && joined == nodes }
 
   GC.disable
   a0 = allocated
   t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-  POLLS.times { Asterism.poll }
+  POLLS.times { $net.poll }
   idle_us = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0) * 1e6 / POLLS
   idle_alloc = (allocated - a0).to_f / POLLS
   GC.enable
@@ -64,16 +64,16 @@ SIZES.each do |nodes, objects|
     sleep 0.005 # let it arrive before the timed poll
     a0 = allocated
     t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    Asterism.poll
+    $net.poll
     change_us += (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0) * 1e6
     change_alloc += allocated - a0
     tok.close
     sleep 0.005
-    Asterism.poll
+    $net.poll
   end
   puts format("%-6d %-8d %12.1f %12.1f %14.1f %12.1f", nodes, objects, idle_us, idle_alloc,
               change_us / rounds, change_alloc.to_f / rounds)
   tokens.each(&:close)
   other.close
-  Asterism.close
+  $net.close
 end

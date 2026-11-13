@@ -36,6 +36,7 @@ module Asterism
       end
 
       def register(session, runner)
+        return if session.nil?
         @registry_lock.synchronize { @registry[session] = runner }
       end
 
@@ -48,7 +49,7 @@ module Asterism
 
     # session: the Asterism::Zenoh::Session the tasks read from. lock: the
     # Monitor guarding the layer the tasks call into (the object layer has a
-    # process-wide one). on_closed is called once, on the ticking thread,
+    # process-wide one for all its connections). on_closed is called once, on the ticking thread,
     # when the session is found closed.
     def initialize(session, lock: Monitor.new, interval: DEFAULT_INTERVAL, name: "asterism")
       @session = session

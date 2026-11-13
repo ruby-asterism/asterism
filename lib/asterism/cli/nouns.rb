@@ -131,7 +131,7 @@ module Asterism
       code = 0
       connect do |net, _sv|
         q = Queue.new
-        hold net.session.subscribe(Values.key_expr(pattern), depth: 16) { |s| q << [s, Time.now] }
+        hold net.zenoh.subscribe(Values.key_expr(pattern), depth: 16) { |s| q << [s, Time.now] }
         got = pop_until(q, wait)
         if got.nil?
           @err.puts nothing_came(pattern, wait)
@@ -156,7 +156,7 @@ module Asterism
       code = 0
       connect do |net, _sv|
         q = Queue.new
-        hold net.session.subscribe(Values.key_expr(pattern), depth: 256) { |s| q << [s, Time.now] }
+        hold net.zenoh.subscribe(Values.key_expr(pattern), depth: 256) { |s| q << [s, Time.now] }
         seen = 0
         last = {}
         seq = Values::Seq.new
@@ -536,7 +536,7 @@ module Asterism
 
     # The status's puts of one application, cleaned (Status.parse).
     def subscribe_status(net, path)
-      hold(net.session.subscribe("asterism/#{path}/@status") do |sample|
+      hold(net.zenoh.subscribe("asterism/#{path}/@status") do |sample|
         got = ::Asterism::Status.parse(sample.key, sample.payload)
         yield got[2] if got
       end)

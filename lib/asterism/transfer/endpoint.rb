@@ -1,17 +1,23 @@
 # Asterism::Transfer::Endpoint (CRuby): an Inbox answering at
 # <node>/<app>/<object> (default <node>/transfer/inbox, where a Family
-# mruby machine's transfer app answers) on a Zenoh connection of the
-# program's own, beside the application Asterism.connect made.
+# mruby machine's transfer app answers) on a plain Zenoh connection.
 #
-# Asterism's object layer is one application per process; a program whose
-# application has another name (a console, app "console") still wants to
-# receive where the machines send (`asend <node> <file>` sends to
-# <node>/transfer/inbox). The endpoint declares that application's and that
-# object's liveliness tokens and answers its calls and its meta with the
-# object layer's encoding (docs/protocol.md), the caller's node ID from the
-# key passed as from: (caller: :from). Nothing else is exposed there.
+# A program whose application has another name (a console, app "console")
+# still wants to receive where the machines send (`asend <node> <file>`
+# sends to <node>/transfer/inbox). A second Asterism connection does that
+# with the object layer itself:
 #
-#   conn = Asterism::Zenoh.open("tcp/127.0.0.1:7447")   # or Asterism.net.session
+#   rx = Asterism.connect(router, node: "console", app: "transfer")
+#   rx.expose("inbox", inbox, methods: Asterism::Transfer::Inbox::METHODS, caller: :from)
+#
+# The endpoint is the same on a Zenoh connection that is there already
+# (one without an Asterism application of its own): it declares that
+# application's and that object's liveliness tokens and answers its calls
+# and its meta with the object layer's encoding (docs/protocol.md), the
+# caller's node ID from the key passed as from: (caller: :from). Nothing
+# else is exposed there.
+#
+#   conn = Asterism::Zenoh.open("tcp/127.0.0.1:7447")   # or net.zenoh
 #   ep = Asterism::Transfer::Endpoint.new(conn, inbox, node: "console").start
 #   conn.start                                         # its receiving thread answers
 #   loop { ep.tick; sleep 0.5 }

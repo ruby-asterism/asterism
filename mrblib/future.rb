@@ -1,18 +1,22 @@
 module Asterism
   # The answer to a call that is on its way (Proxy#async). done? never
-  # waits; value waits (polling, and answering calls meanwhile) until the
-  # answer or the time limit, then returns the value or raises.
+  # waits; value waits (polling its connection, and answering calls
+  # meanwhile) until the answer or the time limit, then returns the value
+  # or raises.
   class Future
     attr_reader :path, :method_name
 
     # @api private
     def self.answered(path, method, reply)
-      f = new(path, method, nil, 0, 0)
+      f = new(nil, path, method, nil, 0, 0)
       f.set_reply(reply)
       f
     end
 
-    def initialize(path, method, get, deadline_ms, timeout_ms)
+    # connection: the Asterism::Connection the call went out on (nil for an
+    # answer that is there already).
+    def initialize(connection, path, method, get, deadline_ms, timeout_ms)
+      @connection = connection
       @path = path
       @method_name = method.to_s
       @get = get
@@ -42,7 +46,7 @@ module Asterism
     end
 
     # True once the answer came, the time ran out or the connection closed.
-    # Call Asterism.poll in the update loop for it to move on.
+    # Poll the connection in the update loop for it to move on.
     def done?
       collect
       @finished
@@ -65,9 +69,10 @@ module Asterism
 
     # The decoded answer (meta and profile replies are not value maps).
     def raw_value
-      ::Asterism.wait_until { done? } unless done?
+      @connection.wait_until { done? } unless done?
       if @reply.nil?
-        raise ::Asterism::Disconnected, (::Asterism.lost_reason || "not connected") unless ::Asterism.connected?
+        c = @connection
+        raise ::Asterism::Disconnected, (c.lost_reason || "not connected") unless c.connected?
         if @took && @took < @timeout_ms
           # Finished early without a reply: nobody answers that key (the
           # object is not exposed, or its application is gone).
@@ -94,7 +99,7 @@ module Asterism
       # interpreter entry on the C stack, and this runs inside nested waits.
       replies = g.each_reply
       @reply = replies[0][1] if @reply.nil? && replies.size > 0
-      if !@reply.nil? || ended || ::Asterism.now_ms >= @deadline || !::Asterism.connected?
+      if !@reply.nil? || ended || ::Asterism.now_ms >= @deadline || !@connection.connected?
         @finished = true
         @took = ::Asterism.now_ms - @started
       end

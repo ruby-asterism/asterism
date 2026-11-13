@@ -22,7 +22,7 @@ class TestApiCredentials < Minitest::Test
   end
 
   def teardown
-    Asterism.close
+    Asterism.connections.each(&:close)
     @listener&.close
     FileUtils.remove_entry(@dir) if @dir
   end

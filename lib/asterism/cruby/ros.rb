@@ -96,7 +96,7 @@ module Asterism
       end
 
       # Stops spinning, withdraws the nodes and closes the session. On
-      # Asterism's session (ROS::Connection.new(net.session)) it only
+      # an Asterism connection's session (ROS::Connection.new(net.zenoh)) it only
       # withdraws the nodes: the receiving thread and the session stay the
       # object layer's.
       def close

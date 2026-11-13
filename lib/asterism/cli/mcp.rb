@@ -53,7 +53,7 @@ module Asterism
         @call_tools = {}  # tool name => [path, method, arity, meta entry]
         @signature = nil
         @lock = Mutex.new
-        @values = Values::Store.new(alive: ->(app) { !::Asterism.apps(app).empty? })
+        @values = Values::Store.new(alive: ->(app) { !@net.apps(app).empty? })
       end
 
       attr_reader :values
@@ -77,10 +77,10 @@ module Asterism
       # does not match @profile and @status), and the applications that
       # leave (their values are marked).
       def remember_values
-        @net.session.subscribe("#{Values::PREFIX}**", depth: 1024) do |s|
+        @net.zenoh.subscribe("#{Values::PREFIX}**", depth: 1024) do |s|
           @values.put(s.key, s.payload, encoding: s.encoding, attachment: s.attachment)
         end
-        @net.session.liveliness_watch("#{Values::PREFIX}*/*", depth: 1024) do |key, alive|
+        @net.zenoh.liveliness_watch("#{Values::PREFIX}*/*", depth: 1024) do |key, alive|
           @values.left(key.delete_prefix(Values::PREFIX)) unless alive
         end
       end
@@ -333,7 +333,7 @@ module Asterism
         unless @lock.synchronize { @call_tools.any? { |_, t| t[0] == path && t[1] == method } }
           return error("#{path}.#{method} is not callable here (not allowed, or gone)")
         end
-        v = ::Asterism[path, timeout: @survey.timeout].asterism_call(method, *pos, **kw)
+        v = @net[path, timeout: @survey.timeout].asterism_call(method, *pos, **kw)
         text({ "value" => v })
       rescue ::Asterism::RemoteError => e
         error({ "error" => { "kind" => e.remote_kind, "class" => e.remote_class, "message" => e.remote_message } })

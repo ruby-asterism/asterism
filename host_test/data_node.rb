@@ -4,7 +4,7 @@
 #
 #   mruby -r msgpack.rb data_node.rb PORT
 #
-# It defines a type before connecting, publishes imu (vector3, ts) and cam
+# It defines a type, publishes imu (vector3, ts) and cam
 # (image/jpeg), subscribes to cruby/t/** with |v, info| and to cruby/t/n
 # with |v|, and exposes probe: put_imu(n) puts n values on imu, put_cam
 # puts the bytes of a small JPEG-like image, unpublish_cam withdraws cam,
@@ -41,7 +41,7 @@ class Probe
 
   def unpublish_cam
     @cam.close
-    Asterism.published
+    $net.published
   end
 
   def got
@@ -58,26 +58,26 @@ class Probe
   end
 end
 
-Asterism.define_type("mdata/sample", [["id", "int"], ["tags", "str[]"], ["at", :pose], ["trail", "vector3[]"], ["kind", 5]], desc: "a sample")
-Asterism.connect(nil, node: "mdata", app: "t", mode: :peer, listen: "tcp/127.0.0.1:#{port}")
-imu = Asterism.publish("imu", type: :vector3, unit: "m/s2", desc: "acceleration", ts: true)
-cam = Asterism.publish("cam/front", type: :image, encoding: "image/jpeg")
+$net = Asterism.connect(nil, node: "mdata", app: "t", mode: :peer, listen: "tcp/127.0.0.1:#{port}")
+$net.define_type("mdata/sample", [["id", "int"], ["tags", "str[]"], ["at", :pose], ["trail", "vector3[]"], ["kind", 5]], desc: "a sample")
+imu = $net.publish("imu", type: :vector3, unit: "m/s2", desc: "acceleration", ts: true)
+cam = $net.publish("cam/front", type: :image, encoding: "image/jpeg")
 got = []
 plain = []
-Asterism.subscribe("cruby/t/**") do |v, info|
+$net.subscribe("cruby/t/**") do |v, info|
   v = Asterism::Profile.binary(v) unless info.encoding == "msgpack"
   got << [info.path, v, info.seq, info.time, info.encoding, info.lost, info.restarted?]
 end
-Asterism.subscribe("cruby/t/n") { |v| plain << v }
+$net.subscribe("cruby/t/n") { |v| plain << v }
 probe = Probe.new(imu, cam, got, plain)
-Asterism.expose("probe", probe, methods: { put_imu: 1, put_cam: 0, unpublish_cam: 0, got: 0, plain: 0, stop: 0 })
+$net.expose("probe", probe, methods: { put_imu: 1, put_cam: 0, unpublish_cam: 0, got: 0, plain: 0, stop: 0 })
 puts "ready"
 deadline = Time.now + 60
 until probe.stop_now || Time.now > deadline
-  Asterism.poll
+  $net.poll
   usleep 2000
 end
 t = Time.now
-Asterism.poll while Time.now - t < 0.2 # the answer to stop goes out
-Asterism.close
+$net.poll while Time.now - t < 0.2 # the answer to stop goes out
+$net.close
 puts "data node done"

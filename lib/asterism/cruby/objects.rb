@@ -1,6 +1,6 @@
-# The object layer (Asterism.connect / expose / []) with blocks and a
-# receiving thread (CRuby only). Asterism.connect without a block,
-# Asterism.poll and the rest of the portable API work as on the boards.
+# The object layer (Asterism.connect / Connection) with blocks and a
+# receiving thread (CRuby only). A connection without a block, polled with
+# net.poll, works as on the boards.
 #
 #   Asterism.connect("tcp/192.0.2.2:7447", node: "mypc", app: "demo") do |net|
 #     net.expose("screen", Screen.new, methods: [:say])
@@ -11,203 +11,146 @@
 #     net.run                             # answer calls until Ctrl-C
 #   end
 #
-# Locking: the object layer is one connection per process with its state in
-# the Asterism module, written for one thread. Every entry into it (polling,
-# answering, calling, exposing, listing) holds Asterism::LOCK, so the
-# receiving thread and the application's threads take turns. A call that
-# waits for its answer while the receiving thread runs does not poll; it
-# waits for the receiving thread's ticks (Asterism::Runner#wait_until).
+# Each connection has its own receiving thread (start / run). A program may
+# hold several connections, each one application.
+#
+# Locking: the object layer is written for one thread. Every entry into a
+# connection (polling, answering, calling, exposing, listing) holds
+# Asterism::LOCK, one for all the connections of the process (a call
+# waiting on one connection answers the calls of the others, so they share
+# it), so the receiving threads and the application's threads take turns.
+# A call that waits for its answer while its connection's receiving thread
+# runs does not poll; it waits for that thread's ticks
+# (Asterism::Runner#wait_until).
 require "monitor"
 
 module Asterism
-  # Held by every entry into the object layer (reentrant).
+  # Held by every entry into the object layer (reentrant), for every
+  # connection of the process.
   LOCK = Monitor.new
 
-  # The portable API, entered under LOCK. Prepended to the Asterism module's
-  # singleton class, so the shared methods themselves are not changed.
-  module Locked
-    %i[expose unexpose poll nodes [] call_async meta connected? reconnecting? exposed on_join on_leave off_join off_leave
-       on_app_join on_app_leave off_app_join off_app_leave profile profile_async status status_async
-       app_profile_async apps session publish unpublish published topic_put define_type subscribe unsubscribe].each do |m|
+  # Module functions that read or change the connections, under LOCK.
+  module LockedModule
+    %i[connections poll_all profile_defaults register unregister connection_of pump_others].each do |m|
       define_method(m) do |*args, **kw, &blk|
         ::Asterism::LOCK.synchronize { super(*args, **kw, &blk) }
       end
     end
 
-    # With a block: yields an Asterism::Net and closes when the block ends
+    # With a block: yields the connection and closes it when the block ends
     # (also on an exception); returns the block's value. Without a block,
-    # as before (returns Asterism).
-    #
-    # credentials: a .tar from an Asterism console (Asterism::Credentials):
-    # its certificates go to zenoh (mutual TLS), and the locator and node:
-    # default to its router and name (given ones win).
+    # returns the connection (as on the boards).
     def connect(locator = nil, node: nil, app:, mode: nil, listen: nil, config: nil, connect_timeout: nil,
                 check_timeout: nil, credentials: nil, &blk)
-      if credentials
-        locator, config, creds = ::Asterism::Credentials.merge(credentials, locator, config)
-        node ||= creds.name
-      end
-      ::Asterism::LOCK.synchronize do
-        super(locator, node: node, app: app, mode: mode, listen: listen, config: config,
-                       connect_timeout: connect_timeout, check_timeout: check_timeout)
-        # The Net of a connection that was lost (not closed) belongs to the
-        # old session.
-        old = @net
-        @net = nil
-        old&.release
-      end
-      return self unless blk
-      net = ::Asterism.net
+      conn = super(locator, node: node, app: app, mode: mode, listen: listen, config: config,
+                            connect_timeout: connect_timeout, check_timeout: check_timeout, credentials: credentials)
+      return conn unless blk
+      conn.runner # what the blocks raise goes to on_error from here on
       begin
-        blk.call(net)
+        blk.call(conn)
       ensure
-        net.close
+        conn.close
       end
     end
+  end
+  singleton_class.prepend(LockedModule)
 
-    # Stops the receiving thread first (outside the lock: it may be inside
-    # a tick), then closes.
-    def close
-      net = @net
-      @net = nil
-      net&.release
-      ::Asterism::LOCK.synchronize { super }
-    end
+  class Connection
+    # The portable API, entered under LOCK. Prepended, so the shared methods
+    # themselves are not changed.
+    module Locked
+      %i[initialize expose unexpose poll pump nodes [] call_async meta connected? reconnecting? exposed
+         on_join on_leave off_join off_leave on_app_join on_app_leave off_app_join off_app_leave
+         profile profile_async status app_profile_async apps session publish unpublish published
+         topic_put define_type subscribe unsubscribe].each do |m|
+        define_method(m) do |*args, **kw, &blk|
+          ::Asterism::LOCK.synchronize { super(*args, **kw, &blk) }
+        end
+      end
 
-    # The on_join / on_leave (and on_app_*) blocks (called from
-    # Asterism.poll): with a Net, what they raise goes to its on_error and
-    # the other blocks still run.
-    def tell(where, blk, node, app = nil)
-      net = @net
-      return super unless net
-      net.runner.guard(where) { super }
-    end
+      # Stops the receiving thread first (outside the lock: it may be inside
+      # a tick), then closes.
+      def close
+        r = @runner
+        @runner = nil
+        @zenoh = nil
+        r&.close
+        ::Asterism::LOCK.synchronize { super }
+      end
 
-    # A subscription's block (called from Asterism.poll): with a Net, what
-    # it raises goes to its on_error and the other values still come.
-    def tell_sample(blk, value, info)
-      net = @net
-      return super unless net
-      net.runner.guard("subscribe") { super }
-    end
+      # The on_join / on_leave (and on_app_*) blocks (called from poll): once
+      # the connection has its receiving side (runner: a connect with a
+      # block, start, run, on_error), what they raise goes to its on_error
+      # and the other blocks still run.
+      def tell(where, blk, node, app = nil)
+        r = @runner
+        return super unless r
+        r.guard(where) { super }
+      end
 
-    # Lists under the lock, yields outside it (the block may make calls).
-    def each(pattern = "**", &blk)
-      list = ::Asterism::LOCK.synchronize { super(pattern, &nil) }
-      return list unless blk
-      list.each(&blk)
-      list.size
-    end
+      # A subscription's block (called from poll): the same.
+      def tell_sample(blk, value, info)
+        r = @runner
+        return super unless r
+        r.guard("subscribe") { super }
+      end
 
-    # A call waiting for its answer. On the receiving thread, or when it
-    # does not run: polls, as on the boards. On another thread while it
-    # runs: waits for its ticks to bring the answer.
-    def wait_until(&cond)
-      loop do
-        r = @net&.runner
-        if r && r.running? && !r.current?
-          r.wait_until(&cond)
-          return if ::Asterism::LOCK.synchronize(&cond)
-          # The receiving thread stopped before the answer: poll here.
-        else
-          return ::Asterism::LOCK.synchronize { super(&cond) }
+      # Lists under the lock, yields outside it (the block may make calls).
+      def each(pattern = "**", &blk)
+        list = ::Asterism::LOCK.synchronize { super(pattern, &nil) }
+        return list unless blk
+        list.each(&blk)
+        list.size
+      end
+
+      # A call waiting for its answer. On the receiving thread, or when it
+      # does not run: polls, as on the boards. On another thread while it
+      # runs: waits for its ticks to bring the answer.
+      def wait_until(&cond)
+        loop do
+          r = @runner
+          if r && r.running? && !r.current?
+            r.wait_until(&cond)
+            return if ::Asterism::LOCK.synchronize(&cond)
+            # The receiving thread stopped before the answer: poll here.
+          else
+            return ::Asterism::LOCK.synchronize { super(&cond) }
+          end
         end
       end
     end
-  end
-  singleton_class.prepend(Locked)
+    prepend Locked
 
-  class Future
-    # Prepended: done? reads the connection state, under the lock.
-    module Locked
-      def done?
-        ::Asterism::LOCK.synchronize { super }
+    # Enumerable over the exposed objects alive now, as proxies
+    # (net.map(&:asterism_path), net.count): each with the default pattern.
+    include Enumerable
+
+    # The receiving side of this connection (made on first use): one tick
+    # is poll (answers the calls, tells on_join / on_leave, hands values to
+    # the subscriptions); false once the connection is gone. @api private
+    def runner
+      ::Asterism::LOCK.synchronize do
+        @runner ||= begin
+          r = Runner.new(@session, lock: ::Asterism::LOCK, name: "asterism #{@node_id}/#{@app}")
+          r.add { poll ? 0 : false }
+          r
+        end
       end
     end
-    prepend Locked
-  end
 
-  # The connection of this process (Asterism is one per process) as an
-  # object, with a receiving thread. nil when not connected.
-  def self.net
-    LOCK.synchronize do
-      return nil unless connected?
-      @net ||= Net.new
-    end
-  end
-
-  # The block API of the object layer. Made by Asterism.connect with a
-  # block, or Asterism.net after a connect without one.
-  class Net
-    attr_reader :runner
-
-    def initialize
-      @runner = Runner.new(::Asterism.instance_variable_get(:@session), lock: ::Asterism::LOCK, name: "asterism")
-      # One tick: Asterism.poll (answers the calls, tells on_join /
-      # on_leave); false once the connection is gone.
-      @runner.add { ::Asterism.poll ? 0 : false }
-    end
-
-    # Asterism.session as a Zenoh::Connection (the block API of
+    # The session as a Zenoh::Connection (the block API of
     # Asterism::Zenoh.open) on the same receiving thread as the objects:
     # subscribe / queryable blocks run there, between the calls answered.
     # For a ROS 2 node on the same session:
-    # Asterism::ROS::Connection.new(net.session).node("name"). The session
-    # stays Asterism's: net.session.close does nothing (shared?), net.close
-    # closes it. Disconnected when not connected.
-    def session
+    # Asterism::ROS::Connection.new(net.zenoh).node("name"). The session
+    # stays the connection's: net.zenoh.close does nothing (shared?),
+    # net.close closes it. Disconnected when not connected.
+    def zenoh
       ::Asterism::LOCK.synchronize do
-        s = ::Asterism.session
-        @session = nil if @session && !@session.session.equal?(s)
-        @session ||= ::Asterism::Zenoh::Connection.new(s, runner: @runner)
+        s = session
+        @zenoh = nil if @zenoh && !@zenoh.session.equal?(s)
+        @zenoh ||= ::Asterism::Zenoh::Connection.new(s, runner: runner)
       end
-    end
-
-    def node_id = ::Asterism.node_id
-    def app = ::Asterism.app
-    def connected? = ::Asterism.connected?
-    def reconnecting? = ::Asterism.reconnecting?
-    def lost_reason = ::Asterism.lost_reason
-    def nodes = ::Asterism.nodes
-    def exposed = ::Asterism.exposed
-
-    # Asterism.expose: methods: an Array of names or a Hash name => number
-    # of arguments (or => {args: [names], doc: "text"}); doc: the object's
-    # own text (both go to the meta); caller: :from passes the calling node's ID as that
-    # keyword. The object's methods run on the receiving thread (or in
-    # run, or in whatever polls).
-    def expose(name, obj, methods:, caller: nil, doc: nil)
-      ::Asterism.expose(name, obj, methods: methods, caller: caller, doc: doc)
-    end
-
-    # Asterism.current_call: the call being answered on this thread, or nil.
-    def current_call = ::Asterism.current_call
-
-    def unexpose(name)
-      ::Asterism.unexpose(name)
-    end
-
-    # Asterism.profile: this node's profile (with keywords, sets fields).
-    def profile(**fields)
-      ::Asterism.profile(**fields)
-    end
-
-    # Asterism.profile_of: another node's profile, or nil. Waits like a
-    # call (for the receiving thread's ticks while it runs).
-    def profile_of(node, icon: true, timeout: nil, timeout_ms: nil)
-      ::Asterism.profile_of(node, icon: icon, timeout: timeout, timeout_ms: timeout_ms)
-    end
-
-    # Asterism.status: this application's status (a Hash: the whole
-    # status; keywords: those fields). Without arguments, returns it.
-    def status(h = nil, **fields)
-      ::Asterism.status(h, **fields)
-    end
-
-    # Asterism.status_of: another application's status, or nil. Waits like
-    # a call (for the receiving thread's ticks while it runs).
-    def status_of(node, app, timeout: nil, timeout_ms: nil)
-      ::Asterism.status_of(node, app, timeout: timeout, timeout_ms: timeout_ms)
     end
 
     # on_status(pattern = "*/*") { |node, app, status| }: the statuses put
@@ -217,156 +160,58 @@ module Asterism
     # Returns the subscription (close it to stop).
     def on_status(pattern = "*/*", &blk)
       raise ArgumentError, "on_status needs a block" unless blk
-      session.subscribe("#{::Asterism::ROOT}/#{pattern}/#{::Asterism::Status::KEY}") do |sample|
+      zenoh.subscribe("#{::Asterism::ROOT}/#{pattern}/#{::Asterism::Status::KEY}") do |sample|
         got = ::Asterism::Status.parse(sample.key, sample.payload)
         blk.call(*got) if got
       end
     end
 
-    # Asterism.publish: declares a topic (an Asterism::Topic; topic.put
-    # sends a value). Topic#put may be called from any thread.
-    def publish(name, type: nil, unit: nil, desc: nil, ts: false, encoding: nil)
-      ::Asterism.publish(name, type: type, unit: unit, desc: desc, ts: ts, encoding: encoding)
-    end
-
-    def unpublish(topic) = ::Asterism.unpublish(topic)
-    def published = ::Asterism.published
-
-    # Asterism.define_type: an application type, told by @profile?types.
-    def define_type(name, fields, desc: nil)
-      ::Asterism.define_type(name, fields, desc: desc)
-    end
-
-    # Asterism.subscribe: the values on <node>/<app>/<name> (wildcards
-    # allowed), |v, info| on the receiving thread. What the block raises
-    # goes to on_error. Returns the subscription (close it to stop).
-    def subscribe(path, depth: nil, &blk)
-      ::Asterism.subscribe(path, depth: depth, &blk)
-    end
-
-    # Asterism.pubs_of / types_of: another application's topics and types
-    # (nil when it does not answer). Wait like a call.
-    def pubs_of(node, app, timeout: nil, timeout_ms: nil)
-      ::Asterism.pubs_of(node, app, timeout: timeout, timeout_ms: timeout_ms)
-    end
-
-    def types_of(node, app, timeout: nil, timeout_ms: nil)
-      ::Asterism.types_of(node, app, timeout: timeout, timeout_ms: timeout_ms)
-    end
-
-    # Asterism.apps: the applications alive now, "<node>/<app>".
-    def apps(pattern = "*/*") = ::Asterism.apps(pattern)
-
-    # A proxy for <node>/<app>/<object>; timeout: in seconds (or
-    # timeout_ms:).
-    def [](path, timeout: nil, timeout_ms: nil)
-      ::Asterism[path, timeout: timeout, timeout_ms: timeout_ms]
-    end
-    alias proxy []
-
-    # The exposed objects alive now matching the pattern, as proxies. With
-    # a block, yields each and returns their number (1.0: returns self, as
-    # Ruby's each does; net.count is the number); without, an Enumerator
-    # (net.each("*/demo/info").map(&:status)).
-    def each(pattern = "**", &blk)
-      return enum_for(:each, pattern) unless blk
-      ::Asterism.each(pattern, &blk)
-    end
-    include Enumerable
-
-    # on_join { |node| } / on_leave { |node| }: Asterism.on_join /
-    # on_leave, the same as on the boards (called from Asterism.poll), here
-    # on the receiving thread. What they raise goes to on_error.
-    def on_join(&blk)
-      ::Asterism.on_join(&blk)
-      self
-    end
-
-    def on_leave(&blk)
-      ::Asterism.on_leave(&blk)
-      self
-    end
-
-    # on_app_join { |node, app| } / on_app_leave { |node, app| }: an
-    # application appeared on the network / is gone (Asterism.on_app_join),
-    # on the receiving thread. What they raise goes to on_error.
-    def on_app_join(&blk)
-      ::Asterism.on_app_join(&blk)
-      self
-    end
-
-    def on_app_leave(&blk)
-      ::Asterism.on_app_leave(&blk)
-      self
-    end
-
-    def off_app_join(blk)
-      ::Asterism.off_app_join(blk)
-      self
-    end
-
-    def off_app_leave(blk)
-      ::Asterism.off_app_leave(blk)
-      self
-    end
-
-    # Removes a block given to on_join / on_leave (keep the Proc).
-    def off_join(blk)
-      ::Asterism.off_join(blk)
-      self
-    end
-
-    def off_leave(blk)
-      ::Asterism.off_leave(blk)
-      self
-    end
-
-    # on_error { |error, where| }: what on_join / on_leave blocks raise.
-    # (An exposed method that raises is answered to its caller as a
-    # RemoteError, as before; it does not come here.)
+    # on_error { |error, where| }: what the on_join / on_leave and
+    # subscription blocks raise. (An exposed method that raises is answered
+    # to its caller as a RemoteError; it does not come here.)
     def on_error(&blk)
-      @runner.on_error(&blk)
+      runner.on_error(&blk)
       self
     end
 
     # Answers calls on a thread of its own. Returns self.
     def start
-      @runner.start
+      runner.start
       self
     end
 
     def stop
-      @runner.stop
+      @runner&.stop
       self
     end
 
     # Answers calls on this thread until stop, the connection closing, or
     # Ctrl-C. Returns nil.
     def run
-      @runner.run
+      runner.run
     end
 
     def running?
-      @runner.running?
-    end
-
-    def poll
-      ::Asterism.poll
-    end
-
-    # Stops the receiving thread and closes the connection (Asterism.close).
-    def close
-      ::Asterism.close
-      nil
-    end
-
-    # For Asterism.close: stop receiving and forget the session.
-    def release
-      @runner.close
+      r = @runner
+      r ? r.running? : false
     end
 
     def inspect
-      "#<Asterism::Net #{node_id}/#{app}#{running? ? ' running' : ''}>"
+      state = if @session then running? ? " running" : ""
+              elsif @lost then " lost"
+              else " closed"
+              end
+      "#<Asterism::Connection #{@node_id}/#{@app}#{state}>"
     end
+  end
+
+  class Future
+    # Prepended: done? reads the connection state, under the lock.
+    module Locked
+      def done?
+        ::Asterism::LOCK.synchronize { super }
+      end
+    end
+    prepend Locked
   end
 end

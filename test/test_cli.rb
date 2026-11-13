@@ -628,21 +628,21 @@ class TestCLI < Minitest::Test
       def boom(from: nil) = raise("boom")
     end
     loc, mode = ARGV
-    Asterism.profile(name: "Calc node")
-    Asterism.status(tables: 1, st: "wait")
     if mode == "router"
-      Asterism.connect(loc, node: "calcnode", app: "calc")
+      net = Asterism.connect(loc, node: "calcnode", app: "calc")
     else
-      Asterism.connect(nil, node: "calcnode", app: "calc", mode: :peer, listen: loc)
+      net = Asterism.connect(nil, node: "calcnode", app: "calc", mode: :peer, listen: loc)
     end
-    Asterism.expose("calc", Calc.new, methods: { add: 2, whoami: 0, any: -1, kw: 1, boom: 0 }, caller: :from)
-    Asterism.expose("other", Calc.new, methods: { add: { args: %w[a b], doc: "Adds a and b." } }, caller: :from,
+    net.profile(name: "Calc node")
+    net.status(tables: 1, st: "wait")
+    net.expose("calc", Calc.new, methods: { add: 2, whoami: 0, any: -1, kw: 1, boom: 0 }, caller: :from)
+    net.expose("other", Calc.new, methods: { add: { args: %w[a b], doc: "Adds a and b." } }, caller: :from,
                     doc: "The other calculator.")
     STDOUT.puts "ready"
     STDOUT.flush
     topics = {}
     loop do
-      Asterism.poll
+      net.poll
       r, = IO.select([STDIN], nil, nil, 0.002)
       next unless r
       line = STDIN.gets
@@ -651,26 +651,26 @@ class TestCLI < Minitest::Test
         # put NAME JSON: a value on this application's topic NAME (declared
         # the first time, without a type).
         _, key, json = line.chomp.split(" ", 3)
-        (topics[key] ||= Asterism.publish(key)).put(JSON.parse(json))
+        (topics[key] ||= net.publish(key)).put(JSON.parse(json))
       elsif line.start_with?("jpeg ")
         # jpeg NAME SIZE: SIZE bytes of a JPEG on the topic NAME (image/jpeg).
         _, key, size = line.split
-        t = (topics[key] ||= Asterism.publish(key, type: :image, encoding: "image/jpeg"))
+        t = (topics[key] ||= net.publish(key, type: :image, encoding: "image/jpeg"))
         t.put("\xFF\xD8\xFF\xE0".b + ("\x00".b * (size.to_i - 4)))
       elsif line.start_with?("skip ")
         # skip NAME: the next number of the topic NAME is not sent (one lost).
         topics[line.split[1]].advance
       elsif line.start_with?("declare")
         # declare: a typed topic and a type of this application's own.
-        Asterism.define_type("calc/result", [["sum", "int"], ["at", :vector3], ["parts", "float[]"]],
+        net.define_type("calc/result", [["sum", "int"], ["at", :vector3], ["parts", "float[]"]],
                              desc: "What a sum gave.")
-        topics["imu"] = Asterism.publish("imu", type: :vector3, unit: "m/s2", ts: true, desc: "Acceleration.")
-        topics["calc/result"] = Asterism.publish("calc/result", type: "calc/result")
+        topics["imu"] = net.publish("imu", type: :vector3, unit: "m/s2", ts: true, desc: "Acceleration.")
+        topics["calc/result"] = net.publish("calc/result", type: "calc/result")
       else
-        Asterism.status(tables: line.to_i)
+        net.status(tables: line.to_i)
       end
     end
-    Asterism.close
+    net.close
   RUBY
 
   def with_node
@@ -931,13 +931,12 @@ class TestCLI < Minitest::Test
   def test_on_a_given_connection
     with_node do |node|
       if (r = TestHelper.router)
-        Asterism.connect(r, node: "host", app: "console")
+        net = Asterism.connect(r, node: "host", app: "console")
       else
-        Asterism.connect(@where[1], node: "host", app: "console", mode: :peer)
+        net = Asterism.connect(@where[1], node: "host", app: "console", mode: :peer)
       end
-      net = Asterism.net
       net.start
-      assert wait_for(5) { Asterism.each("calcnode/**").size == 2 }
+      assert wait_for(5) { net.each("calcnode/**").size == 2 }
       plans = []
       run = lambda do |*words, permit: ->(pl) { plans << pl; nil }, stop: nil, cols: 80|
         out = FakeTTY.new(cols)
@@ -1016,12 +1015,12 @@ class TestCLI < Minitest::Test
       th.join
       assert_equal 0, code
       assert_empty cli.instance_variable_get(:@held)
-      assert_empty Asterism.instance_variable_get(:@on_join).to_a, "watch's on_join is taken off"
+      assert_empty net.instance_variable_get(:@on_join).to_a, "watch's on_join is taken off"
       assert net.connected?
       out, code = run.("object", "get", "calcnode/calc/calc", "--timeout", "30", stop: -> { true })
       assert_equal 1, code, out
     ensure
-      Asterism.close
+      net&.close
     end
   end
 

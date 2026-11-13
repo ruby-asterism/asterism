@@ -153,7 +153,7 @@ class TestTransfer < Minitest::Test
   end
 
   def sender(**opts)
-    s = TestSender.new("node-b/transfer/inbox", "file", @src, **{ name: "src" }.merge(opts))
+    s = TestSender.new("node-b/transfer/inbox", "file", @src, net: @net, **{ name: "src" }.merge(opts))
     s.logger = nil
     s.net = @net
     s
@@ -594,7 +594,7 @@ class TestTransfer < Minitest::Test
   end
 
   def wire_send(conn, from: "node-a", **opts)
-    s = WireSender.new("pc/transfer/inbox", "file", @src, **{ name: "photo.bin" }.merge(opts))
+    s = WireSender.new("pc/transfer/inbox", "file", @src, net: nil, **{ name: "photo.bin" }.merge(opts))
     s.logger = nil
     s.conn = conn
     s.from = from
@@ -660,7 +660,7 @@ class TestTransfer < Minitest::Test
     assert_equal "pc has no SD card to write to", wire_send(conn, meta: { "inbox" => "sd" }).reason
     assert_equal "pc has no inbox usb (home only)", wire_send(conn, meta: { "inbox" => "usb" }).reason
     assert_match(/not a name/, wire_send(conn, name: ".hidden").reason)
-    s = WireSender.new("pc/transfer/inbox", "checkpoint", @src, name: "x")
+    s = WireSender.new("pc/transfer/inbox", "checkpoint", @src, net: nil, name: "x")
     s.logger = nil
     s.conn = conn
     s.from = "node-a"
@@ -679,7 +679,7 @@ class TestTransfer < Minitest::Test
     inbox = file_inbox
     conn = Conn.new
     T::Endpoint.new(conn, inbox, node: "pc").start
-    s = WireSender.new("pc/transfer/inbox", "file", @src, name: "photo.bin", window: 1)
+    s = WireSender.new("pc/transfer/inbox", "file", @src, net: nil, name: "photo.bin", window: 1)
     s.logger = nil
     s.conn = conn
     s.from = "node-a"

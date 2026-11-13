@@ -1,5 +1,5 @@
 # The answering side of the mruby test (rake test:mruby runs it as its own
-# process): node "mnode", listening, with a profile set before connecting
+# process): node "mnode", listening, with a profile of its own
 # and the gem's icon (data/icon.png) as its icon.
 #
 #   mruby -r msgpack.rb node.rb PORT ICON_FILE
@@ -10,24 +10,24 @@
 # test/imu puts a value on its topic imu.
 port = ARGV[0]
 icon = File.open(ARGV[1], "r") { |f| f.read }
-Asterism.profile(name: "mruby node", host: "host_test", icon: icon)
-Asterism.status({ "n" => 1, "st" => "wait" })
-Asterism.connect(nil, node: "mnode", app: "t", mode: :peer, listen: "tcp/127.0.0.1:#{port}")
-imu = Asterism.publish("imu", type: :vector3, unit: "m/s2", ts: true)
-s = Asterism.session
+net = Asterism.connect(nil, node: "mnode", app: "t", mode: :peer, listen: "tcp/127.0.0.1:#{port}")
+net.profile(name: "mruby node", host: "host_test", icon: icon)
+net.status({ "n" => 1, "st" => "wait" })
+imu = net.publish("imu", type: :vector3, unit: "m/s2", ts: true)
+s = net.session
 sub = s.subscribe("test/**")
 puts "ready"
 stop = false
 deadline = Time.now + 60
 until stop || Time.now > deadline
-  Asterism.poll
+  net.poll
   sub.each_pending do |key, payload|
     stop = true if key == "test/stop"
-    Asterism.profile(name: payload) if key == "test/name"
-    Asterism.status(n: payload.to_i) if key == "test/status"
+    net.profile(name: payload) if key == "test/name"
+    net.status(n: payload.to_i) if key == "test/status"
     imu.put([1, 2, payload.to_i]) if key == "test/imu"
   end
   usleep 2000
 end
-Asterism.close
+net.close
 puts "node done"

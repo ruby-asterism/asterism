@@ -10,9 +10,9 @@
 # MessagePack; else the bytes as they are, image/jpeg) and the attachment
 # [seq] or [seq, sender's ms], from which Values::Seq counts the values
 # lost between two of a key. This reads the Zenoh samples itself rather
-# than through Asterism.subscribe: it shows what is on the wire, the
+# than through Connection#subscribe: it shows what is on the wire, the
 # payload's size and a value that is not MessagePack too (as text or its
-# size), where Asterism.subscribe leaves those out.
+# size), where Connection#subscribe leaves those out.
 require "json"
 
 module Asterism

@@ -1,5 +1,6 @@
 module Asterism
-  # A stand-in for an object on another machine (Asterism["node/app/obj"]).
+  # A stand-in for an object on another machine (net["node/app/obj"], made
+  # by a connection: its calls go out on that connection).
   # Any method it does not have itself becomes a call that waits for the
   # answer. respond_to? and remote_methods come from the object's meta.
   #
@@ -11,7 +12,8 @@ module Asterism
     # forwarded.
     LOCAL_ONLY = [:to_ary, :to_str, :to_hash, :to_proc, :to_a, :to_io]
 
-    def initialize(path, timeout_ms)
+    def initialize(connection, path, timeout_ms)
+      @connection = connection
       @path = path
       @timeout_ms = timeout_ms
       @meta = nil
@@ -21,10 +23,15 @@ module Asterism
       @path
     end
 
+    # The Asterism::Connection the calls go out on.
+    def asterism_connection
+      @connection
+    end
+
     def method_missing(name, *args, **kw, &blk)
       return super if ::Asterism::Proxy::LOCAL_ONLY.include?(name)
       raise ::ArgumentError, "a block cannot be sent to #{@path}" if blk
-      ::Asterism.call(@path, name, args, kw, @timeout_ms)
+      @connection.call(@path, name, args, kw, @timeout_ms)
     end
 
     # Calls the remote method by its name (a String or Symbol): for the
@@ -33,7 +40,7 @@ module Asterism
     # identifiers (from objects written in other languages).
     def asterism_call(name, *args, **kw, &blk)
       raise ::ArgumentError, "a block cannot be sent to #{@path}" if blk
-      ::Asterism.call(@path, name.to_s, args, kw, @timeout_ms)
+      @connection.call(@path, name.to_s, args, kw, @timeout_ms)
     end
 
     # In Ruby rather than through respond_to_missing?: Object#respond_to? is
@@ -64,7 +71,7 @@ module Asterism
     # The meta reply, fetched once:
     # {"methods" => [{"name" => name, "arity" => n}, ...]}.
     def asterism_meta
-      @meta ||= ::Asterism.meta(@path, @timeout_ms)
+      @meta ||= @connection.meta(@path, @timeout_ms)
     end
 
     # Forget the meta (the object may have been exposed again).
@@ -84,7 +91,7 @@ module Asterism
 
     # The same object, calls that do not wait: each returns a Future.
     def async
-      AsyncProxy.new(@path, @timeout_ms)
+      AsyncProxy.new(@connection, @path, @timeout_ms)
     end
 
     def inspect
@@ -97,7 +104,8 @@ module Asterism
   end
 
   class AsyncProxy
-    def initialize(path, timeout_ms)
+    def initialize(connection, path, timeout_ms)
+      @connection = connection
       @path = path
       @timeout_ms = timeout_ms
     end
@@ -105,7 +113,7 @@ module Asterism
     def method_missing(name, *args, **kw, &blk)
       return super if ::Asterism::Proxy::LOCAL_ONLY.include?(name)
       raise ::ArgumentError, "a block cannot be sent to #{@path}" if blk
-      ::Asterism.call_async(@path, name, args, kw, @timeout_ms)
+      @connection.call_async(@path, name, args, kw, @timeout_ms)
     end
 
     def respond_to_missing?(name, _include_private = false)
@@ -115,7 +123,7 @@ module Asterism
     # Proxy#asterism_call that does not wait: returns a Future.
     def asterism_call(name, *args, **kw, &blk)
       raise ::ArgumentError, "a block cannot be sent to #{@path}" if blk
-      ::Asterism.call_async(@path, name.to_s, args, kw, @timeout_ms)
+      @connection.call_async(@path, name.to_s, args, kw, @timeout_ms)
     end
 
     def inspect

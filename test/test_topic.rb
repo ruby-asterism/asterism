@@ -1,7 +1,7 @@
 # Topics (docs/protocol.md 9-11): the checks and the reading of sequence
-# numbers (no network), and between two CRuby processes: Asterism.publish
+# numbers (no network), and between two CRuby processes: Connection#publish
 # and Topic#put (MessagePack without an encoding, the bytes of an image with
-# image/jpeg, the attachment [seq] or [seq, time]), Asterism.subscribe
+# image/jpeg, the attachment [seq] or [seq, time]), Connection#subscribe
 # (|v, info| and |v|, lost values, wrapping, a restart, close), the puts on
 # @pubs, the application's profile (?status, ?pubs, ?types), pubs_of and
 # types_of, and the CRuby API (net.subscribe on the receiving thread).
@@ -93,7 +93,7 @@ class TestTopic < Minitest::Test
 
   # Sequence numbers as a subscription reads them (docs/protocol.md 9.4).
   def test_reading_sequence_numbers
-    sub = Asterism::Subscription.new("n/a/x", nil, nil)
+    sub = Asterism::Subscription.new(nil, "n/a/x", nil, nil)
     att = ->(*a) { MessagePack.pack(a) }
     s = ->(seq, key: "asterism/n/a/x", time: nil) do
       a = time ? att.(seq, time) : att.(seq)
@@ -108,7 +108,7 @@ class TestTopic < Minitest::Test
     max = Asterism::Topic::SEQ_MAX
     assert_equal [max - 1, max - 1, 0, false], s.(max - 1, key: "asterism/n/a/w")
     assert_equal [1, 1, 2, false], s.(1, key: "asterism/n/a/w"), "wrapped: max and 0 missed"
-    sub2 = Asterism::Subscription.new("n/a/x", nil, nil)
+    sub2 = Asterism::Subscription.new(nil, "n/a/x", nil, nil)
     sub2.unwrap(FakeSample.new("asterism/n/a/x", MessagePack.pack(1), att.(max), :put, "zenoh/bytes", nil))
     _, info = sub2.unwrap(FakeSample.new("asterism/n/a/x", MessagePack.pack(1), att.(0), :put, "zenoh/bytes", nil))
     assert_equal [0, false], [info.lost, info.restarted?], "max then 0: the wrap, nothing lost"
@@ -131,34 +131,36 @@ class TestTopic < Minitest::Test
   end
 
   def test_publish_needs_a_connection
-    assert_raises(Asterism::Disconnected) { Asterism.publish("x") }
-    assert_raises(Asterism::Disconnected) { Asterism.subscribe("a/b/c") { nil } }
+    net = Asterism.connect(nil, node: "solo", app: "t", mode: :peer, listen: "tcp/127.0.0.1:#{TestHelper.free_port}",
+                                check_timeout: 0.1)
+    net.close
+    assert_raises(Asterism::Disconnected) { net.publish("x") }
+    assert_raises(Asterism::Disconnected) { net.subscribe("a/b/c") { nil } }
   end
 
   # ------------------------------------------------------------ two processes
 
-  # The other process: node "child", app "t" with three topics and a type
-  # defined before connecting. Lines on stdin: "imu", "cam", "strokes"
+  # The other process: node "child", app "t" with three topics and a type. Lines on stdin: "imu", "cam", "strokes"
   # put one value; "skip N" makes the imu topic skip N numbers; "wrap"
   # puts it near the end of the numbers; "drop" withdraws the camera;
   # "again" publishes imu again (its numbers start over).
   CHILD = <<~'RUBY'
     require "asterism"
     loc = ARGV[0]
-    Asterism.define_type("t/stroke", [["pts", "int[]"], ["color", "str"], ["grid", "int[][]"], ["mb", "any[]"]],
-                         desc: "one stroke")
     if ARGV[1] == "router"
-      Asterism.connect(loc, node: "child", app: "t")
+      net = Asterism.connect(loc, node: "child", app: "t")
     else
-      Asterism.connect(nil, node: "child", app: "t", mode: :peer, listen: loc)
+      net = Asterism.connect(nil, node: "child", app: "t", mode: :peer, listen: loc)
     end
-    imu = Asterism.publish("imu", type: :vector3, unit: "m/s2", desc: "accel", ts: true)
-    strokes = Asterism.publish("board1/strokes", type: "t/stroke")
-    cam = Asterism.publish("camera", type: :image, encoding: "image/jpeg")
+    net.define_type("t/stroke", [["pts", "int[]"], ["color", "str"], ["grid", "int[][]"], ["mb", "any[]"]],
+                    desc: "one stroke")
+    imu = net.publish("imu", type: :vector3, unit: "m/s2", desc: "accel", ts: true)
+    strokes = net.publish("board1/strokes", type: "t/stroke")
+    cam = net.publish("camera", type: :image, encoding: "image/jpeg")
     STDOUT.puts "ready"
     STDOUT.flush
     loop do
-      Asterism.poll
+      net.poll
       r, = IO.select([STDIN], nil, nil, 0.002)
       next unless r
       line = STDIN.gets
@@ -171,12 +173,12 @@ class TestTopic < Minitest::Test
       when "skip" then arg.to_i.times { imu.advance }
       when "wrap" then imu.instance_variable_set(:@seq, Asterism::Topic::SEQ_MAX)
       when "drop" then cam.close
-      when "again" then imu = Asterism.publish("imu", type: :vector3, unit: "m/s2", desc: "accel", ts: true)
+      when "again" then imu = net.publish("imu", type: :vector3, unit: "m/s2", desc: "accel", ts: true)
       end
       STDOUT.puts "done #{cmd}"
       STDOUT.flush
     end
-    Asterism.close
+    net.close
   RUBY
 
   def test_topics_between_two_processes
@@ -191,41 +193,41 @@ class TestTopic < Minitest::Test
     child = IO.popen([RbConfig.ruby, *lib.flat_map { |l| ["-I", l] }, "-e", CHILD, loc, mode], "r+")
     assert_equal "ready", child.gets&.strip
     if router
-      Asterism.connect(loc, node: "parent", app: "t")
+      @net = Asterism.connect(loc, node: "parent", app: "t")
     else
-      Asterism.connect(loc, node: "parent", app: "t", mode: :peer)
+      @net = Asterism.connect(loc, node: "parent", app: "t", mode: :peer)
     end
-    assert wait_for { Asterism.poll; Asterism.apps.include?("child/t") }
+    assert wait_for { @net.poll; @net.apps.include?("child/t") }
     cmd = ->(c) { child.puts c; assert_equal "done #{c.split.first}", child.gets&.strip }
 
     # The declarations, by the application's profile.
     pubs = { "imu" => { "t" => 2, "u" => "m/s2", "d" => "accel", "ts" => true },
              "board1/strokes" => { "t" => "t/stroke" }, "camera" => { "t" => 4, "e" => 17 } }
-    assert_equal pubs, Asterism.pubs_of("child", "t")
+    assert_equal pubs, @net.pubs_of("child", "t")
     types = { "t/stroke" => { "f" => [["pts", "int[]"], ["color", "str"], ["grid", "int[][]"], ["mb", "any[]"]],
                               "d" => "one stroke" } }
-    assert_equal types, Asterism.types_of("child", "t")
-    assert_nil Asterism.status_of("child", "t"), "no status set"
-    s = Asterism.session
+    assert_equal types, @net.types_of("child", "t")
+    assert_nil @net.status_of("child", "t"), "no status set"
+    s = @net.session
     ask = lambda do |params|
       replies = []
       g = s.get("asterism/child/t/@profile", timeout_ms: 800, params: params)
-      wait_for(2) { Asterism.poll; replies.concat(g.each_reply); g.done? }
+      wait_for(2) { @net.poll; replies.concat(g.each_reply); g.done? }
       replies.map { |k, pl| [k, MessagePack.unpack(pl)] }
     end
     assert_equal [["asterism/child/t/@profile", { "pubs" => pubs }]], ask.(nil), "no status: left out"
     assert_equal [["asterism/child/t/@profile", { "types" => types }]], ask.("types")
     assert_equal [["asterism/child/t/@profile", { "pubs" => pubs, "types" => types }]], ask.("pubs;types")
     assert_equal [["asterism/child/t/@profile", {}]], ask.("status")
-    assert_nil Asterism.pubs_of("child", "nothing", timeout: 0.5)
+    assert_nil @net.pubs_of("child", "nothing", timeout: 0.5)
     # This application's own, without the network: nothing yet.
-    assert_equal({}, Asterism.pubs_of("parent", "t"))
-    assert_equal({}, Asterism.types_of("parent", "t"))
+    assert_equal({}, @net.pubs_of("parent", "t"))
+    assert_equal({}, @net.types_of("parent", "t"))
 
     got = []
     plain = []
-    sub = Asterism.subscribe("child/t/**") { |v, info| got << [v, info] }
-    Asterism.subscribe("child/t/imu") { |v| plain << v }
+    sub = @net.subscribe("child/t/**") { |v, info| got << [v, info] }
+    @net.subscribe("child/t/imu") { |v| plain << v }
     pubs_puts = s.subscribe("asterism/*/*/@pubs")
     raw = s.subscribe("asterism/child/t/**")
     sleep 0.3 # the subscriptions reach the other side
@@ -233,7 +235,7 @@ class TestTopic < Minitest::Test
     cmd.("cam")
     cmd.("strokes")
     cmd.("imu")
-    assert wait_for { Asterism.poll; got.size >= 4 }
+    assert wait_for { @net.poll; got.size >= 4 }
     v, info = got[0]
     assert_equal [1.5, -2, 9.8], v
     assert_equal ["child", "t", "imu", 0, "msgpack", 0, false], [info.node, info.app, info.name, info.seq,
@@ -260,29 +262,29 @@ class TestTopic < Minitest::Test
     # Lost values, the wrap and a restart.
     cmd.("skip 3")
     cmd.("imu")
-    assert wait_for { Asterism.poll; got.size >= 5 }
+    assert wait_for { @net.poll; got.size >= 5 }
     assert_equal [5, 3, false], [got[4][1].seq, got[4][1].lost, got[4][1].restarted?]
     cmd.("wrap")
     cmd.("imu")
     cmd.("imu")
-    assert wait_for { Asterism.poll; got.size >= 7 }
+    assert wait_for { @net.poll; got.size >= 7 }
     # A jump of more than half the numbers reads as a restart.
     assert_equal [Asterism::Topic::SEQ_MAX, Asterism::Topic::SEQ_MAX, true],
                  [got[5][1].seq, got[5][1].lost, got[5][1].restarted?]
     assert_equal [0, 0, false], [got[6][1].seq, got[6][1].lost, got[6][1].restarted?], "the wrap"
     cmd.("again")
     cmd.("imu")
-    assert wait_for { Asterism.poll; got.size >= 8 }
+    assert wait_for { @net.poll; got.size >= 8 }
     assert_equal [0, 0, true], [got[7][1].seq, got[7][1].lost, got[7][1].restarted?], "published again: a restart"
 
     # @pubs: put again when publish replaces imu (the same declarations:
     # nothing), and when the camera goes.
     cmd.("drop")
     seen = []
-    assert wait_for { Asterism.poll; seen.concat(pubs_puts.each_pending); seen.any? }
+    assert wait_for { @net.poll; seen.concat(pubs_puts.each_pending); seen.any? }
     parsed = seen.map { |k, pl| Asterism::Pubs.parse(k, pl) }
     assert_equal [["child", "t", pubs.reject { |k, _| k == "camera" }]], parsed
-    assert_equal pubs.reject { |k, _| k == "camera" }, Asterism.pubs_of("child", "t")
+    assert_equal pubs.reject { |k, _| k == "camera" }, @net.pubs_of("child", "t")
 
     # close: nothing more comes.
     sub.close
@@ -290,23 +292,23 @@ class TestTopic < Minitest::Test
     n = got.size
     np = plain.size
     cmd.("imu")
-    assert wait_for { Asterism.poll; plain.size > np }, "the other subscription still gets them"
+    assert wait_for { @net.poll; plain.size > np }, "the other subscription still gets them"
     assert_equal n, got.size
 
     # This application's own topics and the CRuby API.
-    t = Asterism.publish("echo/x", desc: "mine")
-    assert_equal({ "echo/x" => { "d" => "mine" } }, Asterism.pubs_of("parent", "t"))
-    assert_equal ["echo/x"], Asterism.published
-    assert_raises(ArgumentError) { Asterism.publish("x", encoding: "zenoh/bytes") }
-    assert_raises(ArgumentError) { Asterism.publish("x", encoding: "application/msgpack") }
-    assert_raises(ArgumentError) { Asterism.publish("x", ts: 1) }
+    t = @net.publish("echo/x", desc: "mine")
+    assert_equal({ "echo/x" => { "d" => "mine" } }, @net.pubs_of("parent", "t"))
+    assert_equal ["echo/x"], @net.published
+    assert_raises(ArgumentError) { @net.publish("x", encoding: "zenoh/bytes") }
+    assert_raises(ArgumentError) { @net.publish("x", encoding: "application/msgpack") }
+    assert_raises(ArgumentError) { @net.publish("x", ts: 1) }
     assert_raises(Asterism::EncodeError) { t.put(Object.new) }
-    raw_cam = Asterism.publish("raw", encoding: "image/png")
+    raw_cam = @net.publish("raw", encoding: "image/png")
     assert_raises(ArgumentError) { raw_cam.put([1]) }
-    assert Asterism.unpublish("raw")
+    assert @net.unpublish("raw")
     assert raw_cam.closed?
     assert_raises(Asterism::Disconnected) { raw_cam.put("x") }
-    net = Asterism.net
+    net = @net
     q = Queue.new
     net.subscribe("child/t/imu") { |v, info| q << [v, info.seq] }
     errors = Queue.new
@@ -318,11 +320,11 @@ class TestTopic < Minitest::Test
     assert_equal [[1.5, -2, 9.8], 2], Timeout.timeout(3) { q.pop }
     assert_equal ["boom", "subscribe"], Timeout.timeout(3) { errors.pop }
     net.stop
-    Asterism.close
+    @net.close
     assert t.closed?, "the topics end with the connection"
     assert_raises(Asterism::Disconnected) { t.put(1) }
   ensure
-    Asterism.close
+    @net&.close
     if child && !child.closed?
       child.close_write rescue nil
       child.read rescue nil

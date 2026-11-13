@@ -1,6 +1,6 @@
-# net.session (0.6.0, lib/asterism/cruby/objects.rb): Asterism's session as
+# net.zenoh (lib/asterism/cruby/objects.rb): a connection's session as
 # a Zenoh::Connection on the object layer's receiving thread, a ROS 2 node
-# on it (ROS::Connection.new(net.session)), and what close does to each.
+# on it (ROS::Connection.new(net.zenoh)), and what close does to each.
 # The other side is a second session of this process.
 require_relative "helper"
 require "asterism"
@@ -24,21 +24,21 @@ class TestApiSession < Minitest::Test
   end
 
   def teardown
-    Asterism.close
+    Asterism.connections.each(&:close)
     @other&.close
   end
 
-  def test_net_session_shares_the_receiving_thread
+  def test_net_zenoh_shares_the_receiving_thread
     got = Queue.new
     odom = Queue.new
     session = nil
     Asterism.connect(@loc[0], node: "me", app: "t", **@loc[1]) do |net|
-      conn = net.session
+      conn = net.zenoh
       session = conn.session
       assert_instance_of Asterism::Zenoh::Connection, conn
       assert conn.shared?
-      assert_same conn, net.session
-      assert_same Asterism.session, conn.session
+      assert_same conn, net.zenoh
+      assert_same net.session, conn.session
       assert_same net.runner, conn.runner
       net.expose("echo", Echo.new, methods: [:echo])
 
@@ -55,7 +55,7 @@ class TestApiSession < Minitest::Test
       sleep 0.3
       @other.put("g1b/x", "hi")
       pub << { data: "o1" }
-      assert_equal ["hi", "asterism receiver"], got.pop(timeout: 3)
+      assert_equal ["hi", "asterism me/t receiver"], got.pop(timeout: 3)
       assert_equal "o1", odom.pop(timeout: 3)
 
       # Calls are answered meanwhile.
@@ -70,9 +70,9 @@ class TestApiSession < Minitest::Test
       assert node.closed?
       assert net.running?
       refute session.closed?
-      # net.session's close does nothing (warns once).
+      # net.zenoh's close does nothing (warns once).
       _, err = capture_io { assert_nil conn.close; conn.close }
-      assert_equal 1, err.scan("belongs to Asterism").size
+      assert_equal 1, err.scan("belongs to its Asterism connection").size
       refute conn.closed?
       assert net.running?
       @other.put("g1b/y", "still")
@@ -80,6 +80,6 @@ class TestApiSession < Minitest::Test
     end
     # The end of the block closes the session.
     assert session.closed?
-    assert_raises(Asterism::Disconnected) { Asterism.session }
+    assert_empty Asterism.connections
   end
 end

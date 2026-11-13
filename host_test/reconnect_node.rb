@@ -20,20 +20,20 @@ say = lambda do |s|
   puts "#{s} #{Asterism.now_ms - t0}"
   $stdout.flush
 end
-Asterism.connect(ARGV[0], node: "stay", app: "rc")
+net = Asterism.connect(ARGV[0], node: "stay", app: "rc")
 obj = Obj.new
-Asterism.expose("obj", obj, methods: { ping: 1 })
-Asterism.on_join { |n| say.call("join #{n}") }
-Asterism.on_leave { |n| say.call("leave #{n}") }
+net.expose("obj", obj, methods: { ping: 1 })
+net.on_join { |n| say.call("join #{n}") }
+net.on_leave { |n| say.call("leave #{n}") }
 say.call("ready")
 was = false
 back = 0
 while Asterism.now_ms - t0 < 90_000
-  unless Asterism.poll
-    say.call("closed #{Asterism.lost_reason}")
+  unless net.poll
+    say.call("closed #{net.lost_reason}")
     break
   end
-  now = Asterism.reconnecting?
+  now = net.reconnecting?
   if now != was
     say.call(now ? "lost" : "back")
     back += 1 unless now
@@ -42,6 +42,6 @@ while Asterism.now_ms - t0 < 90_000
   break if obj.pings.include?("stop")
   Asterism.pause(5)
 end
-puts "summary #{obj.pings.size} #{back} #{Asterism.connected?}"
+puts "summary #{obj.pings.size} #{back} #{net.connected?}"
 $stdout.flush
-Asterism.close
+net.close

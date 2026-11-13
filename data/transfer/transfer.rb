@@ -241,7 +241,7 @@ module Asterism
 
     # The receiving side. Expose it (or a subclass) with caller: :from:
     #
-    #   Asterism.expose("inbox", inbox, methods: Asterism::Transfer::Inbox::METHODS, caller: :from)
+    #   net.expose("inbox", inbox, methods: Asterism::Transfer::Inbox::METHODS, caller: :from)
     #
     # and call tick from the update loop. The hooks to override:
     #
@@ -626,8 +626,9 @@ module Asterism
 
     # The sending side of one file. Made with the receiver's path
     # ("<node>/<app>/<object>"), the kind, the local file and the meta the
-    # kind wants; call step from the update loop until done?. Then ok? and
-    # answer (commit's answer: the kind's), or reason.
+    # kind wants, and net: the Asterism::Connection the calls go out on;
+    # call step from the update loop (which polls net) until done?. Then
+    # ok? and answer (commit's answer: the kind's), or reason.
     #
     # The receiver's position is the truth: every answer says where it
     # stands and the next piece goes from there. A call that fails (no
@@ -649,8 +650,9 @@ module Asterism
       attr_accessor :logger
       attr_reader :path, :size, :sha256, :answer, :reason, :stats, :pos, :id, :kind, :piece, :window
 
-      def initialize(to, kind, path, meta: {}, name: nil, piece: PIECE_MAX, window: WINDOW_MAX,
+      def initialize(to, kind, path, net:, meta: {}, name: nil, piece: PIECE_MAX, window: WINDOW_MAX,
                      timeout_ms: CALL_TIMEOUT_MS, tries: TRIES, sha256: nil)
+        @net = net
         @to = to
         @kind = kind
         @path = path
@@ -781,7 +783,7 @@ module Asterism
       end
 
       def proxy
-        ::Asterism[@to, timeout_ms: @timeout_ms].async
+        @net[@to, timeout_ms: @timeout_ms].async
       end
 
       def call(method, *args)

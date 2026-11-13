@@ -49,26 +49,27 @@ module Asterism
     ARGV[1]
   end
 end
-pr = Asterism.profile
+pr = Asterism.profile_defaults
 check(pr["kind"] == "picoruby", "default kind on mruby: #{pr['kind']}")
 check(pr["icon_hash"] == info[2], "default icon read from the file")
-pr = Asterism.profile(kind: :family_mruby, host: "sim")
+pr = Asterism.profile_defaults(kind: :family_mruby, host: "sim")
 check(pr["kind"] == "family_mruby" && pr["host"] == "sim", "kind and host set")
-pr = Asterism.profile(name: "app")
+pr = Asterism.profile_defaults(name: "app")
 check(pr["host"] == "sim" && pr["name"] == "app", "fields merge")
-raises(ArgumentError, "an icon that is not a PNG") { Asterism.profile(icon: "nope") }
-raises(ArgumentError, "an unknown field") { Asterism.profile(colour: 1) }
-check(Asterism.profile(icon: nil)["icon_hash"].nil?, "icon: nil is no icon")
+raises(ArgumentError, "an icon that is not a PNG") { Asterism.profile_defaults(icon: "nope") }
+raises(ArgumentError, "an unknown field") { Asterism.profile_defaults(colour: 1) }
+check(Asterism.profile_defaults(icon: nil)["icon_hash"].nil?, "icon: nil is no icon")
 
 # --- over the network, from node.rb
-Asterism.connect("tcp/127.0.0.1:#{port}", node: "mtest", app: "t", mode: :peer)
+net = Asterism.connect("tcp/127.0.0.1:#{port}", node: "mtest", app: "t", mode: :peer)
+check(net.profile["name"] == "app", "a connection's node starts from the program's defaults")
 t = Time.now
-until Asterism.nodes.include?("mnode") || Time.now - t > 5
-  Asterism.poll
+until net.nodes.include?("mnode") || Time.now - t > 5
+  net.poll
   usleep 2000
 end
-check(Asterism.nodes.include?("mnode"), "mnode seen")
-other = Asterism.profile_of("mnode")
+check(net.nodes.include?("mnode"), "mnode seen")
+other = net.profile_of("mnode")
 check(other && other["kind"] == "picoruby" && other["host"] == "host_test" && other["name"] == "mruby node",
       "profile_of: #{other.inspect[0, 120]}")
 check(other && other["icon"] == ICON && other["icon_hash"] == info[2], "the icon came whole")
@@ -76,21 +77,21 @@ check(other && other["protocol"] == 2, "the other node speaks protocol 2")
 check(other && other["icon"].encoding == "ASCII-8BIT", "the icon came as a bin (a binary String)")
 check(MessagePack.pack(Asterism::Profile.binary("\x89PNG")).getbyte(0) == 0xc4,
       "an icon's bytes are a binary String (sent as a bin)")
-small = Asterism.profile_of("mnode", icon: false, timeout: 1.5)
+small = net.profile_of("mnode", icon: false, timeout: 1.5)
 check(small && small["icon"].nil? && small["icon_hash"] == info[2], "icon: false leaves the bytes out")
-s = Asterism.session
+s = net.session
 s.put("test/name", "renamed")
 t = Time.now
 renamed = nil
 while Time.now - t < 3
-  Asterism.poll
-  renamed = Asterism.profile_of("mnode", icon: false)
+  net.poll
+  renamed = net.profile_of("mnode", icon: false)
   break if renamed && renamed["name"] == "renamed"
   usleep 20000
 end
 check(renamed && renamed["name"] == "renamed", "a change shows")
-check(Asterism.profile_of("nobody", timeout: 1.0).nil?, "nil when nobody answers")
-own = Asterism.profile_of("mtest")
+check(net.profile_of("nobody", timeout: 1.0).nil?, "nil when nobody answers")
+own = net.profile_of("mtest")
 check(own && own["kind"] == "family_mruby" && own["name"] == "app", "own profile without the network")
 
 # --- statuses (status.rb), on mruby and from node.rb
@@ -98,24 +99,24 @@ S = Asterism::Status
 check(S.check({ "a" => 1, 5 => 2 }) == { "a" => 1 }, "status check drops a non-str key")
 check(S.check([1]).nil?, "status check: not a map")
 check(S.check({ "big" => "x" * 1100 }).nil?, "status check: too large")
-check(Asterism.status(tables: 3) == { "tables" => 3 }, "status set: #{Asterism.status.inspect}")
-check(Asterism.status(humans: 1) == { "tables" => 3, "humans" => 1 }, "status fields merge")
-check(Asterism.status({ "x" => [1, { "y" => nil }] }) == { "x" => [1, { "y" => nil }] }, "a Hash is the whole status")
-raises(ArgumentError, "status: too deep") { Asterism.status(d: [[[[[1]]]]]) }
-raises(ArgumentError, "status: too large") { Asterism.status(big: "x" * 1100) }
-raises(ArgumentError, "status: not a Hash") { Asterism.status([1]) }
-check(Asterism.status_of("mtest", "t") == { "x" => [1, { "y" => nil }] }, "own status without the network")
-check(Asterism.apps.include?("mnode/t") && Asterism.apps("mtest/*") == ["mtest/t"], "apps: #{Asterism.apps.inspect}")
-st = Asterism.status_of("mnode", "t")
+check(net.status(tables: 3) == { "tables" => 3 }, "status set: #{net.status.inspect}")
+check(net.status(humans: 1) == { "tables" => 3, "humans" => 1 }, "status fields merge")
+check(net.status({ "x" => [1, { "y" => nil }] }) == { "x" => [1, { "y" => nil }] }, "a Hash is the whole status")
+raises(ArgumentError, "status: too deep") { net.status(d: [[[[[1]]]]]) }
+raises(ArgumentError, "status: too large") { net.status(big: "x" * 1100) }
+raises(ArgumentError, "status: not a Hash") { net.status([1]) }
+check(net.status_of("mtest", "t") == { "x" => [1, { "y" => nil }] }, "own status without the network")
+check(net.apps.include?("mnode/t") && net.apps("mtest/*") == ["mtest/t"], "apps: #{net.apps.inspect}")
+st = net.status_of("mnode", "t")
 check(st == { "n" => 1, "st" => "wait" }, "status_of: #{st.inspect}")
 notices = s.subscribe("asterism/*/*/@status")
 t = Time.now
-Asterism.poll while Time.now - t < 0.3
+net.poll while Time.now - t < 0.3
 s.put("test/status", "2")
 got = nil
 t = Time.now
 while got.nil? && Time.now - t < 3
-  Asterism.poll
+  net.poll
   notices.each_pending { |k, pl| got = S.parse(k, pl) if k == "asterism/mnode/t/@status" }
   usleep 2000
 end
@@ -124,12 +125,12 @@ s.put("test/status", "2")
 t = Time.now
 again = 0
 while Time.now - t < 0.5
-  Asterism.poll
+  net.poll
   notices.each_pending { |k, _| again += 1 if k == "asterism/mnode/t/@status" }
   usleep 2000
 end
 check(again == 0, "the same status again puts nothing (#{again})")
-check(Asterism.status_of("mnode", "nothing", timeout: 1.0).nil?, "no status: nil")
+check(net.status_of("mnode", "nothing", timeout: 1.0).nil?, "no status: nil")
 
 # --- topics (topic.rb), on mruby and from node.rb
 check(Asterism::Types.number(:vector3) == 2, "a built-in type's number")
@@ -143,8 +144,8 @@ check(Asterism::Types.definition!([["g", "int[][]"], ["x", "any"], ["m", "any[]"
 check(Asterism::Pubs.encoding_id("image/jpeg") == 17 && Asterism::Pubs.encoding_id("video/vp9") == 52,
       "encoding numbers")
 check(Asterism::Pubs.check({ "a" => { "t" => 2, "x" => 1 }, 5 => {} }) == { "a" => { "t" => 2 } }, "pubs check")
-raises(ArgumentError, "a topic name with a wildcard") { Asterism.publish("a/*") }
-raises(ArgumentError, "encoding zenoh/bytes") { Asterism.publish("a", encoding: "zenoh/bytes") }
+raises(ArgumentError, "a topic name with a wildcard") { net.publish("a/*") }
+raises(ArgumentError, "encoding zenoh/bytes") { net.publish("a", encoding: "zenoh/bytes") }
 # Sequence numbers as a subscription reads them (a stand-in for a sample).
 class FakeSample
   attr_reader :key, :payload, :attachment, :kind, :encoding, :timestamp
@@ -157,32 +158,32 @@ class FakeSample
     @timestamp = nil
   end
 end
-fs = Asterism::Subscription.new("x", nil, nil)
+fs = Asterism::Subscription.new(nil, "x", nil, nil)
 lost = [5, 6, 9, 2].map { |n| i = fs.unwrap(FakeSample.new("asterism/n/a/x", n))[1]; [i.lost, i.restarted?] }
 check(lost == [[0, false], [0, false], [2, false], [2, true]], "lost and restarted: #{lost.inspect}")
 fs.unwrap(FakeSample.new("asterism/n/a/w", Asterism::Topic::SEQ_MAX))
 w = fs.unwrap(FakeSample.new("asterism/n/a/w", 0))[1]
 check(w.lost == 0 && !w.restarted?, "the wrap")
-pubs = Asterism.pubs_of("mnode", "t")
+pubs = net.pubs_of("mnode", "t")
 check(pubs == { "imu" => { "t" => 2, "u" => "m/s2", "ts" => true } }, "pubs_of: #{pubs.inspect}")
 got = []
 plain = []
-Asterism.subscribe("mnode/t/imu") { |v, info| got << [v, info.seq, info.encoding, info.time.is_a?(Integer)] }
-Asterism.subscribe("mnode/*/**") { |v| plain << v }
+net.subscribe("mnode/t/imu") { |v, info| got << [v, info.seq, info.encoding, info.time.is_a?(Integer)] }
+net.subscribe("mnode/*/**") { |v| plain << v }
 t = Time.now
-Asterism.poll while Time.now - t < 0.3
+net.poll while Time.now - t < 0.3
 s.put("test/imu", "7")
 s.put("test/imu", "8")
 t = Time.now
 while got.size < 2 && Time.now - t < 3
-  Asterism.poll
+  net.poll
   usleep 2000
 end
 check(got == [[[1, 2, 7], 0, "msgpack", true], [[1, 2, 8], 1, "msgpack", true]], "values with |v, info|: #{got.inspect}")
 check(plain == [[1, 2, 7], [1, 2, 8]], "values with |v|: #{plain.inspect}")
 s.put("test/stop", "")
-Asterism.poll
-Asterism.close
+net.poll
+net.close
 
 puts "#{$checks} checks, #{$fails} failed"
 exit($fails == 0 ? 0 : 1)
