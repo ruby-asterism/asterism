@@ -78,9 +78,10 @@ Contents:
   runs), its **topics** and its **types**; the status and the topics are
   also put on keys of their own when they change.
 - An application streams **data** on **topics** it declares: each value is
-  a put on `asterism/<node>/<app>/<topic>`, with a sequence number (and,
-  when the topic says so, the sender's time) in the attachment. The type,
-  unit and description of a topic are said once, in its declaration.
+  a put on `asterism/<node>/<app>/<topic>`, with a sequence number and the
+  connection's run id (and, when the topic says so, the sender's time) in
+  the attachment. The type, unit and description of a topic are said once,
+  in its declaration.
 - Data that no one application owns (what a node shows its spectators, a
   meeting place of the network) goes on a **shared place**: a node's
   `asterism/<node>/@shared/...` or the network's `asterism/@shared/...`.
@@ -273,8 +274,10 @@ portable. Keyword argument names (4.1) MUST be str.
   the int `1`. A callee that wants a float converts (`Float(x)`). NaN and
   the infinities travel.
 - **Times** have no type. By convention an absolute time is an int of
-  nanoseconds since the Unix epoch (UTC), and a duration is in the unit its
-  name says (`timeout_ms`, `period_s`; the ROS layer's `stamp_ns`).
+  **milliseconds** since the Unix epoch (UTC), as the sender's time of a
+  value (9.3) and the `time` of a log record (11.1) are, and a duration is
+  in the unit its name says (`timeout_ms`, `period_s`). The ROS layer's
+  `stamp_ns` follows rmw_zenoh's format, not this convention.
 
 ### 3.4 Text and bytes
 
@@ -591,8 +594,10 @@ connect refuses (`Asterism::Error`). Implementations SHOULD make the same
 check: two queryables for the same `<node>/<app>` answer every call twice.
 The check is per `<node>/<app>`: the same node with another application
 passes. A program that holds several connections also refuses a
-`<node>/<app>` that one of its own connections has (without waiting for
-the network).
+`<node>/<app>` that one of its own connections has, or is opening (without
+waiting for the network); while one connection waits for the network's
+answer, the program's other connections go on (on CRuby the check runs
+without the lock the connections share).
 
 ## 7. Profiles
 
@@ -635,6 +640,15 @@ A MessagePack map with str keys, written in this order:
 A node without `protocol` speaks protocol 0 (appendix A): its calls and
 replies are not protocol 2's. A node with another number speaks another
 protocol; a reader shows the number and does not call it.
+
+The implementation does not refuse such a node, but tells it:
+`net.protocol_of(node)` gives the number (0 for none; from the profile
+puts the connection follows, or one query of the profile without the
+icon), and a connection that follows the profile puts
+(`asterism/*/@profile`; on CRuby by default, on a board only with
+`Asterism.watch_protocols = true`, as it costs a subscriber) warns once
+about each node that says another number: its calls may work while its
+statuses, topics and data do not.
 
 ### 7.4 The icon and its hash
 
@@ -702,7 +716,7 @@ queryables as before (its `**` and this one) whatever it tells.
 - The profile belongs to the application (one per `<node>/<app>`), not to
   the node: two applications of one node have one each.
 - There is no delete: when the application goes, its tokens go (6), and
-  readers forget its status, topics and types with them.
+  readers forget its status, topics and types with them (8.5).
 
 ### 8.2 The query
 
@@ -780,13 +794,22 @@ asks `@profile` once for an application that appeared (only changes are
 put). An application that does not answer has nothing to tell; that is not
 an error.
 
+**What a reader keeps of an application goes when its application token
+leaves** (6.1): its status, its declarations and types (also those a
+reader keeps to read values with: Ruby's `type_of`, 17.5), and its
+sequence numbers (9.4; on a shared place, those of the values it sent).
+Nothing is put to delete them; the token is the sign. A reader that keeps
+declarations or types drops them also when the application puts its
+`@pubs` again.
+
 ## 9. Data
 
 An application streams values on its own keys: a sensor's readings, a
 game table's state, a camera's frames, a drawing's strokes, a log. Each
 stream is a **topic**, declared once (10) and then put on, value by value.
 What goes with each value is kept as small as it can be: the value itself,
-its encoding only when it is not MessagePack, and a sequence number.
+its encoding only when it is not MessagePack, a sequence number and the
+run id of the sender's connection.
 
 ### 9.1 Keys
 
@@ -834,7 +857,8 @@ reach `@profile`, `@status` or `@pubs`, 2.2).
   47 `video/h266`, 48 `video/mp4`, 49 `video/ogg`, 50 `video/raw`,
   51 `video/vp8`, 52 `video/vp9`). A schema may follow the name
   (`text/plain;charset=utf-8`); it travels with each value as Zenoh sends
-  it.
+  it, and is not part of the declaration's `e` (10.1), which is the number
+  alone.
 - So a JPEG goes as its bytes with `image/jpeg`, not wrapped in a
   MessagePack bin; a binary blob that is not in any of these formats goes
   as a MessagePack bin (no encoding).
@@ -847,57 +871,85 @@ Every value of a topic carries a Zenoh attachment: a MessagePack array
 
 | Form | When |
 |---|---|
-| `[seq]` | always, unless the topic sends the time |
-| `[seq, time]` | the topic is declared with `ts` (10.1) |
-| `[seq, time or nil, sender]` | a value on a shared place (17.3), always; `time` is nil (MessagePack nil) unless the topic is declared with `ts` |
+| `[seq, id]` | always, unless the topic sends the time |
+| `[seq, id, time]` | the topic is declared with `ts` (10.1) |
+| `[seq, id, time or nil, sender]` | a value on a shared place (17.3), always four elements; `time` is nil (MessagePack nil) unless the topic is declared with `ts` |
 
 - `seq`: an int, the **sequence number** of the value in its topic: 0 for
-  the first value after the topic is declared, then one more for each
+  the first value the connection puts on the topic, then one more for each
   value put, and back to 0 after `2^31 - 1` (2147483647), so that every
-  board's integers hold it. It is per topic and per declaration: a topic
-  declared again, or an application that connects again, starts over at 0.
+  board's integers hold it. The numbers are **the connection's**: a topic
+  declared again on the same connection (replaced, or withdrawn and
+  declared again) goes on from its last number; a new connection (one that
+  connects again, a program started again) starts at 0.
+- `id`: an int, the **run id**: 16 random bits (0 to 65535) the sender
+  picks when its connection opens, the same in every value of that
+  connection. It tells a reader that the sender connected again without
+  relying on the order of the numbers. Implementations take it from a
+  random source (on the boards, their hardware generator), not from the
+  clock alone: a board without a clock of the day starts the same way
+  each time.
 - `time`: an int, the **sender's time** when the value was put (or
   measured), in **milliseconds since 1970-01-01 UTC** (12).
 - `sender`: a str, `"<node>/<app>"`, the application that put a value on
-  a shared place (17.3). A reader of an application's own key ignores it
-  (the key says the sender).
+  a shared place (17.3). A reader of an application's own key ignores a
+  fourth element (the key says the sender).
 - A reader ignores elements after these (room for later additions). A
   value without an attachment, or with one that is not an array starting
-  with an int from 0 to `2^31 - 1`, has no sequence number; a `time` that
-  is not an int is no time.
+  with an int from 0 to `2^31 - 1`, has no sequence number; an `id` that is
+  not an int is no run id (the numbers are then read by their distance
+  alone, 9.4); a `time` that is not an int is no time.
 
-The cost: 2 to 6 bytes with the array's header: a `seq` below 128 takes
-2 bytes, up to 65535 four, beyond six; a time adds 9 bytes. Replies to queries (calls, meta,
+The cost: the array's header (1 byte), `seq` (1 byte below 128, 2 up to
+255, 3 up to 65535, 5 beyond) and `id` (3 bytes for most ids, 1 or 2 for
+those below 256): 5 bytes for a typical value; a time adds 9 bytes, a
+sender 1 byte more than its text. Replies to queries (calls, meta,
 profiles) carry no attachment.
 
 ### 9.4 Reading the sequence numbers
 
-A reader keeps the last number of each key it receives (of each key and
-sender, on a shared place: 17.3) and reads the next one by its distance
-forward, `d = (seq - last) mod 2^31`:
+A reader keeps, for each key it receives (each key and sender on a shared
+place: 17.3), the last run id and number, and reads the next value so:
 
-- `0 < d < 2^30`: a step forward; `d - 1` values were **lost** (put but
-  not received: a full queue, a link that dropped them, the router away);
-- otherwise (the number went back, or stayed, or jumped by half the range
-  or more): the sender **restarted** the topic (it declared it again, or
-  connected again). The values of the new run before this one, `seq` of
-  them, were not received;
 - the first value of a key: nothing lost, `lost` 0 (a reader that
   subscribes late does not count what came before it). Zenoh may also
   leave out the first values a publisher puts before it knows of the
-  subscriber.
+  subscriber;
+- **another run id** than the last one: the sender connected again (a
+  new run). Nothing is counted lost (the values of the new run before this
+  one are not known to the reader, nor are those of the old run after its
+  last one): `lost` 0, **restarted**;
+- the same run id (or none, in both): by the distance forward,
+  `d = (seq - last) mod 2^31`:
+  - `0 < d < 2^30`: a step forward; `d - 1` values were **lost** (put but
+    not received: a full queue, a link that dropped them, the router away);
+  - otherwise (the number went back, or stayed, or jumped by half the
+    range or more): the sender **restarted** its numbers; the values of
+    the run before this one, `seq` of them, were not received.
 
 The step from `2^31 - 1` to `0` is `d = 1`, the wrap: a step forward,
 nothing lost. A restart is told apart from it (`info.restarted?` in Ruby,
 9.5). A value without an encoding that does not decode as one MessagePack
 value is not handed to the application; it is counted (`malformed`).
 
+**When an application leaves** (its application token goes, 6.1), a
+reader forgets the numbers of its keys, and on a shared place those of
+the values it sent (8.5): its next value is a first one. This keeps the
+memory of a long subscription from growing (Ruby also bounds it: 64 keys
+and senders on a board, 4096 elsewhere, the one seen longest ago
+forgotten first). The run id is what tells a new run when the reader does
+not see the leave first: a sender that comes back before the reader
+learns it left, or a reader that does not follow the tokens (a recorder,
+the command line's `object echo`). Without it, a reader that misses the
+first values of a new run could read the next one as a step forward and
+count lost values that were never sent to it.
+
 ### 9.5 Subscribing (the Ruby API)
 
 `net.subscribe("<node>/<app>/<topic>") { |v, info| ... }` (wildcards
 allowed) gives each value decoded (MessagePack) or as its bytes (another
 encoding), and an `Asterism::SampleInfo`: `key`, `node`, `app`, `name`,
-`seq`, `time`, `encoding` (`"msgpack"` for no encoding, the MCAP word;
+`seq`, `run_id` (9.3), `time`, `encoding` (`"msgpack"` for no encoding, the MCAP word;
 else Zenoh's name), `timestamp` (the router's, 12), `lost` and
 `restarted?` (9.4), and `path` (the key below `asterism/`), `from` (the
 sender, `"<node>/<app>"`) and `shared` (nil, `:node` or `:global`) for the
@@ -908,6 +960,16 @@ application's subscription does not get the values the application puts
 itself (neither binding delivered them in the tests); a reader MUST NOT
 rely on either. Another connection of the same program is another
 application: it gets them.
+
+### 9.6 The present value
+
+The protocol has no "latest value" of a topic: a reader that subscribes
+late, or that has lost values (`lost > 0`) or seen a restart, does not
+hold the present value until the next one comes, and nothing on the
+stream gives the lost ones back. A topic whose present value a reader
+needs (a game table's state, what a spectator shows) is also answered by
+**a method of an exposed object** of the application: the reader calls it
+when it starts, and again when `info.lost > 0` or `info.restarted?`.
 
 ## 10. Topic declarations
 
@@ -921,7 +983,7 @@ with short keys:
 | Key | Value | Absent means |
 |---|---|---|
 | `t` | the type: an int, a built-in type's number (11.1); or a str, an application type's name (11.2) | no type (the reader guesses from the values) |
-| `e` | an int, the number of the topic's encoding (9.2) | MessagePack |
+| `e` | an int, the number of the topic's encoding (9.2), without its schema (`text/plain;charset=utf-8` declares 4; the schema travels with each value) | MessagePack |
 | `u` | a str, the unit (`m/s2`, `degC`), at most 64 bytes | no unit |
 | `d` | a str, what the topic is, for people and tools, at most 2048 bytes | no text |
 | `ts` | `true`: each value carries the sender's time (9.3) | no time |
@@ -979,7 +1041,7 @@ are several numbers):
 | 3 | pose | `[x, y, z, qx, qy, qz, qw]`: the position, then the orientation as a quaternion, flat, in ROS 2's `Pose` order (ints or floats) |
 | 4 | image | the image's bytes, in the topic's encoding (`image/jpeg`, `image/png`, ...) |
 | 5 | state | a str or an int: a scene, a mode, on / off |
-| 6 | log | a map: `level` (`"debug"`, `"info"`, `"warn"`, `"error"`, `"fatal"`, or 10 to 50 as ROS 2), `msg` (str), `time` (seconds since 1970, a float); optional `name`, `file`, `line`, `function` |
+| 6 | log | a map: `level` (`"debug"`, `"info"`, `"warn"`, `"error"`, `"fatal"`, or 10 to 50 as ROS 2), `msg` (str), `time` (milliseconds since 1970, an int, 3.3); optional `name`, `file`, `line`, `function` |
 | 7 | text | a str |
 
 Numbers are added, never changed: a reader that does not know a number
@@ -993,13 +1055,13 @@ the `types` part of its profile (8.3), `asterism/<node>/<app>/@profile?types`,
 is a map, type name => definition:
 
 ```
-{"asterism-games/board.strokes" => {"f" => [["pts", "int[]"], ["color", "str"], ["at", 2]],
+{"asterism-games/board.strokes" => {"f" => [["p", "int[]"], ["c", "str"], ["at", "vector3"]],
                                     "d" => "the strokes of one board"}}
 ```
 
 | Key | Value |
 |---|---|
-| `f` | the fields, in order: an array of `[name, type]`, name a str; type an int (a built-in type's number), or a str: a built-in type's name (`number`, `vector3`, `pose`, `image`, `state`, `log`, `text`), a basic type (`int`, `float`, `str`, `bin`, `bool`, `any`) or another application type's name, any of them with `[]` at the end for an array of them (`vector3[]`, `int[]`, `asterism-games/point[]`), repeated for arrays of arrays (`int[][]`: an array of arrays of ints) |
+| `f` | the fields, in order: an array of `[name, type]`, name a str; type a str, **a name** (never a number): a built-in type's name (`number`, `vector3`, `pose`, `image`, `state`, `log`, `text`), a basic type (`int`, `float`, `str`, `bin`, `bool`, `any`) or another application type's name, any of them with `[]` at the end for an array of them (`vector3[]`, `int[]`, `asterism-games/point[]`), repeated for arrays of arrays (`int[][]`: an array of arrays of ints) |
 | `d` | optional, a str: what the type is |
 
 `any` is a value of any shape (what the type does not say: a list of
@@ -1013,15 +1075,18 @@ definitions; **a reader reads a value's type from its sender's
 declarations and types** (the sender is the attachment's `sender`, 17.3;
 Ruby: `net.type_of(info)`), never from another sender of the same key.
 
-The value of such a type is a MessagePack map with the fields as str keys.
-A built-in type is written in a field by its number or by its name (an
-array of one only by its name, `"vector3[]"`); the implementation sends
-the form the application wrote. A topic's declaration (`t`, 10.1) always
-uses the number. The names of the built-in types and of the basic types
-are not application types' names. A reader
-(`Asterism::Types.check`) keeps the definitions with a non-empty str name
-whose `f` is an array of `[str, int or non-empty str]`, and `d` when it is
-a str.
+The value of such a type is a MessagePack map with the fields as str keys
+(`{"p" => [1, 2], "c" => "red", "at" => [0, 0, 0]}`). The field names go
+with every value, so short ones (one or two letters, as above) keep each
+value small; there is no form without the names. A built-in type is
+written in a field by its name (`"vector3"`, an array of them
+`"vector3[]"`); a number is not a field's type (Ruby's `define_type`
+refuses it). A topic's declaration (`t`, 10.1) uses the number. The names
+of the built-in types and of the basic types are not application types'
+names. A reader (`Asterism::Types.check`) keeps the definitions with a
+non-empty str name whose `f` is an array of `[str, non-empty str]` (a
+definition with a field of another shape is left out whole), and `d` when
+it is a str.
 
 ## 12. Times
 
@@ -1060,7 +1125,8 @@ Not used, and not to be relied on: encodings other than on the values of
 topics, attachments other than theirs, Zenoh error replies, delete
 replies, source info, complete queryables, queriers, advanced
 publishers/subscribers. TLS and access control are a deployment's choice
-(4.7); boards have no TLS.
+(4.7); the boards connect over TLS too (mutual TLS with a console's
+certificates), as CRuby does.
 
 ## 14. Differences between the implementations
 
@@ -1123,14 +1189,14 @@ written as typed values:
 | `{"map": [[k, v], ...]}` | map (pairs; their order is not significant) |
 
 Expected values may also hold matchers: `{"any": "str"}` (or `"int"`,
-`"float"`, `"value"`), `{"match": "<regex>"}` (a str matching it),
+`"u16"` (an int from 0 to 65535), `"float"`, `"value"`), `{"match": "<regex>"}` (a str matching it),
 `{"unordered": [v, ...]}` (an array with these elements in any order).
 
 ### 15.3 samples.json
 
 ```
 {
-  "format": "asterism-protocol-samples", "version": 6, "protocol": 2,
+  "format": "asterism-protocol-samples", "version": 7, "protocol": 2,
   "names":  {"iut": "iut", "app": "conf", "driver": "drv"},
   "icon":   {"hex": "<the PNG>", "icon_hash": "2a8c0626"},
   "iut":    {"profile": ..., "status": ..., "types": [...], "topics": [...],
@@ -1164,15 +1230,16 @@ Expected values may also hold matchers: `{"any": "str"}` (or `"int"`,
   `{"types_of": [...]}` (a query of `asterism/drv/conf/@profile` with
   `status`, `pubs` or `types`); `{"set_status": {"map": ...}}` (the whole
   status); `{"put": [[topic, value], ...]}` (values put on the topics, in
-  order); `{"unpublish": topic}`; `{"feed": [...], "expect": n}`: call
+  order; an element `{"publish_again": topic}` declares that topic again
+  with the same declaration, and its numbers go on); `{"unpublish": topic}`; `{"feed": [...], "expect": n}`: call
   `rec.feed()`; while answering it, the driver puts the values listed
   (`key`, `payload_hex`, `attachment_hex`, `encoding`; nil: none) on
   `asterism/drv/conf/feed/...` and on the shared places
   `asterism/drv/@shared/feed/...` and `asterism/@shared/feed/...`, and the
   implementation reports what its subscriptions (`iut.subscribe`, in that
   order) got (9.5, 17.5): `[path, value, seq, time, encoding, lost,
-  restarted, from]` for each value, subscription after subscription in
-  the order they came, a value with an encoding as a bin.
+  restarted, from, run id]` for each value, subscription after
+  subscription in the order they came, a value with an encoding as a bin.
   The driver checks the request it receives against `request` (for a
   call, `call` is the request map with absent `args` / `kwargs` read as
   empty), answers with the replies in `reply_hex` (none: it finishes the
@@ -1187,7 +1254,9 @@ Expected values may also hold matchers: `{"any": "str"}` (or `"int"`,
 - **data_puts**: the puts on the topics' keys (its own, its node's shared
   place, and the key it uses on the network's), in order, and no others:
   the encoding Zenoh reports (`zenoh/bytes` for none), the payload (a
-  MessagePack value, or the bytes as they are) and the attachment.
+  MessagePack value, or the bytes as they are) and the attachment (the run
+  id as `{"any": "u16"}`, an int from 0 to 65535; the driver also checks
+  that all the puts carry the same one).
 - **portable: false** samples are where the implementations may differ
   (section 14): the driver prints what came back and does not fail.
 
@@ -1272,14 +1341,18 @@ put         asterism/linux/demo/@pubs
             {"imu" => {"t" => 2, "u" => "m/s2", "ts" => true}}
 put         asterism/linux/demo/imu       (a declared publisher: the key goes as a number)
             payload     93 cb 3fe0000000000000 ff 03     [0.5, -1, 3]   (no encoding)
-            attachment  92 07 cf 000001a1d3ebac7b        [7, 1794556800123]
+            attachment  93 07 cd 9c41 cf 000001a1d3ebac7b
+                        [7, 40001, 1794556800123]      (seq 7, the run id 40001, the time)
 get         asterism/linux/demo/@profile?pubs
 reply       asterism/linux/demo/@profile
             {"pubs" => {"imu" => {"t" => 2, "u" => "m/s2", "ts" => true}}}
 ```
 
-Per value, besides the key: the payload and 11 bytes of attachment (2
-without `ts`); no encoding.
+Per value, besides the key: the payload and 14 bytes of attachment (5
+without `ts`: `92 07 cd 9c41`); no encoding. Measured on the wire (a
+direct peer link, Zenoh's framing included, the key as a number, 500
+values): 34 bytes for `[0.5, -1, 3]` from CRuby (43 with `ts`), 23 for the
+value `1`.
 
 A game host `linux/games` and a room `linux/room01` both put a table's
 view for its spectators on the node's shared place, each declaring it in
@@ -1291,9 +1364,9 @@ put         asterism/linux/games/@pubs
 put         asterism/linux/room01/@pubs
             {"linux/@shared/spectate/t1/state" => {"t" => "mygame/table"}}
 put         asterism/linux/@shared/spectate/t1/state    (from linux/games)
-            attachment  93 07 c0 ab 6c696e75782f67616d6573   [7, nil, "linux/games"]
+            attachment  94 07 cd 9c41 c0 ab 6c696e75782f67616d6573      [7, 40001, nil, "linux/games"]
 put         asterism/linux/@shared/spectate/t1/state    (from linux/room01)
-            attachment  93 00 c0 ac 6c696e75782f726f6f6d3031 [0, nil, "linux/room01"]
+            attachment  94 00 cd 1f2e c0 ac 6c696e75782f726f6f6d3031 [0, 7982, nil, "linux/room01"]
 ```
 
 A spectator subscribes to `asterism/*/@shared/spectate/**`, counts the
@@ -1350,21 +1423,24 @@ the encoding as in 9.2, a declared Zenoh publisher on its key, and the
 attachment
 
 ```
-[seq, time or nil, "<node>/<app>"]
+[seq, id, time or nil, "<node>/<app>"]
 ```
 
-always with three elements: `seq` as in 9.3 (per sender and key: each
-sender numbers its own values from 0), `time` the sender's time when the
-topic is declared with `ts` and nil otherwise, and the sender's
-`"<node>/<app>"`. The sender is in the attachment because the key does not
-say it: several applications may put on one key.
+always with four elements: `seq` and `id` (the run id) as in 9.3 (per
+sender and key: each sender numbers its own values from 0), `time` the
+sender's time when the topic is declared with `ts` and nil otherwise, and
+the sender's `"<node>/<app>"`. The sender is in the attachment because the
+key does not say it: several applications may put on one key.
 
 A reader counts the numbers (9.4) **per key and sender**: the values of
 two senders on one key are two runs, each with its own lost values and
-restarts. A value whose third element is not a str of two names
-(`<node>/<app>`), or that has none, has no sender: its numbers are counted
-per key (as an application's own key), and its node, for a node's place, is
-the key's.
+restarts, and forgets a sender's when that application leaves (8.5). A
+value whose fourth element is not a str of two names (`<node>/<app>`), or
+that has none, has no sender: its numbers are counted per key (as an
+application's own key), and its node, for a node's place, is the key's.
+On a node's place a sender of another node (`other/app` on
+`asterism/linux/@shared/...`) is no sender either: a node's place is
+written by that node only (17.4).
 
 ### 17.4 Who may put there: the router's rules
 
@@ -1393,7 +1469,7 @@ it: a deployment writes its rules for it on their own.
 ```ruby
 t = net.publish("spectate/t1/state", shared: :node, type: "mygame/table")  # asterism/<node>/@shared/spectate/t1/state
 g = net.publish("lobby", shared: :global, type: :text)                     # asterism/@shared/lobby
-t.put(state)                                       # attachment [seq, nil, "<node>/<app>"]
+t.put(state)                                       # attachment [seq, id, nil, "<node>/<app>"]
 
 net.subscribe("*/@shared/spectate/**") do |v, info|
   info.from      # => "linux/room01", the sender
@@ -1419,7 +1495,10 @@ net.type_of(info)          # the sender's type of the key: a number, or [name, i
   ones that declare the key with their declarations.
 - `net.declaration_of(info)` and `net.type_of(info)` read a received
   value's declaration and type from **its sender** (11.2): two senders may
-  give one type name different definitions.
+  give one type name different definitions. The answer (one query of the
+  sender's `@profile?pubs;types`) is kept for that sender until it puts
+  its `@pubs` again or leaves (the connection then follows
+  `asterism/*/*/@pubs`), so a block may ask for each value.
 
 ### 17.6 Several senders
 

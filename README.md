@@ -585,9 +585,10 @@ $ asterism watch
   its encoding and size otherwise (`image/jpeg`); from a sender that does
   not follow the protocol, JSON or text as they are, bytes as their count.
   `-o json` gives each put as `{"key", "t", "bytes", "format", "value"}`
-  (`format`: `msgpack` or the encoding) with `seq` and `sent` (the sender's
-  time) from its attachment, and `lost` (values missed before it) or
-  `restarted` (the sender's numbers started again); the text says those
+  (`format`: `msgpack` or the encoding) with `seq`, `run_id` (the sender's
+  connection) and `sent` (the sender's time) from its attachment, and
+  `lost` (values missed before it) or `restarted` (the sender connected
+  again, or its numbers went back); the text says those
   on a line of their own (`(2 lost)`). **The shared places** (17):
   `PATH` is `node/@shared/name...` (`*` for the node) or `@shared/name...`
   (`asterism object get games/@shared/spectate/mahjong1/state`); `*` and
@@ -708,8 +709,8 @@ claude mcp add asterism -- asterism mcp --credentials admin.tar --allow 'games/o
   `wait` waits (at most 30 s) for the first put that matches when none has
   come yet. Each value has `key`, `value`, `t`, `age_s` (seconds since it
   came), `bytes`, `format` (`msgpack`, or the encoding it came with:
-  `image/jpeg` shows as its size), `seq` and `sent` (the sender's time)
-  from its attachment, `lost` (values of the key missed since the start)
+  `image/jpeg` shows as its size), `seq`, `run_id` and `sent` (the
+  sender's time) from its attachment, `lost` (values of the key missed since the start)
   and `app`: `alive`, `gone` (the application is
   not on the network now; the value is its last one, not the present) or
   `restarted` (it left and came back after this value). A value whose JSON
@@ -821,18 +822,20 @@ method of it (`net.` in the tables); the module keeps only
 | `net.nodes` | `[String]` | Node IDs alive now, this one first. |
 | `net.apps(pattern = "*/*")` | `[String]` | The applications alive now, `"<node>/<app>"` (from their liveliness tokens; this one first). |
 | `net.node_id` / `app` / `path` / `connected?` / `exposed` / `lost_reason` | | `path` is `"<node>/<app>"` |
+| `net.run_id` | Integer | This connection's run id: 16 random bits picked when it opened, sent with each value of its topics (a reader that sees another one knows it connected again). |
 | `net.reconnecting?` | true / false | True while the router is away and the binding opens the connection again ([When the connection is lost](#when-the-connection-is-lost)). |
 | `net.session` | `Asterism::Zenoh::Session` | The connection's own session, for put / subscribe / a ROS 2 node on the same connection ([The connection's session](#the-connections-session-netsession)). The same object until the connection closes. `Disconnected` when not connected. Its `close` does nothing (warns once); `net.close` closes it. |
 | `net.close` | nil | Withdraws every exposed object, topic and subscription, and closes the session. Idempotent. A closed connection is not opened again: `Asterism.connect` makes a new one. |
 | `net.profile(kind:, name:, host:, icon:)` / `net.profile` | Hash | This node's profile (the node of this connection): sets the fields given and returns it; without arguments, returns it. See [Profiles](#profiles). |
 | `net.profile_of(node, icon: true, timeout: 2.0)` | Hash or nil | Another node's profile, nil when it does not answer (an older version, a ROS 2 node). |
+| `net.protocol_of(node, timeout: 2.0)` | Integer or nil | The protocol a node speaks (its profile's `protocol`, 0 when it says none), nil when it does not answer. Kept from the profile puts the connection follows (CRuby; on a board after `Asterism.watch_protocols = true`), which also warn once about a node of another protocol; such a node is not refused. |
 | `net.status(hash = nil, **fields)` / `net.status` | Hash or nil | This application's status: a Hash is the whole status, keywords change those fields (nil removes one); put on the network when it changes. Without arguments, returns it. See [Status](#status). |
 | `net.status_of(node, app, timeout: 2.0)` | Hash or nil | Another application's status, nil when it has none or does not answer. |
 | `net.publish(name, type:, unit:, desc:, ts:, encoding:, shared: nil)` | `Asterism::Topic` | Declares a topic of this application; `topic.put(value)` sends. `shared: :node` / `:global` puts it on a shared place instead. See [Topics](#topics) and [Shared places](#shared-places). |
 | `net.subscribe(path, depth: nil) { \|v, info\| }` | `Asterism::Subscription` | The values on `<node>/<app>/<topic>` (wildcards allowed), or a shared place's `<node>/@shared/<name>` / `@shared/<name>`, from `net.poll`; `close` ends it. |
 | `net.pubs_of(node, app)` / `net.types_of(node, app)` | Hash or nil | Another application's topics (shared ones under their entries) / types, `{}` when it has none, nil when it does not answer. |
 | `net.publishers_of(path, timeout: 2.0)` | Hash | The applications that declare a shared key (`@shared/<name>`, `<node>/@shared/<name>`, `*` for the node): `{"<node>/<app>" => declaration}`. |
-| `net.declaration_of(info)` / `net.type_of(info)` | Hash / Integer or `[name, definition]`, or nil | A received value's declaration / type, from its sender (`info.from`). |
+| `net.declaration_of(info)` / `net.type_of(info)` | Hash / Integer or `[name, definition]`, or nil | A received value's declaration / type, from its sender (`info.from`). Asked once, then kept for that sender until it puts its `@pubs` again or leaves: cheap to call for each value. |
 | `net.define_type(name, fields, desc: nil)` | Hash | An application type, told by `@profile?types`. |
 | `net.published` / `net.unpublish(topic or name)` / `net.unsubscribe(sub)` | | |
 
@@ -985,10 +988,12 @@ net.pubs_of("linux", "demo")                   # => {"imu" => {"t" => 2, "u" => 
   chunks). The declarations are answered at `@profile?pubs` and put on
   `asterism/<node>/<app>/@pubs` when they change; types at `@profile?types`
   ([docs/protocol.md](docs/protocol.md) 9-12).
-- **define_type** fields: a built-in type by number or name (`2`,
-  `"vector3"`, an array `"vector3[]"`), a basic one (`"int"`, `"str[]"`,
-  `"any"` for a value of any shape) or another application type's name;
-  `[]` repeats for arrays of arrays (`"int[][]"`).
+- **define_type** fields: a type by its name, never a number: a built-in
+  one (`"vector3"` or `:vector3`, an array `"vector3[]"`), a basic one
+  (`"int"`, `"str[]"`, `"any"` for a value of any shape) or another
+  application type's name; `[]` repeats for arrays of arrays (`"int[][]"`).
+  The values are maps keyed by the field names, which go with every value:
+  short names (one or two letters: `"p"`, `"c"`) keep them small.
 - **type:** a built-in type (`:number`, `:vector3`, `:pose`, `:image`,
   `:state`, `:log`, `:text`, or its number `Asterism::Types::VECTOR3`) or an
   application type's name (a String). **encoding:** one of Zenoh's
@@ -998,10 +1003,22 @@ net.pubs_of("linux", "demo")                   # => {"imu" => {"t" => 2, "u" => 
   `time` (the sender's, ms since 1970, with `ts: true`), `encoding`
   (`"msgpack"` for a MessagePack value), `timestamp` (the router's, when it
   stamped the value), `lost` (values of this key missed since the last
-  one) and `restarted?` (the sender started the topic over), `path` (the
+  one) and `restarted?` (the sender started a new run: it connected again,
+  its `run_id` changed, and nothing is counted lost; or its numbers went
+  back), `run_id` (the sender's connection's), `path` (the
   key below `asterism/`), `from` (the sender, `"<node>/<app>"`) and
   `shared` (nil, or `:node` / `:global` on a shared place). A block that
   takes only `|v|` gets the value.
+- **Numbers.** Each topic's numbers are the connection's: publishing a name
+  again on the same connection goes on from its last number; a new
+  connection starts at 0 with another run id. When an application leaves
+  (its token goes), a subscription forgets its numbers: its next value is
+  a first one (`lost` 0).
+- **The present value.** Values that did not come are counted, not given
+  back: a topic whose present value a reader needs is also answered by a
+  method of an exposed object, which the reader calls at the start and
+  again when `info.lost > 0` or `info.restarted?`
+  ([docs/protocol.md](docs/protocol.md) 9.6).
 - Topics and subscriptions end with the connection; the types and the
   status are the connection's too. After a new `connect`, declare them on
   the new connection.
@@ -1037,8 +1054,9 @@ net.pubs_of("linux", "games")                  # => {"linux/@shared/spectate/t1/
   `<node>/@shared/<name>` or `@shared/<name>` (an application's own topic
   under its name). `net.published` lists entries; `net.unpublish(topic)` or
   `net.unpublish(name, shared: :node)`.
-- **Attachment.** `[seq, ms or nil, "<node>/<app>"]`; the numbers are each
-  sender's, and the reader counts `lost` per key and sender.
+- **Attachment.** `[seq, run id, ms or nil, "<node>/<app>"]`; the numbers
+  are each sender's, and the reader counts `lost` per key and sender. On a
+  node's place, a sender of another node counts as none.
 - **Types.** Two senders may define one type name differently: read a
   value's type from its sender (`net.type_of(info)`,
   `net.declaration_of(info)`), not from another sender of the key.
@@ -1304,8 +1322,8 @@ arguments, or an Integer outside the signed 64-bit range, raises
 
 - Hash keys: use String (or Symbol) and Integer keys for anything another
   language reads (Python and JavaScript refuse others by default).
-- Times: send an Integer of nanoseconds since the epoch (or name the unit:
-  `timeout_ms`); there is no time type.
+- Times: send an Integer of milliseconds since the epoch (or name the
+  unit: `timeout_ms`); there is no time type.
 - A keyword given as `nil` and one left out differ: the callee's default
   applies only to the one left out.
 - A JavaScript caller's `1.0` arrives as the Integer `1`.
