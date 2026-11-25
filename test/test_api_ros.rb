@@ -56,6 +56,37 @@ class TestApiROS < Minitest::Test
     assert_equal 0, got.size, "no more after cancel"
   end
 
+  # A handler set after node.subscription is called from the spin as
+  # node.subscribe's block is; nil gives the messages back to each_pending.
+  def test_handler_set_later
+    na = @ra.node("c5_late_listener")
+    nb = @rb.node("c5_late_talker")
+    str = "std_msgs/msg/String"
+    sub = na.subscription("/c5/late", str)
+    assert_nil sub.handler
+    pub = nb.publisher("/c5/late", str)
+    @ra.start
+    settle
+    got = Queue.new
+    sub.handler = ->(msg, _info) { got << msg.data }
+    pub << { data: "one" }
+    assert_equal "one", got.pop(timeout: 3)
+
+    sub.handler = nil
+    pub << { data: "two" }
+    settle
+    assert_equal 0, got.size, "no call after the handler is taken away"
+    assert_equal ["two"], sub.each_pending.map { |m| m[0].data }
+
+    # Setting it twice does not deliver twice.
+    sub.handler = ->(msg, _info) { got << msg.data }
+    sub.handler = ->(msg, _info) { got << msg.data }
+    pub << { data: "three" }
+    assert_equal "three", got.pop(timeout: 3)
+    settle
+    assert_equal 0, got.size
+  end
+
   def test_services_while_spinning
     na = @ra.node("c5_server")
     nb = @rb.node("c5_client")

@@ -470,8 +470,20 @@ module Asterism
         return subscription(topic, type, qos: qos, depth: depth) unless handler
         e = subscription(topic, type, qos: qos, depth: depth)
         e.handler = handler
-        @handled << e
         e
+      end
+
+      # A subscription whose handler was set (or taken away): poll gives its
+      # messages to the block from then on (or stops). Called by
+      # Subscription#handler=. @api private
+      def handled(sub, on)
+        i = @handled.index(sub)
+        if on
+          @handled << sub unless i
+        elsif i
+          @handled.delete_at(i)
+        end
+        nil
       end
 
       # Calls the block every `seconds` (or every ms: milliseconds; the first
@@ -651,15 +663,28 @@ module Asterism
 
     class Subscription
       attr_reader :topic_key, :token_key, :errors
-      # The block of node.subscribe (nil for node.subscription).
-      attr_accessor :handler
+      # The block node.poll gives each message to: the block of
+      # node.subscribe, or one set later (nil for a subscription to take
+      # from with each_pending).
+      attr_reader :handler
 
       def initialize(node, session, topic, type, qos, depth)
+        @node = node
         @type = type
         @topic_key, @token_key = node.entity_keys("MS", topic, type, qos)
         @errors = 0
         @sub = session.subscribe(@topic_key, depth: depth)
         @token = session.liveliness(@token_key)
+      end
+
+      # Sets the block node.poll calls with each message and its Attachment
+      # (as node.subscribe's block), also on a subscription made with
+      # node.subscription; nil stops it, and the messages wait for
+      # each_pending again.
+      def handler=(blk)
+        @handler = blk
+        @node.handled(self, !blk.nil?)
+        blk
       end
 
       # Yields each message received so far (decoded) and its Attachment (nil

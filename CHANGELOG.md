@@ -6,6 +6,15 @@ the earlier ones are only in this repository. From 0.4.0 the two Zenoh
 bindings (asterism-zenoh, picoruby-asterism-zenoh) carry the same minor
 version (a patch release of one may come without the other).
 
+## 0.14.1
+
+- ROS 2 bridge: `Subscription#handler=` works on any subscription. A block
+  set after `node.subscription` (or on `node.subscribe` without a block) is
+  called from `node.poll` as `node.subscribe`'s block is; before, only the
+  block given to `node.subscribe` was, and one set later was never called.
+  `handler = nil` stops it, and the messages wait for `each_pending` again.
+- The wire and the rest of the API are those of 0.14.0 (protocol 2).
+
 ## 0.14.0
 
 Wire protocol 2 (`Asterism::PROTOCOL = 2`, docs/protocol.md) and the
